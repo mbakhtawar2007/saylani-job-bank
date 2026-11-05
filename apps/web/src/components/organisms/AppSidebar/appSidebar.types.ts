@@ -19,6 +19,7 @@ export interface NavSection {
 export interface AppSidebarProps {
   sections: NavSection[];
   brand?: ReactNode;
+  action?: ReactNode;
   footer?: ReactNode;
   /** Called after a link is chosen — closes the mobile drawer. */
   onNavigate?: () => void;

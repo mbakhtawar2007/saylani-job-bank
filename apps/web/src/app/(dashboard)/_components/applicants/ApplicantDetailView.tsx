@@ -1198,6 +1198,12 @@ export function ApplicantDetailView({
             Registered {formatDate(applicant.createdAt)}
             {applicant.activatedAt ? ` · live since ${formatDate(applicant.activatedAt)}` : ''}.
           </p>
+          {applicant.createdByStaff && (
+            <p className="text-fg-muted mt-2 text-sm">
+              Created by Saylani {applicant.createdByStaff.roleLabel ?? 'staff'}:{' '}
+              {applicant.createdByStaff.name ?? 'staff account'}.
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
             {applicant.can.manage && <EditDetailsDialog applicant={applicant} />}
             {applicant.can.manage && <ChangePhoneDialog applicant={applicant} />}

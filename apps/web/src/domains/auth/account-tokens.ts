@@ -3,9 +3,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import { ROLE_LABELS, type Role } from '@jobbank/shared';
 import { schema } from '@jobbank/db';
 import { hashPassword } from 'better-auth/crypto';
-import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull, max, sql } from 'drizzle-orm';
 import { recordAudit, runCommand, type RequestContext } from '@/domains/shared/audit';
-import { DomainError } from '@/domains/shared/errors';
+import { ConflictError, DomainError, NotFoundError } from '@/domains/shared/errors';
 import { maskEmail } from '@/domains/shared/masking';
 import { enforceRateLimit } from '@/domains/shared/rate-limit';
 import { db, type DbExecutor } from '@/lib/db';
@@ -25,7 +25,88 @@ export class InvalidLinkError extends DomainError {
   }
 }
 
-const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
+export const hashAccountToken = (token: string) => createHash('sha256').update(token).digest('hex');
+
+function pakistanDay(now: Date) {
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Karachi',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const value = (type: 'year' | 'month' | 'day') => parts.find((part) => part.type === type)!.value;
+  const year = Number(value('year'));
+  const month = Number(value('month'));
+  const day = Number(value('day'));
+  return {
+    date: `${value('year')}-${value('month')}-${value('day')}`,
+    compactDate: `${value('year')}${value('month')}${value('day')}`,
+    expiresAt: new Date(Date.UTC(year, month - 1, day + 1) - 5 * 60 * 60 * 1000),
+  };
+}
+
+/** Issues a branch/day-sequenced human-readable token; caller must use a transaction. */
+export async function issueBranchRegistrationToken(
+  executor: DbExecutor,
+  input: { userId: string; branchId: string; createdBy: string },
+): Promise<{
+  token: string;
+  tokenId: string;
+  branchName: string;
+  issuedAt: Date;
+  expiresAt: Date;
+}> {
+  const [branch] = await executor
+    .select({ code: schema.branches.code, name: schema.branches.name })
+    .from(schema.branches)
+    .where(eq(schema.branches.id, input.branchId));
+  if (!branch) throw new NotFoundError('Branch', input.branchId);
+
+  const issuedAt = new Date();
+  const day = pakistanDay(issuedAt);
+  const t = schema.accountTokens;
+  await executor.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${`${input.branchId}:${day.date}`}, 0))`,
+  );
+  const [latest] = await executor
+    .select({ sequence: max(t.registrationSequence) })
+    .from(t)
+    .where(
+      and(
+        eq(t.purpose, 'BRANCH_REGISTRATION'),
+        eq(t.branchId, input.branchId),
+        eq(t.registrationDay, day.date),
+      ),
+    );
+  const sequence = (latest?.sequence ?? 0) + 1;
+  if (sequence > 999) {
+    throw new ConflictError(
+      'This branch has issued its maximum number of registration tokens today.',
+    );
+  }
+
+  const token = `${branch.code}-${day.compactDate}-${String(sequence).padStart(3, '0')}`;
+  const [stored] = await executor
+    .insert(t)
+    .values({
+      userId: input.userId,
+      purpose: 'BRANCH_REGISTRATION',
+      tokenHash: hashAccountToken(token),
+      branchId: input.branchId,
+      registrationDay: day.date,
+      registrationSequence: sequence,
+      expiresAt: day.expiresAt,
+      createdBy: input.createdBy,
+    })
+    .returning({ id: t.id });
+  return {
+    token,
+    tokenId: stored!.id,
+    branchName: branch.name,
+    issuedAt,
+    expiresAt: day.expiresAt,
+  };
+}
 
 /** Issues a fresh single-use token; older unused tokens of the same purpose stop working. */
 export async function issueAccountToken(
@@ -46,7 +127,7 @@ export async function issueAccountToken(
   await executor.insert(t).values({
     userId: input.userId,
     purpose: input.purpose,
-    tokenHash: hashToken(token),
+    tokenHash: hashAccountToken(token),
     expiresAt: new Date(Date.now() + input.ttlSeconds * 1000),
     createdBy: input.createdBy,
   });
@@ -65,7 +146,7 @@ async function findValidToken(
     .from(t)
     .where(
       and(
-        eq(t.tokenHash, hashToken(token)),
+        eq(t.tokenHash, hashAccountToken(token)),
         eq(t.purpose, purpose),
         isNull(t.usedAt),
         gt(t.expiresAt, sql`now()`),

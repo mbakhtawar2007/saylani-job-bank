@@ -7,6 +7,8 @@ import type { ReactNode } from 'react';
 import { toast } from '@/components/molecules';
 import { DashboardLayout } from '@/components/templates';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
+import type { SelectOption } from '@/components/atoms';
+import { RegisterApplicantDialog } from './applicants/RegisterApplicantDialog';
 import { navigationFor } from './navigation';
 import { useSignOut } from './SignOutButton';
 
@@ -19,6 +21,8 @@ export interface RoleShellProps {
   branchNames: string[];
   /** Super Admin only: every branch, for the scope switcher. */
   switchableBranches?: { id: string; name: string }[];
+  /** Branches this staff member may register applicants for. */
+  registrationBranches?: SelectOption[];
   activeBranchId?: string | null;
   /** Applicants have no password/2FA settings. */
   showSecurity?: boolean;
@@ -30,6 +34,7 @@ export function RoleShell({
   user,
   branchNames,
   switchableBranches,
+  registrationBranches,
   activeBranchId,
   showSecurity = true,
   children,
@@ -52,6 +57,11 @@ export function RoleShell({
   return (
     <DashboardLayout
       navigation={navigationFor(role)}
+      sidebarAction={
+        registrationBranches ? (
+          <RegisterApplicantDialog branches={registrationBranches} placement="sidebar" />
+        ) : undefined
+      }
       sidebarFooter={
         <div
           className="mx-1 rounded-xl p-3"

@@ -388,6 +388,19 @@ export const preferencesSchema = z.object({
 });
 export type PreferencesInput = z.infer<typeof preferencesSchema>;
 
+export const staffRegisterApplicantSchema = registerApplicantSchema.extend({
+  phone: z.string().trim().min(10).max(20),
+  branchId: z.uuid('Choose a branch'),
+  address: applicantLocationSchema.optional(),
+  education: educationSchema.optional(),
+  experience: experienceSchema.optional(),
+  skills: skillsSchema.optional(),
+  languages: languagesSchema.optional(),
+  certifications: certificationsSchema.optional(),
+  preferences: preferencesSchema.optional(),
+});
+export type StaffRegisterApplicantInput = z.infer<typeof staffRegisterApplicantSchema>;
+
 // ─── Documents ─────────────────────────────────────────────────────────
 
 export const presignDocumentSchema = z.object({

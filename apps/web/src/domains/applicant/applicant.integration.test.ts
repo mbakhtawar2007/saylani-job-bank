@@ -4,6 +4,8 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { GET as getApplicant, PATCH as staffPatch } from '@/app/api/v1/applicants/[id]/route';
 import { GET as staffDocUrl } from '@/app/api/v1/applicants/[id]/documents/[docId]/url/route';
 import { POST as verifyIdentity } from '@/app/api/v1/applicants/[id]/identity-verification/route';
+import { POST as confirmRegistrationToken } from '@/app/api/v1/applicants/registration-token/confirm/route';
+import { POST as lookupRegistrationToken } from '@/app/api/v1/applicants/registration-token/lookup/route';
 import { PUT as changePhone } from '@/app/api/v1/applicants/[id]/phone/route';
 import { PATCH as staffStatus } from '@/app/api/v1/applicants/[id]/status/route';
 import { POST as transfer } from '@/app/api/v1/applicants/[id]/transfer/route';
@@ -18,7 +20,7 @@ import { GET as getMe, PATCH as patchMe } from '@/app/api/v1/applicants/me/route
 import { PUT as putSkills } from '@/app/api/v1/applicants/me/skills/route';
 import { PATCH as myStatus } from '@/app/api/v1/applicants/me/status/route';
 import { POST as register } from '@/app/api/v1/applicants/register/route';
-import { GET as listApplicants } from '@/app/api/v1/applicants/route';
+import { GET as listApplicants, POST as staffRegister } from '@/app/api/v1/applicants/route';
 import { resetMemoryRateLimits } from '@/domains/shared/rate-limit';
 import { db } from '@/lib/db';
 import {
@@ -48,10 +50,21 @@ const branchId = async (code: string) =>
 
 let khi: string;
 let lhr: string;
+let staffJar: Jar;
+let lhrStaffJar: Jar;
+let staffUserId: string;
 
 beforeAll(async () => {
   khi = await branchId('KHI-GULSHAN');
   lhr = await branchId('LHR-JOHAR');
+  staffJar = await signIn('staff.khi@jobbank.local');
+  lhrStaffJar = await signIn('staff.lhr@jobbank.local');
+  staffUserId = (
+    await db
+      .select({ id: schema.users.id })
+      .from(schema.users)
+      .where(eq(schema.users.email, 'staff.khi@jobbank.local'))
+  )[0]!.id;
 });
 beforeEach(() => resetMemoryRateLimits());
 
@@ -77,6 +90,184 @@ async function registered(overrides: Record<string, unknown> = {}) {
   expect(res.status, JSON.stringify(res.body)).toBe(201);
   return { jar, profile: res.body.data, cnic: body.cnic as string };
 }
+
+describe('staff-assisted applicant registration', () => {
+  async function createStaffApplicant(branchId: string, jar = staffJar) {
+    return call(staffRegister, '/api/v1/applicants', {
+      method: 'POST',
+      body: { ...personal(), phone: randomPhone(), branchId },
+      jar,
+    });
+  }
+
+  it('rejects a CNIC that is already registered', async () => {
+    const existing = await registered();
+    const response = await call(staffRegister, '/api/v1/applicants', {
+      method: 'POST',
+      body: {
+        ...personal({ cnic: existing.cnic }),
+        phone: randomPhone(),
+        branchId: khi,
+      },
+      jar: staffJar,
+    });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe('CONFLICT');
+    expect(response.body.error.details.reason).toBe('CNIC_TAKEN');
+  });
+
+  it('rejects a staff member registering an applicant outside their branch', async () => {
+    const response = await call(staffRegister, '/api/v1/applicants', {
+      method: 'POST',
+      body: { ...personal(), phone: randomPhone(), branchId: lhr },
+      jar: staffJar,
+    });
+
+    expect(response.status).toBe(403);
+  });
+
+  it('creates a DRAFT applicant and audits the staff member who created it', async () => {
+    const body = { ...personal(), phone: randomPhone(), branchId: khi };
+    const response = await call(staffRegister, '/api/v1/applicants', {
+      method: 'POST',
+      body,
+      jar: staffJar,
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.body.data.status).toBe('DRAFT');
+    expect(response.body.data.createdByStaff).toMatchObject({
+      name: expect.any(String),
+      roleLabel: 'Job Bank Staff',
+    });
+    const applicantId = response.body.data.id as string;
+    const [applicant] = await db
+      .select({
+        status: schema.applicants.status,
+        branchId: schema.applicants.branchId,
+        userId: schema.applicants.userId,
+      })
+      .from(schema.applicants)
+      .where(eq(schema.applicants.id, applicantId));
+    const [applicantRole] = await db
+      .select({ roleCode: schema.userRoles.roleCode })
+      .from(schema.userRoles)
+      .where(eq(schema.userRoles.userId, applicant!.userId));
+    const [audit] = await db
+      .select()
+      .from(schema.auditLogs)
+      .where(
+        and(
+          eq(schema.auditLogs.action, 'applicant.register_by_staff'),
+          eq(schema.auditLogs.entityId, applicantId),
+        ),
+      );
+
+    expect(applicant).toMatchObject({ status: 'DRAFT', branchId: khi });
+    expect(applicantRole?.roleCode).toBe('APPLICANT');
+    expect(response.body.data.registrationToken.token).toMatch(/^KHI-GULSHAN-\d{8}-\d{3}$/);
+    expect(audit).toMatchObject({
+      actorUserId: staffUserId,
+      branchId: khi,
+      metadata: { createdBy: staffUserId },
+    });
+    const [tokenAudit] = await db
+      .select()
+      .from(schema.auditLogs)
+      .where(
+        and(
+          eq(schema.auditLogs.action, 'applicant.registration_token_issued'),
+          eq(schema.auditLogs.entityId, applicantId),
+        ),
+      );
+    expect(tokenAudit?.after).toMatchObject({ tokenCodeHash: expect.any(String) });
+    expect(tokenAudit?.metadata).toMatchObject({ tokenId: expect.any(String) });
+  });
+
+  it('issues a distinct token for each applicant in the same branch and day', async () => {
+    const first = await createStaffApplicant(khi);
+    const second = await createStaffApplicant(khi);
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(first.body.data.registrationToken.token).not.toBe(
+      second.body.data.registrationToken.token,
+    );
+    expect(first.body.data.registrationToken.token).toMatch(/^KHI-GULSHAN-\d{8}-\d{3}$/);
+    expect(second.body.data.registrationToken.token).toMatch(/^KHI-GULSHAN-\d{8}-\d{3}$/);
+  });
+
+  it('rejects a registration token presented at another branch', async () => {
+    const created = await createStaffApplicant(khi);
+    const response = await call(
+      lookupRegistrationToken,
+      '/api/v1/applicants/registration-token/lookup',
+      {
+        method: 'POST',
+        body: { token: created.body.data.registrationToken.token },
+        jar: lhrStaffJar,
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.message).toBe('This registration token belongs to another branch.');
+  });
+
+  it('rejects an expired registration token', async () => {
+    const created = await createStaffApplicant(khi);
+    const userId = created.body.data.userId as string;
+    await db
+      .update(schema.accountTokens)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(
+        and(
+          eq(schema.accountTokens.userId, userId),
+          eq(schema.accountTokens.purpose, 'BRANCH_REGISTRATION'),
+        ),
+      );
+
+    const response = await call(
+      lookupRegistrationToken,
+      '/api/v1/applicants/registration-token/lookup',
+      {
+        method: 'POST',
+        body: { token: created.body.data.registrationToken.token },
+        jar: staffJar,
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.message).toContain('registration token has expired');
+  });
+
+  it('allows lookup without consuming, then rejects using the token twice', async () => {
+    const created = await createStaffApplicant(khi);
+    const token = created.body.data.registrationToken.token as string;
+    const lookup = await call(
+      lookupRegistrationToken,
+      '/api/v1/applicants/registration-token/lookup',
+      { method: 'POST', body: { token }, jar: staffJar },
+    );
+    expect(lookup.status).toBe(200);
+    expect(lookup.body.data.fullName).toBe(created.body.data.personal.fullName);
+
+    const confirmation = await call(
+      confirmRegistrationToken,
+      '/api/v1/applicants/registration-token/confirm',
+      { method: 'POST', body: { token }, jar: staffJar },
+    );
+    expect(confirmation.status).toBe(200);
+
+    const repeated = await call(
+      confirmRegistrationToken,
+      '/api/v1/applicants/registration-token/confirm',
+      { method: 'POST', body: { token }, jar: staffJar },
+    );
+    expect(repeated.status).toBe(409);
+    expect(repeated.body.error.message).toContain('already been used');
+  });
+});
 
 const location = (branch: string) => ({
   location: KARACHI_HOME,

@@ -5,6 +5,10 @@
 /* Dark mode follows the data-theme attribute set by ThemeProvider (system-aware). */
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
+.registration-form-print-root {
+  display: none;
+}
+
 /* Map semantic CSS variables → Tailwind colour utilities (bg-surface, text-fg-muted, …). */
 @theme inline {
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -93,6 +97,167 @@
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
       scroll-behavior: auto !important;
+    }
+  }
+
+  @media print {
+    @page {
+      size: letter portrait;
+      margin: 0.25in;
+    }
+
+    html,
+    body {
+      width: 100% !important;
+      height: auto !important;
+      min-height: 0 !important;
+      margin: 0 !important;
+      overflow: visible !important;
+    }
+
+    body > *:not(:has(.registration-token-print-root)):not(:has(.registration-form-print-root)) {
+      display: none !important;
+    }
+
+    body * {
+      visibility: hidden !important;
+    }
+
+    .registration-form-print-root,
+    .registration-form-print-root * {
+      visibility: visible !important;
+    }
+
+    .registration-form-print-root {
+      display: block !important;
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      width: 100% !important;
+      max-width: none !important;
+      overflow: visible !important;
+      background: white !important;
+    }
+
+    .registration-form-print-sheet {
+      width: 100% !important;
+      max-width: 7.8in !important;
+      margin: 0 auto !important;
+      padding: 0 !important;
+      color: #111 !important;
+      font-size: 9pt !important;
+    }
+
+    .registration-token-code {
+      display: inline-block !important;
+      max-width: 100% !important;
+      white-space: nowrap !important;
+      word-break: keep-all !important;
+      overflow-wrap: normal !important;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
+      font-size: 9pt !important;
+      letter-spacing: 0 !important;
+    }
+
+    .registration-form-section {
+      break-inside: avoid !important;
+      page-break-inside: avoid !important;
+      border-color: #555 !important;
+      padding: 0.12in !important;
+    }
+
+    .registration-form-field,
+    .registration-form-print-sheet header,
+    .registration-form-qr {
+      break-inside: avoid !important;
+      page-break-inside: avoid !important;
+    }
+
+    .registration-form-qr {
+      display: block !important;
+      width: 1.9in !important;
+      height: 1.9in !important;
+      max-width: none !important;
+      image-rendering: pixelated;
+    }
+
+    .registration-form-section h2,
+    .registration-form-section span,
+    .registration-form-print-sheet header,
+    .registration-form-print-sheet strong {
+      color: #111 !important;
+    }
+
+    .registration-form-print-sheet .no-print {
+      display: none !important;
+    }
+
+    .registration-token-print-root,
+    .registration-token-print-root * {
+      visibility: visible !important;
+    }
+
+    .registration-token-print-root {
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      width: 100% !important;
+      height: auto !important;
+      min-height: 0 !important;
+      max-width: none !important;
+      max-height: none !important;
+      transform: none !important;
+      overflow: visible !important;
+      display: block !important;
+      border: 0 !important;
+      padding: 0 !important;
+      background: white !important;
+      box-shadow: none !important;
+    }
+
+    .registration-token-print-root > :not(.registration-token-print-slip),
+    .registration-token-print-slip .no-print {
+      display: none !important;
+    }
+
+    .registration-token-print-slip {
+      box-sizing: border-box !important;
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr) !important;
+      justify-items: center !important;
+      width: 4.75in !important;
+      max-width: 100% !important;
+      margin: 0 auto !important;
+      padding: 0.18in !important;
+      gap: 0.08in !important;
+      overflow: visible !important;
+      border: 1px solid #222 !important;
+      background: white !important;
+      color: #111 !important;
+      box-shadow: none !important;
+      break-inside: avoid !important;
+      page-break-inside: avoid !important;
+      break-after: avoid-page !important;
+      page-break-after: avoid !important;
+    }
+
+    .registration-token-print-slip,
+    .registration-token-print-slip * {
+      color: #111 !important;
+    }
+
+    .registration-token-print-slip > .registration-token-code {
+      width: max-content !important;
+      max-width: 100% !important;
+      font-size: 11pt !important;
+      line-height: 1.2 !important;
+    }
+
+    .registration-token-print-slip img {
+      width: 1.45in !important;
+      height: 1.45in !important;
+      max-width: 100% !important;
+      object-fit: contain !important;
     }
   }
 }

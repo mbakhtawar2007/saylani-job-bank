@@ -1,24 +1,18 @@
 'use client';
 
 import {
-  APPLICANT_STATUS_LABELS,
   GENDER_LABELS,
   IDENTITY_STATUS_LABELS,
   JOB_TYPE_LABELS,
   LANGUAGE_PROFICIENCY_LABELS,
   SHIFT_LABELS,
   SKILL_LEVEL_LABELS,
-  type ProfileSectionId,
 } from '@jobbank/shared';
 import {
   AlertCircle,
   Award,
   Briefcase,
-  Building2,
-  Calendar,
   CheckCircle2,
-  ChevronRight,
-  ExternalLink,
   FileCheck,
   FileText,
   GraduationCap,
@@ -27,7 +21,6 @@ import {
   MapPin,
   Pencil,
   Phone,
-  ShieldCheck,
   Sparkles,
   User,
 } from 'lucide-react';

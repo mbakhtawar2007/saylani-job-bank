@@ -3,20 +3,24 @@ import { schema } from '@jobbank/db';
 import {
   APPLICANT_STATUSES,
   IDENTITY_STATUSES,
+  ROLE_LABELS,
+  ROLES,
   masterDataCodeSchema,
   type ApplicantStatus,
   type IdentityMethod,
   type IdentityOutcome,
   type IdentityStatus,
   type IdentityVerificationInput,
+  type Role,
+  type StaffRegisterApplicantInput,
   type UpdatePersonalInput,
 } from '@jobbank/shared';
 import { and, asc, count, desc, eq, exists, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { isPlaceholderEmail, placeholderEmailFor } from '@/domains/auth';
 import { getBranchContact, type BranchContact } from '@/domains/branch';
-import { masterDataLabels } from '@/domains/settings';
-import { runCommand } from '@/domains/shared/audit';
+import { assertActiveMasterData, masterDataLabels, resolveMatchRadius } from '@/domains/settings';
+import { recordAudit, runCommand } from '@/domains/shared/audit';
 import {
   ConflictError,
   ForbiddenError,
@@ -28,7 +32,9 @@ import { maskCnic, maskPhone } from '@/domains/shared/masking';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
 import {
   assertCityAccess,
+  assertBranchAccess,
   assertPermission,
+  assertRole,
   hasPermission,
   isSuperAdmin,
   type Actor,
@@ -41,12 +47,18 @@ import {
   a,
   addr,
   buildProfile,
+  cert,
   cnicOwner,
   currentDocuments,
   docs,
+  edu,
+  exp,
   idv,
   loadApplicant,
+  lng,
+  pref,
   skl,
+  completenessFor,
   type ApplicantProfile,
   type ApplicantRow,
   type SignedIn,
@@ -225,6 +237,7 @@ export interface IdentityCheckView {
 export interface ApplicantStaffView extends ApplicantProfile {
   userId: string;
   statusReason: string | null;
+  createdByStaff: { name: string | null; roleLabel: string | null } | null;
   identityHistory: IdentityCheckView[];
   /** What the signed-in staff member may do (drives the UI). */
   can: {
@@ -243,13 +256,302 @@ async function scopedApplicant(actor: Actor, applicantId: string): Promise<Appli
   return row;
 }
 
+/** Staff creates a complete DRAFT applicant profile for a person at the branch. */
+export async function staffRegisterApplicant(
+  ctx: SignedIn,
+  input: StaffRegisterApplicantInput,
+): Promise<ApplicantStaffView> {
+  assertPermission(ctx.actor, 'applicant:manage');
+  assertBranchAccess(ctx.actor, input.branchId);
+
+  const phone = normalizePkMobile(input.phone);
+  if (!phone) {
+    throw new ValidationError([{ path: 'phone', message: 'Enter a Pakistani mobile number' }]);
+  }
+
+  try {
+    let applicantId: string | undefined;
+    await runCommand(ctx, async (cmd) => {
+      const { tx, audit } = cmd;
+      const owner = await cnicOwner(tx, input.cnic);
+      if (owner) throw await cnicTakenError(tx, owner);
+
+      const [existingPhone] = await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.phoneNumber, phone));
+      if (existingPhone) {
+        throw new ConflictError('This number is already registered. Please use account recovery.');
+      }
+
+      const [user] = await tx
+        .insert(schema.users)
+        .values({
+          name: input.fullName,
+          email: placeholderEmailFor(phone),
+          phoneNumber: phone,
+          phoneNumberVerified: false,
+        })
+        .returning({ id: schema.users.id });
+      await tx.insert(schema.userRoles).values({ userId: user!.id, roleCode: 'APPLICANT' });
+
+      const [row] = await tx
+        .insert(a)
+        .values({
+          userId: user!.id,
+          branchId: input.branchId,
+          fullName: input.fullName,
+          fatherName: input.fatherName,
+          cnic: input.cnic,
+          dateOfBirth: input.dateOfBirth,
+          gender: input.gender,
+          email: input.email ?? null,
+        })
+        .returning();
+      applicantId = row!.id;
+
+      if (input.address) {
+        const city = (
+          await assertActiveMasterData(
+            tx,
+            'CITY',
+            [input.address.cityCode],
+            () => 'address.cityCode',
+          )
+        ).get(input.address.cityCode)!;
+        if (input.address.areaCode) {
+          const area = (
+            await assertActiveMasterData(
+              tx,
+              'AREA',
+              [input.address.areaCode],
+              () => 'address.areaCode',
+            )
+          ).get(input.address.areaCode)!;
+          if (area.parentId !== city.id) {
+            throw new ValidationError([
+              { path: 'address.areaCode', message: `This area is not in ${city.label}` },
+            ]);
+          }
+        }
+        await tx.insert(addr).values({
+          applicantId: row!.id,
+          addressLine: input.address.addressLine ?? '',
+          cityCode: input.address.cityCode,
+          areaCode: input.address.areaCode,
+          location: input.address.location,
+        });
+      }
+
+      if (input.education) {
+        await assertActiveMasterData(
+          tx,
+          'EDUCATION_LEVEL',
+          input.education.items.map((item) => item.levelCode),
+          (index) => `education.items.${index}.levelCode`,
+        );
+        if (input.education.items.length) {
+          await tx.insert(edu).values(
+            input.education.items.map((item, sortOrder) => ({
+              ...item,
+              applicantId: row!.id,
+              sortOrder,
+            })),
+          );
+        }
+      }
+
+      if (input.experience) {
+        const categories = input.experience.items.flatMap((item, index) =>
+          item.categoryCode ? [{ code: item.categoryCode, index }] : [],
+        );
+        if (categories.length) {
+          await assertActiveMasterData(
+            tx,
+            'JOB_CATEGORY',
+            categories.map((item) => item.code),
+            (index) => `experience.items.${categories[index]!.index}.categoryCode`,
+          );
+        }
+        if (input.experience.items.length) {
+          await tx.insert(exp).values(
+            input.experience.items.map((item, sortOrder) => ({
+              ...item,
+              startMonth: `${item.startMonth}-01`,
+              endMonth: item.endMonth ? `${item.endMonth}-01` : null,
+              applicantId: row!.id,
+              sortOrder,
+            })),
+          );
+        }
+        await tx
+          .update(a)
+          .set({ hasNoExperience: input.experience.hasNoExperience })
+          .where(eq(a.id, row!.id));
+      }
+
+      if (input.skills?.items.length) {
+        await tx
+          .insert(schema.masterData)
+          .values(
+            input.skills.items.map((item) => ({
+              type: 'SKILL' as const,
+              code: item.skillCode,
+              label: item.skillCode.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+              isActive: true,
+            })),
+          )
+          .onConflictDoNothing();
+        await tx
+          .insert(skl)
+          .values(input.skills.items.map((item) => ({ ...item, applicantId: row!.id })));
+      }
+
+      if (input.languages) {
+        await assertActiveMasterData(
+          tx,
+          'LANGUAGE',
+          input.languages.items.map((item) => item.languageCode),
+          (index) => `languages.items.${index}.languageCode`,
+        );
+        if (input.languages.items.length) {
+          await tx
+            .insert(lng)
+            .values(input.languages.items.map((item) => ({ ...item, applicantId: row!.id })));
+        }
+      }
+
+      if (input.certifications?.items.length) {
+        await tx.insert(cert).values(
+          input.certifications.items.map((item, sortOrder) => ({
+            name: item.name,
+            issuer: item.issuer,
+            issuedMonth: item.issuedMonth ? `${item.issuedMonth}-01` : null,
+            expiresMonth: item.expiresMonth ? `${item.expiresMonth}-01` : null,
+            applicantId: row!.id,
+            sortOrder,
+          })),
+        );
+      }
+
+      if (input.preferences) {
+        await assertActiveMasterData(
+          tx,
+          'JOB_CATEGORY',
+          input.preferences.categoryCodes,
+          (index) => `preferences.categoryCodes.${index}`,
+        );
+        if (input.preferences.willingRadiusM !== null) {
+          const { maxM } = await resolveMatchRadius({ branchId: input.branchId });
+          if (input.preferences.willingRadiusM > maxM) {
+            throw new ValidationError([
+              {
+                path: 'preferences.willingRadiusM',
+                message: `This branch matches jobs within ${maxM / 1000} km at most`,
+              },
+            ]);
+          }
+        }
+        await tx.insert(pref).values({
+          applicantId: row!.id,
+          ...input.preferences,
+        });
+      }
+
+      audit({
+        action: 'applicant.register_by_staff',
+        entityType: 'applicant',
+        entityId: row!.id,
+        branchId: input.branchId,
+        after: {
+          fullName: input.fullName,
+          fatherName: input.fatherName,
+          cnic: input.cnic,
+          dateOfBirth: input.dateOfBirth,
+          gender: input.gender,
+          email: input.email ?? null,
+          phone,
+          branchId: input.branchId,
+          profile: {
+            address: input.address,
+            education: input.education,
+            experience: input.experience,
+            skills: input.skills,
+            languages: input.languages,
+            certifications: input.certifications,
+            preferences: input.preferences,
+          },
+        },
+        metadata: { createdBy: ctx.actor.userId },
+      });
+      const completeness = await completenessFor(tx, row!);
+      await tx
+        .update(a)
+        .set({ profileCompleteness: completeness.percent })
+        .where(eq(a.id, row!.id));
+    });
+
+    if (!applicantId) throw new Error('Applicant registration completed without an applicant.');
+    return getApplicantForStaff(ctx.actor, applicantId);
+  } catch (error) {
+    if (
+      isUniqueViolation(error, 'applicants_cnic_unique') ||
+      (error instanceof ConflictError &&
+        (error.details as { reason?: string } | undefined)?.reason === 'CNIC_TAKEN')
+    ) {
+      const owner = await cnicOwner(db, input.cnic);
+      if (owner) {
+        await recordAudit(ctx, {
+          action: 'applicant.register_duplicate_cnic',
+          entityType: 'user',
+          branchId: input.branchId,
+          metadata: { createdBy: ctx.actor.userId },
+        });
+        throw await cnicTakenError(db, owner);
+      }
+    }
+    if (isUniqueViolation(error)) {
+      throw new ConflictError('This number is already registered. Please use account recovery.');
+    }
+    throw error;
+  }
+}
+
+/** Records the first-counter paper review without advancing the applicant's DRAFT status. */
+export async function markApplicantRegistrationVerifiedSigned(
+  ctx: SignedIn,
+  applicantId: string,
+): Promise<void> {
+  assertRole(ctx.actor, 'STAFF', 'BRANCH_ADMIN');
+  assertPermission(ctx.actor, 'applicant:manage');
+  const applicant = await loadApplicant(db, applicantId);
+  assertBranchAccess(ctx.actor, applicant.branchId, {
+    entityType: 'applicant',
+    entityId: applicant.id,
+  });
+  await runCommand(ctx, async ({ tx, audit }) => {
+    const row = await loadApplicant(tx, applicantId, { forUpdate: true });
+    if (row.status !== 'DRAFT') {
+      throw new ConflictError('Only a draft applicant can be marked verified and signed.');
+    }
+    audit({
+      action: 'applicant.registration_form_verified_signed',
+      entityType: 'applicant',
+      entityId: row.id,
+      branchId: row.branchId,
+      after: { status: row.status, verifiedSigned: true },
+      metadata: { verifiedBy: ctx.actor.userId },
+    });
+  });
+}
+
 export async function getApplicantForStaff(
   actor: Actor,
   applicantId: string,
 ): Promise<ApplicantStaffView> {
   assertPermission(actor, 'applicant:read');
   const row = await scopedApplicant(actor, applicantId);
-  const [profile, history] = await Promise.all([
+  const [profile, history, staffCreator] = await Promise.all([
     buildProfile(db, row),
     db
       .select({
@@ -265,11 +567,31 @@ export async function getApplicantForStaff(
       .leftJoin(schema.users, eq(schema.users.id, idv.verifiedBy))
       .where(eq(idv.applicantId, row.id))
       .orderBy(desc(idv.createdAt)),
+    db
+      .select({ name: schema.users.name, actorRole: schema.auditLogs.actorRole })
+      .from(schema.auditLogs)
+      .leftJoin(schema.users, eq(schema.users.id, schema.auditLogs.actorUserId))
+      .where(
+        and(
+          eq(schema.auditLogs.action, 'applicant.register_by_staff'),
+          eq(schema.auditLogs.entityType, 'applicant'),
+          eq(schema.auditLogs.entityId, row.id),
+        ),
+      )
+      .orderBy(asc(schema.auditLogs.occurredAt), asc(schema.auditLogs.id))
+      .limit(1)
+      .then((rows) => rows[0] ?? null),
   ]);
+  const creatorRole = staffCreator
+    ? ROLES.find((role: Role) => staffCreator.actorRole?.split(',').includes(role))
+    : undefined;
   return {
     ...profile,
     userId: row.userId,
     statusReason: row.statusReason,
+    createdByStaff: staffCreator
+      ? { name: staffCreator.name, roleLabel: creatorRole ? ROLE_LABELS[creatorRole] : null }
+      : null,
     identityHistory: history.map((h) => ({
       id: h.id,
       outcome: h.outcome,

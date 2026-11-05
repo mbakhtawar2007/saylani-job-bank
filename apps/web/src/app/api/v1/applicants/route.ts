@@ -1,6 +1,12 @@
-import { APPLICANT_SORTABLE, applicantFilters, listApplicants } from '@/domains/applicant';
-import { apiHandler, ok } from '@/domains/shared/http';
+import {
+  APPLICANT_SORTABLE,
+  applicantFilters,
+  listApplicants,
+  staffRegisterApplicant,
+} from '@/domains/applicant';
+import { apiHandler, created, ok } from '@/domains/shared/http';
 import { parseListQuery } from '@/domains/shared/pagination';
+import { staffRegisterApplicantSchema } from '@jobbank/shared';
 
 /**
  * GET /api/v1/applicants — staff search, branch-scoped (?q name/CNIC/phone, status,
@@ -17,4 +23,12 @@ export const GET = apiHandler({
     const { data, meta } = await listApplicants(actor!, query);
     return ok(data, meta);
   },
+});
+
+/** POST /api/v1/applicants — staff creates an applicant account for their branch. */
+export const POST = apiHandler({
+  permission: 'applicant:manage',
+  body: staffRegisterApplicantSchema,
+  handler: async ({ ctx, actor, body }) =>
+    created(await staffRegisterApplicant({ ...ctx, actor: actor! }, body)),
 });

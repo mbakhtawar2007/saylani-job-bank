@@ -15,18 +15,24 @@ async function Shell({
 }) {
   const { user, actor } = state;
   const me = await describeMe(user, actor);
-  const switchable =
+  const [switchable, registrationBranches] = await Promise.all([
     role === 'SUPER_ADMIN' && !actor.twoFactorPending
-      ? (await listBranches({ ...actor, activeBranchId: null })).map((b) => ({
-          id: b.id,
-          name: b.name,
-        }))
-      : undefined;
+      ? listBranches({ ...actor, activeBranchId: null }).then((branches) =>
+          branches.map((b) => ({ id: b.id, name: b.name })),
+        )
+      : Promise.resolve(undefined),
+    role === 'STAFF' || role === 'BRANCH_ADMIN'
+      ? listBranches(actor).then((branches) =>
+          branches.map((b) => ({ value: b.id, label: b.name })),
+        )
+      : Promise.resolve(undefined),
+  ]);
   return (
     <RoleShell
       role={role}
       user={{ name: user.name }}
       branchNames={me.branches.map((b) => b.name)}
+      registrationBranches={registrationBranches}
       switchableBranches={switchable}
       activeBranchId={actor.activeBranchId}
       showSecurity={!actor.roles.every((r) => r === 'APPLICANT')}

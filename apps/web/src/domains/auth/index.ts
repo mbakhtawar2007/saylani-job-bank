@@ -1,9 +1,11 @@
 /** Public API of the auth domain (route handlers and server components import from here). */
 export {
   acceptInvitation,
+  hashAccountToken,
   INVITE_TTL_DAYS,
   InvalidLinkError,
   issueAccountToken,
+  issueBranchRegistrationToken,
   pendingInvitation,
   previewInvitation,
   requestPasswordReset,

@@ -12,6 +12,7 @@ export function DashboardLayout({
   navigation,
   topBar,
   children,
+  sidebarAction,
   sidebarFooter,
 }: DashboardLayoutProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -27,7 +28,12 @@ export function DashboardLayout({
 
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-dvh lg:block">
-        <AppSidebar sections={navigation} brand={<BrandMark />} footer={sidebarFooter} />
+        <AppSidebar
+          sections={navigation}
+          brand={<BrandMark />}
+          action={sidebarAction}
+          footer={sidebarFooter}
+        />
       </aside>
 
       {/* Mobile drawer */}
@@ -57,6 +63,7 @@ export function DashboardLayout({
                   </Dialog.Close>
                 </div>
               }
+              action={sidebarAction}
               footer={sidebarFooter}
               onNavigate={() => setDrawerOpen(false)}
             />

@@ -9,4 +9,5 @@ export interface ModalProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   size?: 'sm' | 'md' | 'lg';
+  className?: string;
 }

@@ -10,7 +10,14 @@ export function isNavItemActive(item: Pick<NavItem, 'href' | 'exact'>, pathname:
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
-export function AppSidebar({ sections, brand, footer, onNavigate, className }: AppSidebarProps) {
+export function AppSidebar({
+  sections,
+  brand,
+  action,
+  footer,
+  onNavigate,
+  className,
+}: AppSidebarProps) {
   const pathname = usePathname() ?? '';
 
   return (
@@ -97,6 +104,12 @@ export function AppSidebar({ sections, brand, footer, onNavigate, className }: A
           ))}
         </div>
       </nav>
+
+      {action && (
+        <div className="shrink-0 p-4" style={{ borderTop: '1px solid var(--sidebar-border)' }}>
+          {action}
+        </div>
+      )}
 
       {/* Footer */}
       {footer && (
