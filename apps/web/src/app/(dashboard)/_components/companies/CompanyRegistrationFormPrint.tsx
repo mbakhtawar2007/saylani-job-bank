@@ -43,7 +43,16 @@ export function CompanyRegistrationFormPrint({
       <article className="registration-form-print-sheet grid gap-3 text-gray-950">
         <header className="grid grid-cols-[1fr_auto] items-center gap-4 border-b-2 border-gray-800 pb-2">
           <div className="grid gap-1">
-            <p className="text-xs font-semibold tracking-widest uppercase">Saylani Job Bank</p>
+            <div className="flex items-center gap-3">
+              <img
+                src="/logo.png"
+                alt="Saylani Job Bank — Connecting Talent with Opportunity"
+                width={120}
+                height={40}
+                className="h-10 w-[120px] shrink-0 object-contain"
+              />
+              <p className="text-xs font-semibold tracking-widest uppercase">Saylani Job Bank</p>
+            </div>
             <h1 className="text-xl font-bold">Company Registration Form</h1>
             <p className="text-sm">Branch: {company.branch?.name ?? ''}</p>
             <p className="text-xs">

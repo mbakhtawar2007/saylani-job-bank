@@ -55,8 +55,10 @@ function initialMeta(type: MasterDataType, meta: Meta | undefined): Meta {
 }
 
 const toggle = (list: unknown, value: string, on: boolean): string[] => {
-  const current = Array.isArray(list) ? (list as string[]) : [];
-  return on ? [...new Set([...current, value])] : current.filter((v) => v !== value);
+  const current = Array.isArray(list) ? (list as string[]) : typeof list === 'string' ? [list] : [];
+
+  const next = on ? [...new Set([...current, value])] : current.filter((v) => v !== value);
+  return next;
 };
 
 /** Create or edit one master-data item. Code and type are fixed once created. */
@@ -95,6 +97,12 @@ export function MasterDataItemDialog({ type, item, parents, trigger, open, onOpe
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    const nextErrors = validateForm();
+    if (Object.keys(nextErrors).length) {
+      setErrors(nextErrors);
+      return;
+    }
+
     setPending(true);
     setErrors({});
     const body = {
@@ -132,6 +140,45 @@ export function MasterDataItemDialog({ type, item, parents, trigger, open, onOpe
   };
 
   const metaField = (name: string) => errors[`meta.${name}`] ?? errors[`meta.${name}.0`];
+
+  const validateForm = () => {
+    const nextErrors: Record<string, string> = {};
+
+    if (!form.label.trim()) nextErrors.label = 'Label is required';
+    if (!form.code.trim()) nextErrors.code = 'Code is required';
+    if (parentRule?.required && !form.parentId) nextErrors.parentId = 'Choose a parent item';
+
+    if (type === 'EDUCATION_LEVEL') {
+      const rank = Number(meta.rank);
+      if (!Number.isFinite(rank) || rank < 0 || rank > 20) {
+        nextErrors['meta.rank'] = 'Use a rank from 0 to 20';
+      }
+    }
+
+    if (type === 'CITY' && !meta.province) {
+      nextErrors['meta.province'] = 'Choose a province';
+    }
+
+    if (type === 'DOCUMENT_TYPE') {
+      const appliesTo = typeof meta.appliesTo === 'string' ? meta.appliesTo : '';
+      if (!appliesTo) nextErrors['meta.appliesTo'] = 'Choose who uploads this';
+
+      const mimeTypes = Array.isArray(meta.mimeTypes) ? meta.mimeTypes : [];
+      if (!mimeTypes.length) nextErrors['meta.mimeTypes'] = 'Choose at least one file type';
+
+      const maxSizeMb = Number(meta.maxSizeMb);
+      if (!Number.isFinite(maxSizeMb) || maxSizeMb < 1 || maxSizeMb > 20) {
+        nextErrors['meta.maxSizeMb'] = 'Use a value from 1 to 20 MB';
+      }
+    }
+
+    if (type === 'BLACKLIST_REASON') {
+      const appliesTo = Array.isArray(meta.appliesTo) ? meta.appliesTo : [];
+      if (!appliesTo.length) nextErrors['meta.appliesTo'] = 'Choose at least one';
+    }
+
+    return nextErrors;
+  };
 
   return (
     <Modal

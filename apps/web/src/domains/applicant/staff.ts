@@ -285,7 +285,7 @@ export async function staffRegisterApplicant(
   input: StaffRegisterApplicantInput,
 ): Promise<ApplicantStaffView> {
   assertPermission(ctx.actor, 'applicant:manage');
-  assertBranchAccess(ctx.actor, input.branchId);
+  if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, input.branchId);
 
   const phone = normalizePkMobile(input.phone);
   if (!phone) {
@@ -555,13 +555,15 @@ export async function markApplicantRegistrationVerifiedSigned(
   ctx: SignedIn,
   applicantId: string,
 ): Promise<{ verifiedSignedAt: Date; verifiedSignedBy: string }> {
-  assertRole(ctx.actor, 'STAFF', 'BRANCH_ADMIN');
+  assertRole(ctx.actor, 'STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN');
   assertPermission(ctx.actor, 'applicant:manage');
   const applicant = await loadApplicant(db, applicantId);
-  assertBranchAccess(ctx.actor, applicant.branchId, {
-    entityType: 'applicant',
-    entityId: applicant.id,
-  });
+  if (!isSuperAdmin(ctx.actor)) {
+    assertBranchAccess(ctx.actor, applicant.branchId, {
+      entityType: 'applicant',
+      entityId: applicant.id,
+    });
+  }
   const verifiedAt = new Date();
   await runCommand(ctx, async ({ tx, audit }) => {
     const row = await loadApplicant(tx, applicantId, { forUpdate: true });

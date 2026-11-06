@@ -21,14 +21,22 @@ async function Shell({
           branches.map((b) => ({ id: b.id, name: b.name })),
         )
       : Promise.resolve(undefined),
-    role === 'STAFF' || role === 'BRANCH_ADMIN' ? listBranches(actor) : Promise.resolve(undefined),
+    role === 'STAFF' || role === 'BRANCH_ADMIN'
+      ? listBranches(actor)
+      : role === 'SUPER_ADMIN' && !actor.twoFactorPending
+        ? listBranches({ ...actor, activeBranchId: null })
+        : Promise.resolve(undefined),
   ]);
   const registrationBranches =
-    role === 'STAFF' || role === 'BRANCH_ADMIN'
-      ? branchOptions?.map((branch) => ({ value: branch.id, label: branch.name }))
-      : undefined;
+    role === 'SUPER_ADMIN'
+      ? branchOptions
+          ?.filter((branch) => branch.isActive)
+          .map((branch) => ({ value: branch.id, label: branch.name }))
+      : role === 'STAFF' || role === 'BRANCH_ADMIN'
+        ? branchOptions?.map((branch) => ({ value: branch.id, label: branch.name }))
+        : undefined;
   const companyRegistrationBranches =
-    role === 'STAFF'
+    role === 'STAFF' || role === 'BRANCH_ADMIN' || role === 'SUPER_ADMIN'
       ? branchOptions
           ?.filter((branch) => branch.isActive)
           .map((branch) => ({ value: branch.id, label: branch.name }))

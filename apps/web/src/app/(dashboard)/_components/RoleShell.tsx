@@ -24,7 +24,7 @@ export interface RoleShellProps {
   switchableBranches?: { id: string; name: string }[];
   /** Branches this staff member may register applicants for. */
   registrationBranches?: SelectOption[];
-  /** Active branches this staff member may register companies for. */
+  /** Active branches this role may register companies for. */
   companyRegistrationBranches?: SelectOption[];
   activeBranchId?: string | null;
   /** Applicants have no password/2FA settings. */

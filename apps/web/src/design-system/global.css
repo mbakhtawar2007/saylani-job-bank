@@ -162,6 +162,11 @@
       page-break-inside: avoid !important;
     }
 
+    .registration-form-print-sheet header img {
+      display: block !important;
+      visibility: visible !important;
+    }
+
     .registration-form-qr {
       display: block !important;
       width: 1.9in !important;

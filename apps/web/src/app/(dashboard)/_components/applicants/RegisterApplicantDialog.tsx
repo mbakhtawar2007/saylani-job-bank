@@ -404,6 +404,21 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                   autoComplete="name"
                   value={form.fullName}
                   onChange={(e) => updateForm({ fullName: e.target.value })}
+                  onBlur={() => {
+                    const result = staffRegisterApplicantSchema.shape.fullName.safeParse(
+                      form.fullName,
+                    );
+                    setErrors((current) => {
+                      const next = { ...current };
+                      if (result.success) {
+                        delete next.fullName;
+                      } else {
+                        next.fullName =
+                          result.error.issues[0]?.message ?? 'Enter a valid full name';
+                      }
+                      return next;
+                    });
+                  }}
                 />
               </FormField>
               <FormField label="Father's or husband's name" required error={errors.fatherName}>

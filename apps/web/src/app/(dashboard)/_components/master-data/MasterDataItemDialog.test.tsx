@@ -89,6 +89,22 @@ describe('MasterDataItemDialog', () => {
     expect(lastBody().meta).toEqual({ requiresNote: false });
   });
 
+  it('blocks invalid metadata before submitting', async () => {
+    await open('DOCUMENT_TYPE');
+    await userEvent.type(screen.getByLabelText(/^Label/), 'Passport');
+    await userEvent.type(screen.getByLabelText(/^Code/), 'PASSPORT');
+    await userEvent.clear(screen.getByLabelText(/Maximum size/));
+    await userEvent.type(screen.getByLabelText(/Maximum size/), '0');
+    await userEvent.click(screen.getByRole('checkbox', { name: 'PDF' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'JPEG' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'PNG' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(await screen.findByText('Use a value from 1 to 20 MB')).toBeInTheDocument();
+    expect(screen.getByText('Choose at least one file type')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('locks the code when editing', async () => {
     render(
       <MasterDataItemDialog

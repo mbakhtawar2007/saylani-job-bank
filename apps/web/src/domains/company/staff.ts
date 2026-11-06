@@ -547,10 +547,12 @@ export async function markCompanyRegistrationVerifiedSigned(
   assertRole(ctx.actor, 'STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN');
   assertPermission(ctx.actor, 'company:onboard');
   const company = await loadCompany(db, companyId);
-  assertBranchAccess(ctx.actor, company.branchId, {
-    entityType: 'company',
-    entityId: company.id,
-  });
+  if (!isSuperAdmin(ctx.actor)) {
+    assertBranchAccess(ctx.actor, company.branchId, {
+      entityType: 'company',
+      entityId: company.id,
+    });
+  }
   // Only a company registered by staff after a field visit has a paper form to
   // verify and sign. Employer self-registered DRAFTs must go through the
   // employer's own submit path (with its head-office + documents checks).

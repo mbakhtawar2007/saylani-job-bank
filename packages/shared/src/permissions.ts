@@ -71,6 +71,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'company:onboard',
     'company:manage',
     'applicant:read',
+    'applicant:manage',
     'applicant:transfer',
     'job:read',
     'match_case:read',
