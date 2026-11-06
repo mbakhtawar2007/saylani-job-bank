@@ -1,6 +1,7 @@
 import 'server-only';
 import { z } from 'zod';
 import { env } from '@/lib/env';
+import { createBoundedCache } from './cache';
 
 /**
  * Reverse geocoding via OpenStreetMap Nominatim: map pin → address line + city
@@ -45,7 +46,17 @@ interface NominatimAddress {
 
 // Module-level cache: the server process sees every employer; keys are
 // quantised coordinates + the resolved result (including cityCode misses).
-const cache = new Map<string, ReverseGeocodeResult>();
+// Bounded: 500 entries, 10-minute TTL, keyed on the actual city codes+labels —
+// keying on the city-list length alone collided between different lists.
+const cache = createBoundedCache<ReverseGeocodeResult>(500, 10 * 60 * 1000);
+
+function cacheKey(lat: number, lng: number, cities: { code: string; label: string }[]): string {
+  const fingerprint = cities
+    .map((c) => `${c.code}=${c.label}`)
+    .sort()
+    .join(',');
+  return `${quantise(lat)},${quantise(lng)}|${fingerprint}`;
+}
 
 const quantise = (n: number) => n.toFixed(COORD_DECIMALS);
 
@@ -132,7 +143,7 @@ export async function reverseGeocode(
   lng: number,
   cities: { code: string; label: string }[],
 ): Promise<ReverseGeocodeResult> {
-  const key = `${quantise(lat)},${quantise(lng)},${cities.length}`;
+  const key = cacheKey(lat, lng, cities);
   const hit = cache.get(key);
   if (hit) return hit;
 

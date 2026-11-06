@@ -7,6 +7,7 @@ import { apiHandler, ok } from '@/domains/shared/http';
  * (accept, or decline with a REFUSAL_REASON). Guarded by `decision:applicant`.
  */
 export const POST = apiHandler({
+  permission: 'decision:applicant',
   params: z.object({ jobId: z.uuid() }),
   body: z
     .object({

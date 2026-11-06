@@ -93,6 +93,40 @@ export const companies = pgTable(
   ],
 );
 
+/**
+ * The field-visit outreach record for a company registered by staff (one row per
+ * company, only when staff onboarded it after a visit). Previously this lived only
+ * on the `company.register` audit entry, which meant any audit retention/purge —
+ * or the PII redaction the audit trail needs — silently destroyed the record and
+ * broke re-print. The audit row remains as evidence; this table is the record.
+ * `agreed` is always true here: the row only exists for companies that agreed.
+ */
+export const companyOnboarding = pgTable(
+  'company_onboarding',
+  {
+    companyId: uuid()
+      .primaryKey()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    /** The staff member who visited and onboarded the company. */
+    onboardedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+    /** Pakistan calendar date of the field visit (yyyy-mm-dd). */
+    visitDate: date({ mode: 'string' }),
+    agreed: boolean().notNull().default(true),
+    headOfficeAddress: text(),
+    otherSites: text(),
+    workforceRoles: text(),
+    workforceType: text(),
+    workforceShifts: text(),
+    workforceOpenings: text(),
+    yearsInBusiness: text(),
+    previousHiring: text(),
+    certifications: text(),
+    additionalNotes: text(),
+    ...timestamps,
+  },
+  (t) => [index('company_onboarding_onboarded_by_idx').on(t.onboardedBy)],
+);
+
 /** Employer accounts acting for a company. v1: one company per account (owner decision 2). */
 export const companyMembers = pgTable(
   'company_members',

@@ -31,6 +31,17 @@ export const env = createEnv({
     // SMS gateway for OTP codes. 'console' prints codes to the server log (development only).
     SMS_PROVIDER: z.enum(['console']).default('console'),
     OPENCAGE_API_KEY: z.string().optional(),
+    /**
+     * How many reverse proxies sit in front of the app (default 1). Client IPs are
+     * taken from the right-hand TRUSTED_PROXY_HOPS entries of X-Forwarded-For only
+     * (see lib/http/client-ip.ts) — the left-hand entries are client-controlled.
+     * Set this to the real proxy count of the deployment (e.g. 2 behind
+     * Cloudflare + nginx, 1 behind a single nginx). If it is larger than the
+     * chain the app actually sees, no trustworthy IP can be determined and
+     * IP-based rate limits fall back to a shared bucket (fail-closed).
+     * Local dev has no proxy, so direct connections get no trustworthy IP.
+     */
+    TRUSTED_PROXY_HOPS: z.coerce.number().int().min(1).max(10).default(1),
   },
   client: {
     NEXT_PUBLIC_APP_URL: z.url(),

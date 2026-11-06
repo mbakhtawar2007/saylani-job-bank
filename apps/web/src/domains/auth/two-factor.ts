@@ -1,10 +1,12 @@
 import 'server-only';
 import QRCode from 'qrcode';
 import { recordAudit, type RequestContext } from '@/domains/shared/audit';
-import { ForbiddenError, UnauthenticatedError } from '@/domains/shared/errors';
+import { ForbiddenError, RateLimitedError, UnauthenticatedError } from '@/domains/shared/errors';
+import { enforceRateLimit } from '@/domains/shared/rate-limit';
 import type { Actor } from '@/domains/shared/scope';
 import { requiresTwoFactor } from './actor';
 import { getAuth } from './auth';
+import { clearTrustedDevices, revokeAllSessions } from './service';
 
 type SignedIn = RequestContext & { actor: Actor };
 
@@ -53,6 +55,29 @@ export async function confirmTwoFactorEnrollment(
   code: string,
   requestHeaders: Headers,
 ): Promise<string[]> {
+  // 5 wrong codes per 15 minutes per account, plus the shared IP limit: an
+  // attacker with a stolen session must not be able to brute-force enrolment.
+  try {
+    await enforceRateLimit(
+      '2fa-confirm-user',
+      ctx.actor.userId,
+      { limit: 5, windowSeconds: 900 },
+      'Too many incorrect codes. Try again in 15 minutes.',
+    );
+    if (ctx.ip) {
+      await enforceRateLimit('2fa-confirm-ip', ctx.ip, { limit: 30, windowSeconds: 900 });
+    }
+  } catch (error) {
+    if (error instanceof RateLimitedError) {
+      await recordAudit(ctx, {
+        action: 'auth.login_failed',
+        entityType: 'user',
+        entityId: ctx.actor.userId,
+        metadata: { method: 'totp_enroll', reason: 'RATE_LIMITED' },
+      });
+    }
+    throw error;
+  }
   try {
     const result = await getAuth().api.verifyTOTP({
       body: { code },
@@ -66,10 +91,17 @@ export async function confirmTwoFactorEnrollment(
     });
     return result.headers.getSetCookie();
   } catch (error) {
-    if (authApiMessage(error))
+    if (authApiMessage(error)) {
+      await recordAudit(ctx, {
+        action: 'auth.login_failed',
+        entityType: 'user',
+        entityId: ctx.actor.userId,
+        metadata: { method: 'totp_enroll', reason: 'INVALID' },
+      });
       throw new UnauthenticatedError(
         'That code is not correct. Check the time on your phone and try again.',
       );
+    }
     throw error;
   }
 }
@@ -91,6 +123,12 @@ export async function disableTwoFactor(
     if (authApiMessage(error)) throw new UnauthenticatedError('Incorrect password');
     throw error;
   }
+  // Turning 2FA off must not leave a live session behind for anyone who stole
+  // one (the password is already known to them), and must not leave trusted
+  // devices that would skip 2FA if it is re-enabled later. The user signs in
+  // again afterwards; the client refreshes into the login redirect.
+  await revokeAllSessions(ctx.actor.userId);
+  await clearTrustedDevices(ctx.actor.userId);
   await recordAudit(ctx, {
     action: 'auth.2fa_disabled',
     entityType: 'user',

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { markApplicantRegistrationVerifiedSigned } from '@/domains/applicant';
+import { markApplicantRegistrationVerifiedSigned, verifiedSignedResponseSchema } from '@/domains/applicant';
 import { apiHandler, ok } from '@/domains/shared/http';
 
 const params = z.object({ id: z.uuid() });
@@ -8,6 +8,7 @@ const params = z.object({ id: z.uuid() });
 export const POST = apiHandler({
   permission: 'applicant:manage',
   params,
+  output: verifiedSignedResponseSchema,
   handler: async ({ ctx, actor, params: p }) => {
     const marked = await markApplicantRegistrationVerifiedSigned({ ...ctx, actor: actor! }, p.id);
     return ok({

@@ -1,11 +1,12 @@
 import { updatePersonalSchema } from '@jobbank/shared';
-import { getMyProfile, updateMyPersonal } from '@/domains/applicant';
+import { applicantProfileSchema, getMyProfile, updateMyPersonal } from '@/domains/applicant';
 import { NotFoundError } from '@/domains/shared/errors';
 import { apiHandler, ok } from '@/domains/shared/http';
 
 /** GET /api/v1/applicants/me — own profile with completeness; 404 before registering. */
 export const GET = apiHandler({
   permission: 'applicant:self',
+  output: applicantProfileSchema,
   handler: async ({ actor }) => {
     const profile = await getMyProfile(actor!);
     if (!profile) throw new NotFoundError('Applicant profile');
@@ -17,6 +18,7 @@ export const GET = apiHandler({
 export const PATCH = apiHandler({
   permission: 'applicant:self',
   body: updatePersonalSchema,
+  output: applicantProfileSchema,
   handler: async ({ ctx, actor, body }) =>
     ok(await updateMyPersonal({ ...ctx, actor: actor! }, body)),
 });

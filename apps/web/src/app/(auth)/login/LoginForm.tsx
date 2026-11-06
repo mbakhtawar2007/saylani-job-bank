@@ -16,6 +16,8 @@ interface SignedIn {
 interface TwoFactorRequired {
   kind: 'two_factor_required';
   methods: string[];
+  /** False for 2FA-required roles: they never get a trusted device. */
+  trustDeviceAllowed: boolean;
 }
 
 function useCountdown() {
@@ -208,9 +210,11 @@ function PhoneSignIn({ next, onBack }: { next: string | null; onBack: () => void
 function AuthenticatorStep({
   onDone,
   onBack,
+  trustDeviceAllowed,
 }: {
   onDone: (result: SignedIn) => void;
   onBack: () => void;
+  trustDeviceAllowed: boolean;
 }) {
   const [useBackup, setUseBackup] = useState(false);
   const [code, setCode] = useState('');
@@ -223,9 +227,12 @@ function AuthenticatorStep({
     setPending(true);
     setError(null);
     try {
+      // The server strips trust for 2FA-required roles too; the flag here only
+      // decides whether the option is offered at all.
+      const trust = trustDeviceAllowed && trustDevice;
       const body = useBackup
-        ? { backupCode: backupCode.trim(), trustDevice }
-        : { code: value ?? code, trustDevice };
+        ? { backupCode: backupCode.trim(), trustDevice: trust }
+        : { code: value ?? code, trustDevice: trust };
       const { data } = await apiFetch<SignedIn>('/api/v1/auth/2fa/verify', {
         method: 'POST',
         body,
@@ -277,6 +284,12 @@ function AuthenticatorStep({
         label="Trust this device for 30 days"
         checked={trustDevice}
         onCheckedChange={(v) => setTrustDevice(v === true)}
+        disabled={!trustDeviceAllowed}
+        description={
+          trustDeviceAllowed
+            ? undefined
+            : 'Required for your role: you will enter a code on every sign-in.'
+        }
       />
       <Alert message={error} />
       <Button
@@ -401,9 +414,16 @@ function StaffSignIn({ next, onBack }: { next: string | null; onBack: () => void
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [trustDeviceAllowed, setTrustDeviceAllowed] = useState(true);
 
   if (mode === 'two_factor')
-    return <AuthenticatorStep onDone={finish} onBack={() => setMode('password')} />;
+    return (
+      <AuthenticatorStep
+        onDone={finish}
+        onBack={() => setMode('password')}
+        trustDeviceAllowed={trustDeviceAllowed}
+      />
+    );
   if (mode === 'email_code')
     return <EmailCodeSignIn next={next} onBack={() => setMode('password')} />;
 
@@ -419,6 +439,7 @@ function StaffSignIn({ next, onBack }: { next: string | null; onBack: () => void
       if (data.kind === 'two_factor_required') {
         setPassword('');
         setPending(false);
+        setTrustDeviceAllowed(data.trustDeviceAllowed);
         setMode('two_factor');
         return;
       }

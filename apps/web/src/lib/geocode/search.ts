@@ -1,6 +1,7 @@
 import 'server-only';
 import { z } from 'zod';
 import { env } from '@/lib/env';
+import { createBoundedCache } from './cache';
 
 /**
  * Forward geocoding: search text (area, landmark, street) -> coordinates + address + city code.
@@ -25,8 +26,18 @@ export interface GeocodeSearchResult {
   display: string;
 }
 
-// In-memory cache for search queries
-const searchCache = new Map<string, GeocodeSearchResult[]>();
+// Bounded cache: 500 entries, 10-minute TTL. The key includes the actual city
+// codes+labels — keying on the city-list length alone collided between different
+// lists of equal length and returned the wrong cityCode/cityLabel.
+const searchCache = createBoundedCache<GeocodeSearchResult[]>(500, 10 * 60 * 1000);
+
+function cacheKey(query: string, cities: { code: string; label: string }[]): string {
+  const fingerprint = cities
+    .map((c) => `${c.code}=${c.label}`)
+    .sort()
+    .join(',');
+  return `${query.trim().toLowerCase()}|${fingerprint}`;
+}
 
 function matchCityCode(
   rawCity: string | null,
@@ -190,9 +201,8 @@ export async function searchGeocode(
   query: string,
   cities: { code: string; label: string }[] = [],
 ): Promise<GeocodeSearchResult[]> {
-  const cleanQuery = query.trim().toLowerCase();
-  const cacheKey = `${cleanQuery},${cities.length}`;
-  const hit = searchCache.get(cacheKey);
+  const key = cacheKey(query, cities);
+  const hit = searchCache.get(key);
   if (hit) return hit;
 
   let results: GeocodeSearchResult[] = [];
@@ -225,6 +235,6 @@ export async function searchGeocode(
     }
   }
 
-  searchCache.set(cacheKey, results);
+  searchCache.set(key, results);
   return results;
 }

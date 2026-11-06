@@ -18,9 +18,19 @@ const SENSITIVE_KEYS = new Set(
     'dob',
     'dateOfBirth',
     'address',
+    'addressLine',
     'addressLine1',
     'addressLine2',
     'street',
+    // company identifiers & contacts (kept out of the audit trail)
+    'ntn',
+    'contactPhone',
+    'contactEmail',
+    // the outreach record lives in `company_onboarding` now; these keys must never
+    // leak back into audit rows or logs via some other `after` payload
+    'headOfficeAddress',
+    // a whole nested address object (applicant permanent home address)
+    'permanentAddress',
     // precise location (could locate an applicant's home)
     'lat',
     'lng',

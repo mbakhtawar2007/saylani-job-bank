@@ -14,6 +14,12 @@ export {
 } from './documents';
 export { companyMachine, READY, type CompanyMachineContext } from './machine';
 export {
+  companyOnboardingSchema,
+  companyViewSchema,
+  onboardedCompanySchema,
+  verifiedSignedCompanyResponseSchema,
+} from './output';
+export {
   addMySite,
   companyIdsForUsers,
   getMyCompany,

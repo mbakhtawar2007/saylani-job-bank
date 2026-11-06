@@ -1,5 +1,6 @@
 import { HeadBucketCommand } from '@aws-sdk/client-s3';
 import { apiHandler } from '@/domains/shared/http';
+import { enforceRateLimitByIp } from '@/domains/shared/rate-limit';
 import { sqlClient } from '@/lib/db';
 import { env } from '@/lib/env';
 import { runHealthChecks } from '@/lib/health/checks';
@@ -12,7 +13,12 @@ export const runtime = 'nodejs';
 // Raw (un-enveloped) body on purpose: load balancers and uptime monitors read it directly.
 export const GET = apiHandler({
   auth: 'public',
-  handler: async () => {
+  handler: async ({ ctx }) => {
+    // Each hit runs DB + PostGIS + S3 + Redis checks, so an unauthenticated flood is
+    // a cheap DoS. 300/min per IP is generous for monitors (typically every 30–60s)
+    // and for the e2e warm-up, which polls every second from a shared bucket while
+    // it waits for the server — and still caps a flood at 5 checks/second.
+    await enforceRateLimitByIp(ctx.ip, 'health-ip', { limit: 300, windowSeconds: 60 });
     const redis = getRedis();
     const result = await runHealthChecks(
       {

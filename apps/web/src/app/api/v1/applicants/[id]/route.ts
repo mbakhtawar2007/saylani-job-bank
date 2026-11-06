@@ -1,6 +1,6 @@
 import { staffEditApplicantSchema } from '@jobbank/shared';
 import { z } from 'zod';
-import { getApplicantForStaff, staffUpdateApplicant } from '@/domains/applicant';
+import { applicantStaffViewSchema, getApplicantForStaff, staffUpdateApplicant } from '@/domains/applicant';
 import { apiHandler, ok } from '@/domains/shared/http';
 
 const params = z.object({ id: z.uuid() });
@@ -9,6 +9,7 @@ const params = z.object({ id: z.uuid() });
 export const GET = apiHandler({
   permission: 'applicant:read',
   params,
+  output: applicantStaffViewSchema,
   handler: async ({ actor, params: p }) => ok(await getApplicantForStaff(actor!, p.id)),
 });
 
@@ -17,6 +18,7 @@ export const PATCH = apiHandler({
   permission: 'applicant:manage',
   params,
   body: staffEditApplicantSchema,
+  output: applicantStaffViewSchema,
   handler: async ({ ctx, actor, params: p, body }) =>
     ok(await staffUpdateApplicant({ ...ctx, actor: actor! }, p.id, body)),
 });

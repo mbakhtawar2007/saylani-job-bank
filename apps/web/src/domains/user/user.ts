@@ -4,6 +4,7 @@ import { schema } from '@jobbank/db';
 import { and, asc, count, eq, exists, ilike, inArray, ne, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import {
+  clearTrustedDevices,
   INVITE_TTL_DAYS,
   issueAccountToken,
   pendingInvitation,
@@ -456,6 +457,9 @@ export async function setStaffStatus(
   userId: string,
   input: z.infer<typeof statusChangeSchema>,
 ): Promise<StaffDetail> {
+  // clearTrustedDevices uses the global db handle, so it runs after the
+  // transaction below (sessions are revoked inside it).
+  let disabled = false;
   await runCommand(ctx, async ({ tx, audit }) => {
     const { row, assignments } = await loadTarget(tx, ctx.actor, userId);
     assertAllowed(canManageUser(ctx.actor, userId, assignments));
@@ -466,8 +470,10 @@ export async function setStaffStatus(
       await assertNotLastSuperAdmin(tx, userId);
     }
     await tx.update(u).set({ status: input.status }).where(eq(u.id, userId));
-    if (input.status === 'DISABLED')
+    if (input.status === 'DISABLED') {
       await tx.delete(schema.sessions).where(eq(schema.sessions.userId, userId));
+      disabled = true;
+    }
     audit({
       action: input.status === 'DISABLED' ? 'user.disable' : 'user.enable',
       entityType: 'user',
@@ -478,6 +484,7 @@ export async function setStaffStatus(
       reason: input.reason,
     });
   });
+  if (disabled) await clearTrustedDevices(userId);
   return getStaffMember(ctx.actor, userId);
 }
 
@@ -551,5 +558,8 @@ export async function resetStaffTwoFactor(
       reason,
     });
   });
+  // clearTrustedDevices uses the global db handle, so it runs after the
+  // transaction above (sessions are revoked inside it).
+  await clearTrustedDevices(userId);
   return getStaffMember(ctx.actor, userId);
 }

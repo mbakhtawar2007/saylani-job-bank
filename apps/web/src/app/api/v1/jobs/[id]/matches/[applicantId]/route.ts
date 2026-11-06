@@ -20,10 +20,12 @@ const decisionBody = z
 
 /**
  * PATCH /api/v1/jobs/[id]/matches/[applicantId] — review decision on one match.
- * Permission (`match_case:manage` or the owning employer's `decision:employer`)
- * is asserted inside the service.
+ * First gate is the role list (staff with `match_case:manage` or the owning
+ * employer with `decision:employer`); the service still asserts the exact
+ * permission, since one route-level permission cannot express that OR.
  */
 export const PATCH = apiHandler({
+  roles: ['STAFF', 'BRANCH_ADMIN', 'EMPLOYER'],
   params: z.object({ id: z.uuid(), applicantId: z.uuid() }),
   body: decisionBody,
   handler: async ({ ctx, actor, params, body }) =>

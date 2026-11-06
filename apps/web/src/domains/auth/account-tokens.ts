@@ -12,7 +12,7 @@ import { db, type DbExecutor } from '@/lib/db';
 import { env } from '@/lib/env';
 import { sendMail } from '@/lib/mail/mailer';
 import { invitationEmail, passwordResetEmail } from '@/lib/mail/templates';
-import { loginWithPassword, type SignInResult } from './service';
+import { loginWithPassword, clearTrustedDevices, type SignInResult } from './service';
 
 export const INVITE_TTL_DAYS = 7;
 export const RESET_TTL_MINUTES = 60;
@@ -245,6 +245,9 @@ export async function resetPassword(
 ): Promise<void> {
   if (ctx.ip)
     await enforceRateLimit('password-reset-confirm-ip', ctx.ip, { limit: 20, windowSeconds: 900 });
+  // clearTrustedDevices uses the global db handle, so it runs after the
+  // transaction below (sessions are revoked inside it).
+  let userId: string | undefined;
   await runCommand(ctx, async ({ tx, audit }) => {
     const found = await findValidToken(tx, token, 'PASSWORD_RESET');
     if (!found) throw new InvalidLinkError();
@@ -255,7 +258,9 @@ export async function resetPassword(
     await setCredentialPassword(tx, user.id, password);
     await tx.delete(schema.sessions).where(eq(schema.sessions.userId, user.id));
     audit({ action: 'auth.password_reset', entityType: 'user', entityId: user.id });
+    userId = user.id;
   });
+  if (userId) await clearTrustedDevices(userId);
 }
 
 /** The newest unused, unexpired invitation for a user (shown on the user detail page). */

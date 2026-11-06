@@ -84,6 +84,9 @@ function createAuth() {
         issuer: 'Saylani Job Bank',
         backupCodeOptions: { amount: 10, length: 10 },
         twoFactorCookieMaxAge: 600,
+        // 30 days — but only for roles that may skip 2FA. SUPER_ADMIN and
+        // BRANCH_ADMIN never get a trusted device: verifySecondFactor deletes
+        // the trust record in the same request, and LoginForm hides the option.
         trustDeviceMaxAge: 30 * 24 * 60 * 60,
       }),
       phoneNumber({

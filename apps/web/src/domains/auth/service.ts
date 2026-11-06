@@ -1,22 +1,24 @@
 import 'server-only';
+import { createHash } from 'node:crypto';
 import { homePathFor, type Permission, type Role } from '@jobbank/shared';
 import { schema } from '@jobbank/db';
 import { APIError } from 'better-auth/api';
 import { verifyPassword } from 'better-auth/crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, like, sql } from 'drizzle-orm';
 import { recordAudit, type RequestContext } from '@/domains/shared/audit';
 import {
   DomainError,
   NotFoundError,
+  RateLimitedError,
   UnauthenticatedError,
   ValidationError,
 } from '@/domains/shared/errors';
 import { maskEmail, maskPhone } from '@/domains/shared/masking';
-import { enforceRateLimit } from '@/domains/shared/rate-limit';
+import { enforceRateLimit, enforceRateLimitByIp } from '@/domains/shared/rate-limit';
 import type { Actor } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
 import { normalizePkMobile } from '@/lib/format/phone';
-import { ACTIVE_BRANCH_COOKIE, loadActor, type SessionUser } from './actor';
+import { ACTIVE_BRANCH_COOKIE, loadActor, requiresTwoFactor, type SessionUser } from './actor';
 import { getAuth, isPlaceholderEmail, SESSION_TTL_SECONDS } from './auth';
 import { issueOtp, OTP_TTL_SECONDS } from './otp';
 
@@ -49,6 +51,12 @@ export interface TwoFactorChallenge {
   kind: 'two_factor_required';
   methods: string[];
   cookies: string[];
+  /**
+   * Whether the client may offer "trust this device". False for 2FA-required
+   * roles (SUPER_ADMIN / BRANCH_ADMIN): their TOTP is mandatory and a trusted
+   * device must never buy a bypass. Enforced server-side too (verifySecondFactor).
+   */
+  trustDeviceAllowed: boolean;
 }
 
 /**
@@ -82,7 +90,9 @@ async function rateLimitByIp(
   limit: number,
   windowSeconds: number,
 ) {
-  if (ctx.ip) await enforceRateLimit(name, ctx.ip, { limit, windowSeconds });
+  // Fail-closed: a null IP is limited under the shared 'untrusted' subject
+  // instead of skipping the limit (see enforceRateLimitByIp).
+  await enforceRateLimitByIp(ctx.ip, name, { limit, windowSeconds });
 }
 
 function requirePkMobile(raw: string): string {
@@ -109,18 +119,19 @@ async function signedIn(
   userId: string,
   method: string,
   cookies: string[],
+  actor?: Actor,
 ): Promise<SignInResult> {
-  const actor = await loadActor(userId);
+  const loaded = actor ?? (await loadActor(userId));
   await recordAudit(
-    { ...ctx, actor },
+    { ...ctx, actor: loaded },
     { action: 'auth.login', entityType: 'user', entityId: userId, metadata: { method } },
   );
   const [row] = await db.select().from(schema.users).where(eq(schema.users.id, userId));
   return {
     kind: 'signed_in',
     user: toSessionUser(row!),
-    roles: [...actor.roles],
-    homePath: homePathFor(actor.roles),
+    roles: [...loaded.roles],
+    homePath: homePathFor(loaded.roles),
     cookies,
   };
 }
@@ -196,7 +207,24 @@ export async function verifyOtp(
       { action: 'auth.register_applicant', entityType: 'user', entityId: userId },
     );
   }
-  return signedIn(ctx, userId, 'otp', result.headers.getSetCookie());
+  // Phone + SMS is applicant-only. A user row with a phone number and any other
+  // role (e.g. a staff member whose number was added later) must never sign in
+  // with SMS alone — that would bypass both the password and mandatory TOTP.
+  // Currently latent (no code path sets a phone on internal users), but the gate
+  // is cheap and fail-closed: exactly APPLICANT, nothing else.
+  const actor = await loadActor(userId);
+  if (actor.roles.length !== 1 || actor.roles[0] !== 'APPLICANT') {
+    await recordAudit(ctx, {
+      action: 'auth.login_failed',
+      entityType: 'user',
+      entityId: userId,
+      metadata: { method: 'otp', reason: 'OTP_ROLE_NOT_ALLOWED', phoneMasked: maskPhone(phone) },
+    });
+    throw new UnauthenticatedError(
+      'Phone sign-in is only for job seekers. Staff and employers sign in with email and password.',
+    );
+  }
+  return signedIn(ctx, userId, 'otp', result.headers.getSetCookie(), actor);
 }
 
 // ─── Staff & employers: email + password (+ authenticator app) ─────────
@@ -268,13 +296,69 @@ export async function loginWithPassword(
       entityId: user?.id ?? null,
       metadata: { method: 'password' },
     });
+    // 2FA-required roles never get a trusted device (see verifySecondFactor).
+    // Fail closed when the user row is somehow missing.
+    const trustDeviceAllowed = user ? !requiresTwoFactor((await loadActor(user.id)).roles) : false;
     return {
       kind: 'two_factor_required',
       methods: response.twoFactorMethods ?? ['totp'],
       cookies: result.headers.getSetCookie(),
+      trustDeviceAllowed,
     };
   }
   return signedIn(ctx, response.user.id, 'password', result.headers.getSetCookie());
+}
+
+/**
+ * Identifies the in-flight 2FA challenge from the request cookies, so failed
+ * codes can be limited per challenge (which is per user: one challenge cookie
+ * belongs to exactly one user) rather than per IP only. Better Auth names the
+ * cookie `<prefix>.two_factor` (`__Secure-` prefixed on HTTPS); the value is
+ * opaque to us, so it is hashed before use as a rate-limit subject.
+ */
+function twoFactorChallengeSubject(requestHeaders: Headers): string | null {
+  const cookie = requestHeaders.get('cookie');
+  if (!cookie) return null;
+  for (const part of cookie.split(';')) {
+    const [name, ...rest] = part.trim().split('=');
+    if (name?.endsWith('two_factor')) {
+      const value = rest.join('=');
+      if (value) return createHash('sha256').update(value).digest('hex');
+    }
+  }
+  return null;
+}
+
+/**
+ * Deletes every trusted-device record for a user. Better Auth stores trust as a
+ * signed cookie plus a server-side verification row (identifier `trust-device-*`,
+ * value = userId); deleting the rows makes any outstanding trust cookie useless
+ * on the next sign-in, even if the browser still holds it.
+ */
+export async function clearTrustedDevices(userId: string): Promise<void> {
+  await db
+    .delete(schema.verifications)
+    .where(
+      and(
+        like(schema.verifications.identifier, 'trust-device-%'),
+        eq(schema.verifications.value, userId),
+      ),
+    );
+}
+
+/** Replaces any trust-device Set-Cookie entries with expired ones. */
+function expireTrustDeviceCookies(cookies: string[]): string[] {
+  const kept: string[] = [];
+  const expired: string[] = [];
+  for (const entry of cookies) {
+    const name = entry.split('=')[0]?.trim() ?? '';
+    if (name.endsWith('trust_device')) {
+      expired.push(`${name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+    } else {
+      kept.push(entry);
+    }
+  }
+  return [...kept, ...expired];
 }
 
 /** Second step after a password: authenticator-app code, or a one-time backup code. */
@@ -284,6 +368,34 @@ export async function verifySecondFactor(
   requestHeaders: Headers,
 ): Promise<SignInResult> {
   await rateLimitByIp(ctx, 'two-factor-ip', 30, 900);
+  // Per-challenge limit: 5 wrong codes per 15 minutes locks this challenge.
+  // The IP limit alone is not enough — it is shared and spoofable — and a
+  // per-account limit needs the user, who is only known after a correct code.
+  // A fresh challenge needs a fresh password sign-in, which is itself
+  // rate-limited (login-email 5/900s), so the counter cannot be reset freely.
+  const challengeSubject = twoFactorChallengeSubject(requestHeaders);
+  if (challengeSubject) {
+    try {
+      await enforceRateLimit(
+        'two-factor-challenge',
+        challengeSubject,
+        { limit: 5, windowSeconds: 900 },
+        'Too many incorrect codes. Try again in 15 minutes.',
+      );
+    } catch (error) {
+      if (error instanceof RateLimitedError) {
+        await recordAudit(ctx, {
+          action: 'auth.login_failed',
+          entityType: 'user',
+          metadata: {
+            method: input.backupCode ? 'backup_code' : 'totp',
+            reason: 'RATE_LIMITED',
+          },
+        });
+      }
+      throw error;
+    }
+  }
   let result;
   try {
     result = input.backupCode
@@ -313,11 +425,22 @@ export async function verifySecondFactor(
     throw new UnauthenticatedError('That code is not correct.');
   }
   const userId = (result.response as { user: { id: string } }).user.id;
+  let cookies = result.headers.getSetCookie();
+  const actor = await loadActor(userId);
+  if (requiresTwoFactor(actor.roles)) {
+    // Trusted devices are disabled for 2FA-required roles: a ticked box must
+    // never buy a 30-day TOTP bypass for an admin. Better Auth already wrote
+    // the trust record + cookie during verify, so delete the record in this
+    // same request (the cookie is then useless) and expire the cookie.
+    await clearTrustedDevices(userId);
+    cookies = expireTrustDeviceCookies(cookies);
+  }
   return signedIn(
     ctx,
     userId,
     input.backupCode ? 'password+backup_code' : 'password+totp',
-    result.headers.getSetCookie(),
+    cookies,
+    actor,
   );
 }
 

@@ -49,6 +49,29 @@ describe('redactPii', () => {
     expect(input.cnic).toBe('4210112345671');
   });
 
+  it('redacts NTN, company contacts, head-office and permanent addresses', () => {
+    const out = redactPii({
+      legalName: 'Sunrise Foods (Pvt) Ltd',
+      ntn: '8765432-1',
+      contactPhone: '0302-8765432',
+      contactEmail: 'bilal@example.com',
+      headOfficeAddress: 'Plot 8, Korangi Industrial Area, Karachi',
+      permanentAddress: { addressLine: 'House 22, Street 2, Hyderabad', cityCode: 'HYD' },
+      address: { addressLine: 'Flat 4, North Nazimabad', cityCode: 'KHI' },
+      branchId: 'b-1',
+    });
+    expect(out.legalName).toBe('Sunrise Foods (Pvt) Ltd');
+    expect(out.ntn).toBe(REDACTED);
+    expect(out.contactPhone).toBe(REDACTED);
+    expect(out.contactEmail).toBe(REDACTED);
+    expect(out.headOfficeAddress).toBe(REDACTED);
+    expect(out.permanentAddress).toBe(REDACTED);
+    // `address` is itself a sensitive key, so the whole object is redacted
+    // (the nested `addressLine` key never gets a chance to be checked alone).
+    expect(out.address).toBe(REDACTED);
+    expect(out.branchId).toBe('b-1');
+  });
+
   it('handles dates and cycles', () => {
     const node: Record<string, unknown> = { at: new Date('2026-10-01T00:00:00Z') };
     node.self = node;

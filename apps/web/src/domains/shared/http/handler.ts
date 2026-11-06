@@ -1,8 +1,9 @@
 import { HEADERS, type Permission, type Role } from '@jobbank/shared';
 import type { z } from 'zod';
 import { env } from '@/lib/env';
+import { clientIpFrom } from '@/lib/http/client-ip';
 import { resolveCorrelationId } from '@/lib/http/correlation';
-import { logger } from '@/lib/logger';
+import { logger, type Logger } from '@/lib/logger';
 import { recordAudit, type RequestContext } from '../audit';
 import {
   BadRequestError,
@@ -90,30 +91,76 @@ export const handlerDeps: { idempotencyStore: IdempotencyStore } = {
 
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
+// Keep in sync with apps/web/src/middleware.ts.
+const SESSION_COOKIE_NAMES = ['jb.session_token', '__Secure-jb.session_token'];
+
 /**
- * CSRF defence for cookie-authenticated writes: browsers always send Origin (and
- * Sec-Fetch-Site) on cross-site requests, so an unsafe request from a foreign origin is
- * refused. Non-browser clients (no Origin header) are unaffected.
+ * CSRF defence for cookie-authenticated writes.
+ *
+ * Browsers always send Origin on unsafe (POST/PUT/PATCH/DELETE) requests, and always
+ * send Sec-Fetch-Site. So, for unsafe methods:
+ * - Sec-Fetch-Site: cross-site → refuse.
+ * - Origin present → it must be this app (same-origin or the configured app URL).
+ * - Origin absent but Sec-Fetch-Site present → a browser request with its Origin
+ *   stripped (proxy) or forged → refuse and log it. A page cannot suppress these
+ *   headers: both are forbidden header names, so a cross-site page cannot hide
+ *   that the request came from a browser.
+ * - Origin absent and Referer present → the Referer origin must be this app
+ *   (covers older browsers that send no Origin on same-origin POSTs).
+ * - Neither Origin, Referer nor Sec-Fetch-Site → not a browser at all. The app's
+ *   supported non-browser callers (in-process test harnesses, the Playwright
+ *   global-setup warm-up, load-test scripts, curl) send no Origin and are allowed
+ *   by design; if such a request carries a session cookie it is logged, so
+ *   cookie-bearing non-browser traffic stays visible instead of silently passing.
+ * The old behaviour (`if (!origin) return`) failed open for every browser request
+ * that omitted Origin; this closes that hole without breaking the non-browser
+ * clients above.
  */
-function assertSameOrigin(request: Request, url: URL): void {
+function assertSameOrigin(request: Request, url: URL, log: Logger): void {
   if (!UNSAFE_METHODS.has(request.method)) return;
-  if (request.headers.get('sec-fetch-site') === 'cross-site') {
+  const fetchSite = request.headers.get('sec-fetch-site');
+  if (fetchSite === 'cross-site') {
     throw new ForbiddenError('Cross-site request blocked');
   }
-  const origin = request.headers.get('origin');
-  if (!origin) return;
   const allowed = new Set([url.origin]);
   try {
     allowed.add(new URL(env.NEXT_PUBLIC_APP_URL).origin);
   } catch {
     // App URL not configured (some test setups): the same-origin check still applies.
   }
-  if (!allowed.has(origin)) throw new ForbiddenError('Cross-site request blocked');
-}
-
-function clientIp(request: Request): string | null {
-  const forwarded = request.headers.get('x-forwarded-for');
-  return forwarded?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || null;
+  const origin = request.headers.get('origin');
+  if (origin) {
+    if (!allowed.has(origin)) throw new ForbiddenError('Cross-site request blocked');
+    return;
+  }
+  const referer = request.headers.get('referer');
+  if (referer) {
+    let refererOrigin: string | null = null;
+    try {
+      refererOrigin = new URL(referer).origin;
+    } catch {
+      refererOrigin = null;
+    }
+    if (!refererOrigin || !allowed.has(refererOrigin)) {
+      throw new ForbiddenError('Cross-site request blocked');
+    }
+    return;
+  }
+  if (fetchSite) {
+    log.warn('blocked browser write without origin', {
+      method: request.method,
+      path: url.pathname,
+      fetchSite,
+    });
+    throw new ForbiddenError('Cross-site request blocked');
+  }
+  const cookie = request.headers.get('cookie') ?? '';
+  if (SESSION_COOKIE_NAMES.some((name) => cookie.includes(`${name}=`))) {
+    log.warn('origin-less cookie-authenticated write from a non-browser client', {
+      method: request.method,
+      path: url.pathname,
+    });
+  }
 }
 
 function parseWith<S extends AnySchema>(schema: S, value: unknown, label: string): z.infer<S> {
@@ -181,13 +228,13 @@ export function apiHandler<
     let status = 500;
 
     try {
-      assertSameOrigin(request, url);
+      assertSameOrigin(request, url, log);
       actor = await resolveActor(request);
       ctx = {
         actor,
         system: false,
         correlationId,
-        ip: clientIp(request),
+        ip: clientIpFrom(request.headers),
         userAgent: request.headers.get('user-agent'),
         log: log.child({ actorId: actor?.userId }),
       };

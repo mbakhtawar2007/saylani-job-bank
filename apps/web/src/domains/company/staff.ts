@@ -430,18 +430,15 @@ export interface CompanyOnboarding {
   notes: CompanyOnboardingNotes;
 }
 
-const asRecord = (value: unknown): Record<string, unknown> | null =>
-  value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-
 const asText = (value: unknown): string | null =>
   typeof value === 'string' && value.length > 0 ? value : null;
 
 /**
- * The outreach record for a company registered by staff after a field visit, read back
- * from the `company.register` audit entry (no extra table). Returns null for companies
- * the employer registered themselves — those carry no visit or agreement.
+ * The outreach record for a company registered by staff after a field visit, read
+ * from the `company_onboarding` table (migration 0026). Returns null for companies
+ * the employer registered themselves — those carry no visit or agreement. The
+ * `company.register` audit entry is evidence only and is no longer read back, so
+ * audit retention/purge and PII redaction can no longer destroy this record.
  */
 export async function getCompanyOnboarding(
   actor: Actor,
@@ -450,54 +447,56 @@ export async function getCompanyOnboarding(
   assertPermission(actor, 'company:read');
   const row = await loadCompany(db, companyId);
   assertBranchAccess(actor, row.branchId, { entityType: 'company', entityId: row.id });
-  const [log] = await db
-    .select({
-      after: schema.auditLogs.after,
-      metadata: schema.auditLogs.metadata,
-      actorRole: schema.auditLogs.actorRole,
-      actorUserId: schema.auditLogs.actorUserId,
-      name: schema.users.name,
-    })
-    .from(schema.auditLogs)
-    .leftJoin(schema.users, eq(schema.users.id, schema.auditLogs.actorUserId))
-    .where(
-      and(
-        eq(schema.auditLogs.action, 'company.register'),
-        eq(schema.auditLogs.entityType, 'company'),
-        eq(schema.auditLogs.entityId, row.id),
-      ),
-    )
-    .orderBy(asc(schema.auditLogs.occurredAt), asc(schema.auditLogs.id))
+  const [onboarding] = await db
+    .select()
+    .from(schema.companyOnboarding)
+    .where(eq(schema.companyOnboarding.companyId, row.id))
     .limit(1);
-  const after = asRecord(log?.after);
-  const metadata = asRecord(log?.metadata);
-  if (!after || after['agreed'] !== true) return null;
-  const role = ROLE_PRIORITY.find((r: Role) => log?.actorRole?.split(',').includes(r));
+  if (!onboarding || !onboarding.agreed) return null;
+  // Name + current role of the staff member who onboarded the company (shown on
+  // the paper form). Roles can change after the visit, so this is read live.
+  const [[user], roles] = await Promise.all([
+    onboarding.onboardedBy
+      ? db
+          .select({ name: schema.users.name })
+          .from(schema.users)
+          .where(eq(schema.users.id, onboarding.onboardedBy))
+          .limit(1)
+      : Promise.resolve([]),
+    onboarding.onboardedBy
+      ? db
+          .select({ roleCode: schema.userRoles.roleCode })
+          .from(schema.userRoles)
+          .where(eq(schema.userRoles.userId, onboarding.onboardedBy))
+      : Promise.resolve([]),
+  ]);
+  const role = ROLE_PRIORITY.find((r: Role) => roles.some((a) => a.roleCode === r));
   return {
-    onboardedBy: log?.actorUserId
-      ? { name: log.name, roleLabel: role ? ROLE_LABELS[role] : null }
+    onboardedBy: onboarding.onboardedBy
+      ? { name: user?.name ?? null, roleLabel: role ? ROLE_LABELS[role] : null }
       : null,
-    visitDate: asText(after['visitDate']) ?? asText(metadata?.['visitDate']),
+    visitDate: asText(onboarding.visitDate),
     agreed: true,
     notes: {
-      headOfficeAddress: asText(after['headOfficeAddress']),
-      otherSites: asText(after['otherSites']),
-      workforceRoles: asText(after['workforceRoles']),
-      workforceType: asText(after['workforceType']),
-      workforceShifts: asText(after['workforceShifts']),
-      workforceOpenings: asText(after['workforceOpenings']),
-      yearsInBusiness: asText(after['yearsInBusiness']),
-      previousHiring: asText(after['previousHiring']),
-      certifications: asText(after['certifications']),
-      additionalNotes: asText(after['additionalNotes']),
+      headOfficeAddress: asText(onboarding.headOfficeAddress),
+      otherSites: asText(onboarding.otherSites),
+      workforceRoles: asText(onboarding.workforceRoles),
+      workforceType: asText(onboarding.workforceType),
+      workforceShifts: asText(onboarding.workforceShifts),
+      workforceOpenings: asText(onboarding.workforceOpenings),
+      yearsInBusiness: asText(onboarding.yearsInBusiness),
+      previousHiring: asText(onboarding.previousHiring),
+      certifications: asText(onboarding.certifications),
+      additionalNotes: asText(onboarding.additionalNotes),
     },
   };
 }
 
 /**
  * Staff, Branch Admin or Super Admin registers a company they visited and onboarded.
- * Creates a DRAFT company plus its main contact; the outreach record (who visited, when,
- * the company's agreement, and the extra notes) is stored on the audit entry.
+ * Creates a DRAFT company plus its main contact; the outreach record (who visited,
+ * when, the company's agreement, and the extra notes) is stored in the
+ * `company_onboarding` table, in the same transaction as the company row.
  */
 export async function staffOnboardCompany(
   ctx: SignedIn,
@@ -514,17 +513,17 @@ export async function staffOnboardCompany(
     contactEmail,
     visitDate,
     agreed,
-    // Notes stay out of the company row; they are recorded on the audit entry via `input`.
-    headOfficeAddress: _headOfficeAddress,
-    otherSites: _otherSites,
-    workforceRoles: _workforceRoles,
-    workforceType: _workforceType,
-    workforceShifts: _workforceShifts,
-    workforceOpenings: _workforceOpenings,
-    yearsInBusiness: _yearsInBusiness,
-    previousHiring: _previousHiring,
-    certifications: _certifications,
-    additionalNotes: _additionalNotes,
+    // Notes stay out of the company row; they go to `company_onboarding` below.
+    headOfficeAddress,
+    otherSites,
+    workforceRoles,
+    workforceType,
+    workforceShifts,
+    workforceOpenings,
+    yearsInBusiness,
+    previousHiring,
+    certifications,
+    additionalNotes,
     ...companyInput
   } = input;
 
@@ -555,12 +554,31 @@ export async function staffOnboardCompany(
         isPrimary: true,
         sortOrder: 0,
       });
+      await tx.insert(schema.companyOnboarding).values({
+        companyId: row!.id,
+        onboardedBy: ctx.actor.userId,
+        visitDate,
+        agreed,
+        headOfficeAddress,
+        otherSites,
+        workforceRoles,
+        workforceType,
+        workforceShifts,
+        workforceOpenings,
+        yearsInBusiness,
+        previousHiring,
+        certifications,
+        additionalNotes,
+      });
       audit({
         action: 'company.register',
         entityType: 'company',
         entityId: row!.id,
         branchId,
-        after: { ...input, branchId },
+        // Evidence only: the outreach record lives in `company_onboarding`
+        // (migration 0026). Keep PII — contact details, notes, NTN — out of the
+        // audit trail; it is redacted there anyway (see lib/privacy/redact.ts).
+        after: { legalName: companyInput.legalName, branchId },
         metadata: { onboardedBy: ctx.actor.userId, visitDate, agreed },
       });
     });

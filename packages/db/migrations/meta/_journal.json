@@ -183,6 +183,13 @@
       "when": 1793941351604,
       "tag": "0025_verified_signed_and_permanent_address",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793983555966,
+      "tag": "0026_company_onboarding",
+      "breakpoints": true
     }
   ]
 }

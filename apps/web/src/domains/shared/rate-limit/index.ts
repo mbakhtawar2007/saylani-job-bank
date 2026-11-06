@@ -81,6 +81,28 @@ export async function enforceRateLimit(
   if (!result.allowed) throw new RateLimitedError(result.retryAfterSeconds, message);
 }
 
+/**
+ * IP-bucketed rate limiting that fails CLOSED: when no trustworthy IP could be
+ * determined (see lib/http/client-ip.ts — no proxy in front, or the X-Forwarded-For
+ * chain is shorter than TRUSTED_PROXY_HOPS), the request must not silently escape
+ * limiting the way the old `if (ctx.ip) await enforceRateLimit(...)` pattern did.
+ * Denying outright would break direct local connections (dev has no proxy), so all
+ * such requests share one strict bucket ('untrusted') under the same rule instead
+ * of getting a free pass. In production the app always sits behind its proxies, so
+ * the shared bucket is only reached by requests that bypassed them.
+ *
+ * NOTE: domains/auth/service.ts still has its own local rateLimitByIp that skips
+ * when ctx.ip is null. Switch it to this helper to close the auth endpoints too.
+ */
+export async function enforceRateLimitByIp(
+  ip: string | null,
+  name: string,
+  rule: RateLimitRule,
+  message?: string,
+): Promise<void> {
+  await enforceRateLimit(name, ip ?? 'untrusted', rule, message);
+}
+
 /** Test helper. */
 export function resetMemoryRateLimits(): void {
   memory.clear();

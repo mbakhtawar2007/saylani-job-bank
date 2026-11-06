@@ -1,6 +1,7 @@
 import {
   APPLICANT_SORTABLE,
   applicantFilters,
+  applicantStaffViewSchema,
   listApplicants,
   staffRegisterApplicant,
 } from '@/domains/applicant';
@@ -29,6 +30,7 @@ export const GET = apiHandler({
 export const POST = apiHandler({
   permission: 'applicant:manage',
   body: staffRegisterApplicantSchema,
+  output: applicantStaffViewSchema,
   handler: async ({ ctx, actor, body }) =>
     created(await staffRegisterApplicant({ ...ctx, actor: actor! }, body)),
 });

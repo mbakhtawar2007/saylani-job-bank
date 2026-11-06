@@ -13,6 +13,11 @@ export {
 } from './documents';
 export { applicantMachine, type ApplicantEvent } from './machine';
 export {
+  applicantProfileSchema,
+  applicantStaffViewSchema,
+  verifiedSignedResponseSchema,
+} from './output';
+export {
   getMyProfile,
   myBranchOptions,
   registerApplicant,

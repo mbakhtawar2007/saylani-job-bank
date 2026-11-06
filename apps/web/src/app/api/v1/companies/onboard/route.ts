@@ -1,4 +1,4 @@
-import { staffOnboardCompany } from '@/domains/company';
+import { onboardedCompanySchema, staffOnboardCompany } from '@/domains/company';
 import { apiHandler, created } from '@/domains/shared/http';
 import { staffOnboardCompanySchema } from '@jobbank/shared';
 
@@ -6,6 +6,7 @@ import { staffOnboardCompanySchema } from '@jobbank/shared';
 export const POST = apiHandler({
   permission: 'company:onboard',
   body: staffOnboardCompanySchema,
+  output: onboardedCompanySchema,
   handler: async ({ ctx, actor, body }) => {
     const company = await staffOnboardCompany({ ...ctx, actor: actor! }, body);
     return created(company);

@@ -6,6 +6,7 @@ const params = z.object({ id: z.uuid() });
 
 /** POST /api/v1/applications/{id}/refuse — applicant refuses a job offer. */
 export const POST = apiHandler({
+  roles: ['APPLICANT'],
   params,
   body: refuseJobOfferSchema,
   handler: async ({ ctx, actor, params: p, body }) =>

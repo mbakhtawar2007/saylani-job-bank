@@ -19,10 +19,14 @@ import { db, type DbExecutor } from '@/lib/db';
 import {
   assertUploadAllowed,
   buildObjectKey,
+  deleteObject,
+  detectContentType,
+  getObjectPrefix,
   headObject,
   malwareScanner,
   presignDownload,
   presignUpload,
+  scansEnforced,
   UploadRejectedError,
   type PresignedUpload,
 } from '@/lib/s3/storage';
@@ -144,9 +148,20 @@ async function ownDocument(executor: DbExecutor, row: CompanyRow, documentId: st
 
 /**
  * Step 2 (shared): browser finished the PUT. Verify what actually landed in storage,
- * scan for malware, then make it the current document of its type (superseding earlier
- * uploads). Used by the employer's own upload and by the staff upload for onboarded
- * companies — storage check, scan handling, supersede and audit are identical.
+ * verify the file's magic bytes match its declared type, scan for malware, then make
+ * it the current document of its type (superseding earlier uploads). Used by the
+ * employer's own upload and by the staff upload for onboarded companies — storage
+ * check, type check, scan handling, supersede and audit are identical.
+ *
+ * Outcomes: a magic-byte mismatch deletes the object and the row stays
+ * PENDING_UPLOAD (company document statuses have no REJECTED value — the audit
+ * row is the record, and the user re-uploads); an 'infected' scan marks the row
+ * INFECTED and quarantines the object; a 'skipped' scan leaves the row
+ * PENDING_UPLOAD with scanResult 'skipped' — never servable, never counted as
+ * present — and the user retries confirm later, but ONLY in production (see
+ * scansEnforced): in development/test 'skipped' is recorded and the upload
+ * completes, because no scanner service exists yet. Only a 'clean' scan, or a
+ * 'skipped' scan outside production, marks the document UPLOADED.
  */
 async function confirmDocumentForCompany(
   ctx: SignedIn,
@@ -162,7 +177,62 @@ async function confirmDocumentForCompany(
   if (stored.sizeBytes !== doc.sizeBytes || stored.contentType !== doc.contentType) {
     throw new ConflictError('The uploaded file does not match. Please upload it again.');
   }
+  // The PUT's Content-Type header is attacker-controlled, so the stored bytes
+  // themselves are the only trustworthy type signal. Check them before scanning.
+  const prefix = await getObjectPrefix(doc.storageKey);
+  const actualType = prefix ? detectContentType(prefix) : null;
+  if (actualType !== doc.contentType) {
+    // Delete the spoofed object first: a mismatched row must not leave a live
+    // file in storage. If the delete itself fails, leave the row PENDING_UPLOAD
+    // (propagate the error) so the user can retry.
+    await deleteObject(doc.storageKey);
+    await runCommand(ctx, async ({ tx, audit }) => {
+      await tx.update(docs).set({ scanResult: 'skipped' }).where(eq(docs.id, doc.id));
+      audit({
+        action: 'company.document_type_mismatch',
+        entityType: 'company',
+        entityId: row.id,
+        branchId: row.branchId,
+        metadata: {
+          documentId: doc.id,
+          typeCode: doc.typeCode,
+          declared: doc.contentType,
+          detected: actualType ?? 'unknown',
+        },
+      });
+    });
+    throw new ConflictError(
+      'The file contents do not match its type. Please upload the correct file.',
+    );
+  }
   const scan = await malwareScanner.scan(doc.storageKey);
+  if (scan === 'infected') {
+    // Best-effort quarantine: remove the object. Serving is already blocked
+    // (INFECTED is not a present status, and viewLink refuses it), so a failed
+    // delete is not fatal.
+    await deleteObject(doc.storageKey).catch(() => undefined);
+  }
+  if (scan === 'skipped' && scansEnforced()) {
+    // No scanner result in production: hold the upload. The row stays
+    // PENDING_UPLOAD so the user can retry confirm once a scanner exists or
+    // recovers; it is not counted as a present document and cannot be viewed
+    // or downloaded. Outside production scansEnforced() is false, so this
+    // branch is skipped and the upload completes with scanResult 'skipped'
+    // recorded (see scansEnforced in lib/s3/storage.ts).
+    await runCommand(ctx, async ({ tx, audit }) => {
+      await tx.update(docs).set({ scanResult: 'skipped' }).where(eq(docs.id, doc.id));
+      audit({
+        action: 'company.document_scan_pending',
+        entityType: 'company',
+        entityId: row.id,
+        branchId: row.branchId,
+        metadata: { documentId: doc.id, typeCode: doc.typeCode },
+      });
+    });
+    throw new ConflictError(
+      'This file has not been virus-scanned yet. Please try again in a few minutes.',
+    );
+  }
 
   await runCommand(ctx, async ({ tx, audit }) => {
     if (scan === 'infected') {
@@ -320,11 +390,19 @@ export interface DocumentLink {
 const PRESENT_STATUSES = ['UPLOADED', 'REJECTED'] as const;
 
 async function viewLink(doc: typeof docs.$inferSelect): Promise<DocumentLink> {
+  // An infected file is never served, even if its status would otherwise allow
+  // a link. (INFECTED is not a present status, so this is defence in depth.)
+  if (doc.scanResult === 'infected') {
+    throw new ConflictError('This upload failed a virus check');
+  }
   if (!PRESENT_STATUSES.includes(doc.status as (typeof PRESENT_STATUSES)[number])) {
     throw new ConflictError('This upload was not completed');
   }
   return {
-    url: await presignDownload(doc.storageKey, { expiresInSeconds: VIEW_LINK_SECONDS }),
+    url: await presignDownload(doc.storageKey, {
+      expiresInSeconds: VIEW_LINK_SECONDS,
+      disposition: 'inline',
+    }),
     expiresAt: new Date(Date.now() + VIEW_LINK_SECONDS * 1000).toISOString(),
   };
 }

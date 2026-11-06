@@ -8,6 +8,7 @@ import {
   NotFoundError,
   ValidationError,
 } from '@/domains/shared/errors';
+import { enforceRateLimit } from '@/domains/shared/rate-limit';
 import {
   assertBranchAccess,
   assertPermission,
@@ -130,6 +131,12 @@ export async function requestJobMatchesRefresh(
   ) {
     throw new ForbiddenError();
   }
+  // The route comment used to claim this was rate-limited by the API layer; it
+  // was not. Each refresh enqueues a Python worker run, so cap it per actor+job.
+  await enforceRateLimit('match-refresh', `${ctx.actor.userId}:${jobId}`, {
+    limit: 5,
+    windowSeconds: 60,
+  });
   const job = await loadJobForActor(ctx.actor, jobId);
   if (job.status !== 'OPEN') {
     throw new ForbiddenError('Only open jobs can be re-matched');

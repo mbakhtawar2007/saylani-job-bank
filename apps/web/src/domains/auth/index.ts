@@ -28,6 +28,7 @@ export {
   SIGNUP_CODE_TTL_SECONDS,
 } from './employer-signup';
 export { getServerAuthState, requireRole, requireSignedIn } from './server-session';
+export { clearTrustedDevices } from './service';
 export {
   AccountBlockedError,
   describeMe,
