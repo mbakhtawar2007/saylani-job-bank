@@ -125,6 +125,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
   });
   const [address, setAddress] = useState({ addressLine: '', cityCode: '', areaCode: '' });
   const [location, setLocation] = useState<LatLng | null>(null);
+  const [sameAddress, setSameAddress] = useState(false);
   const [permanentAddress, setPermanentAddress] = useState({
     addressLine: '',
     cityCode: '',
@@ -149,6 +150,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
 
   const updateForm = (changes: Partial<typeof form>) =>
     setForm((current) => ({ ...current, ...changes }));
+
+  const updatePermanentAddress = (changes: Partial<typeof permanentAddress>) => {
+    setPermanentAddress((current) => ({ ...current, ...changes }));
+    if (sameAddress) setAddress((current) => ({ ...current, ...changes }));
+  };
 
   useEffect(() => {
     setPrintReady(true);
@@ -201,6 +207,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
       });
       setAddress({ addressLine: '', cityCode: '', areaCode: '' });
       setLocation(null);
+      setSameAddress(false);
       setPermanentAddress({ addressLine: '', cityCode: '', areaCode: '' });
       setAdditionalNotes('');
       setEducation([emptyEducation()]);
@@ -906,6 +913,19 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
 
           <section className="grid gap-3">
             <h2 className="text-fg border-b pb-2 font-semibold">5. Residential information</h2>
+            <Checkbox
+              label="Current Address is Same as Permanent Address"
+              description="Current address fields will follow the permanent address while checked."
+              checked={sameAddress}
+              onCheckedChange={(checked) => {
+                const isSame = checked === true;
+                setSameAddress(isSame);
+                if (isSame) {
+                  setAddress(permanentAddress);
+                  setLocation(null);
+                }
+              }}
+            />
             <FormField label="Current residential address">
               <Input
                 autoComplete="street-address"
@@ -913,6 +933,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                 onChange={(e) =>
                   setAddress((current) => ({ ...current, addressLine: e.target.value }))
                 }
+                disabled={sameAddress}
               />
             </FormField>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -928,6 +949,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                   }
                   placeholder="Choose a city"
                   options={cities.map((city) => ({ value: city.code, label: city.label }))}
+                  disabled={sameAddress}
                 />
               </FormField>
               <FormField label="Area of residence">
@@ -938,6 +960,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                   }
                   placeholder="Choose an area"
                   options={cityAreas.map((area) => ({ value: area.code, label: area.label }))}
+                  disabled={sameAddress}
                 />
               </FormField>
             </div>
@@ -962,12 +985,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
               <Input
                 autoComplete="street-address"
                 value={permanentAddress.addressLine}
-                onChange={(event) =>
-                  setPermanentAddress((current) => ({
-                    ...current,
-                    addressLine: event.target.value,
-                  }))
-                }
+                onChange={(event) => updatePermanentAddress({ addressLine: event.target.value })}
                 placeholder="House, street, block"
               />
             </FormField>
@@ -976,11 +994,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                 <Select
                   value={permanentAddress.cityCode}
                   onChange={(event) =>
-                    setPermanentAddress((current) => ({
-                      ...current,
-                      cityCode: event.target.value,
-                      areaCode: '',
-                    }))
+                    updatePermanentAddress({ cityCode: event.target.value, areaCode: '' })
                   }
                   options={cities.map((city) => ({ value: city.code, label: city.label }))}
                   placeholder="Choose a city"
@@ -989,12 +1003,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
               <FormField label="Permanent area" error={errors['permanentAddress.areaCode']}>
                 <Select
                   value={permanentAddress.areaCode}
-                  onChange={(event) =>
-                    setPermanentAddress((current) => ({
-                      ...current,
-                      areaCode: event.target.value,
-                    }))
-                  }
+                  onChange={(event) => updatePermanentAddress({ areaCode: event.target.value })}
                   options={permanentCityAreas.map((area) => ({
                     value: area.code,
                     label: area.label,
