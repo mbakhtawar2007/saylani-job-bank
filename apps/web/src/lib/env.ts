@@ -24,8 +24,9 @@ export const env = createEnv({
     SMTP_SECURE: z.stringbool().default(false),
     // 'memory' keeps emails in-process (tests); 'smtp' sends them (Mailpit locally).
     MAIL_TRANSPORT: z.enum(['smtp', 'memory']).default('smtp'),
-    // ≥32 random chars; signs sessions and keys OTP hashes. Required in production
-    // (lib/auth falls back to a fixed development secret only outside production).
+    // ≥32 random chars; signs sessions and keys OTP hashes. Required in every
+    // environment — there is no dev fallback secret (see domains/auth/secret.ts).
+    // Generate with: openssl rand -base64 32
     BETTER_AUTH_SECRET: z.string().min(32).optional(),
     // SMS gateway for OTP codes. 'console' prints codes to the server log (development only).
     SMS_PROVIDER: z.enum(['console']).default('console'),

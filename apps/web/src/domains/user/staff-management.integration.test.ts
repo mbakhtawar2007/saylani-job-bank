@@ -1,5 +1,5 @@
 import { schema } from '@jobbank/db';
-import { DEV_PASSWORD } from '@jobbank/db/seed/dev-data';
+import { getSeedDevPassword } from '@jobbank/db/seed/dev-data';
 import { and, desc, eq } from 'drizzle-orm';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { POST as confirm2fa } from '@/app/api/v1/account/2fa/confirm/route';
@@ -74,7 +74,7 @@ async function inviteAndActivate(adminJar: Jar, role: 'STAFF' | 'VERIFIER', bran
   const jar = new Jar();
   const accepted = await call(acceptInvite, '/api/v1/auth/invitations/accept', {
     method: 'POST',
-    body: { token, password: DEV_PASSWORD },
+    body: { token, password: getSeedDevPassword() },
     jar,
   });
   expect(accepted.status, JSON.stringify(accepted.body)).toBe(200);
@@ -104,7 +104,7 @@ describe('two-factor authentication', () => {
     const start = await call(enroll2fa, '/api/v1/account/2fa/enroll', {
       method: 'POST',
       jar,
-      body: { password: DEV_PASSWORD },
+      body: { password: getSeedDevPassword() },
     });
     expect(start.status).toBe(200);
     expect(start.body.data.qrSvg).toMatch(/^<svg/);
@@ -124,7 +124,7 @@ describe('two-factor authentication', () => {
     const step1 = new Jar();
     const pw = await call(login, '/api/v1/auth/login', {
       method: 'POST',
-      body: { email, password: DEV_PASSWORD },
+      body: { email, password: getSeedDevPassword() },
       jar: step1,
     });
     expect(pw.body.data).toMatchObject({ kind: 'two_factor_required', methods: ['totp'] });
@@ -153,7 +153,7 @@ describe('two-factor authentication', () => {
       const j = new Jar();
       await call(login, '/api/v1/auth/login', {
         method: 'POST',
-        body: { email, password: DEV_PASSWORD },
+        body: { email, password: getSeedDevPassword() },
         jar: j,
       });
       return call(verify2fa, '/api/v1/auth/2fa/verify', {
@@ -171,7 +171,7 @@ describe('two-factor authentication', () => {
     const refused = await call(disable2fa, '/api/v1/account/2fa/disable', {
       method: 'POST',
       jar: admin,
-      body: { password: DEV_PASSWORD },
+      body: { password: getSeedDevPassword() },
     });
     expect(refused.status).toBe(403);
 
@@ -185,13 +185,13 @@ describe('two-factor authentication', () => {
         await call(disable2fa, '/api/v1/account/2fa/disable', {
           method: 'POST',
           jar,
-          body: { password: DEV_PASSWORD },
+          body: { password: getSeedDevPassword() },
         })
       ).status,
     ).toBe(200);
     const after = await call(login, '/api/v1/auth/login', {
       method: 'POST',
-      body: { email, password: DEV_PASSWORD },
+      body: { email, password: getSeedDevPassword() },
     });
     expect(after.body.data.kind).toBe('signed_in');
   });
@@ -543,7 +543,7 @@ describe('managing staff accounts', () => {
     expect((await call(me, '/api/v1/auth/me', { jar: person.jar })).status).toBe(401);
     const blocked = await call(login, '/api/v1/auth/login', {
       method: 'POST',
-      body: { email: person.email, password: DEV_PASSWORD },
+      body: { email: person.email, password: getSeedDevPassword() },
     });
     expect(blocked.body.error.details).toEqual({ reason: 'ACCOUNT_DISABLED' });
 
@@ -557,7 +557,7 @@ describe('managing staff accounts', () => {
       (
         await call(login, '/api/v1/auth/login', {
           method: 'POST',
-          body: { email: person.email, password: DEV_PASSWORD },
+          body: { email: person.email, password: getSeedDevPassword() },
         })
       ).status,
     ).toBe(200);
@@ -600,7 +600,7 @@ describe('managing staff accounts', () => {
     expect((await call(me, '/api/v1/auth/me', { jar: person.jar })).status).toBe(401);
     const relogin = await call(login, '/api/v1/auth/login', {
       method: 'POST',
-      body: { email: person.email, password: DEV_PASSWORD },
+      body: { email: person.email, password: getSeedDevPassword() },
     });
     expect(relogin.body.data.kind).toBe('signed_in');
   });
@@ -633,7 +633,7 @@ describe('password reset', () => {
       (
         await call(login, '/x', {
           method: 'POST',
-          body: { email: person.email, password: DEV_PASSWORD },
+          body: { email: person.email, password: getSeedDevPassword() },
         })
       ).status,
     ).toBe(401);

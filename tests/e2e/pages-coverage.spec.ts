@@ -9,7 +9,11 @@ import { expect, test } from '@playwright/test';
  * is what a broken query/param binding violates.
  */
 
-const DEV_PASSWORD = 'JobBank-Dev-2026!';
+const DEV_PASSWORD = process.env.SEED_DEV_PASSWORD ?? '';
+if (!DEV_PASSWORD)
+  throw new Error(
+    'SEED_DEV_PASSWORD must be set in .env (see .env.example) — local dev seed password, never production.',
+  );
 const MISSING_UUID = '00000000-0000-0000-0000-000000000000';
 
 async function signIn(page: import('@playwright/test').Page, email: string) {

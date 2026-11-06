@@ -18,8 +18,25 @@ import type { SeedStep } from '../scripts/seed';
 /**
  * Local development data — NEVER seeded in production (see seed.ts).
  * These are throwaway test credentials for the local dev database only.
+ *
+ * The seed password has a single source of truth: the SEED_DEV_PASSWORD environment
+ * variable (set it in .env — see .env.example — or in CI). It is deliberately read
+ * lazily, at seed/sign-in time, not at import time: the seed script loads .env only
+ * after importing this module, and test runners load it in their own setup files.
+ * There is no hardcoded password anywhere in the repo: the previous value was
+ * committed in this file, in test helpers and in git history, so treat it as
+ * compromised — re-seed every dev/test database after rotating it.
  */
-export const DEV_PASSWORD = 'JobBank-Dev-2026!';
+export function getSeedDevPassword(): string {
+  const password = process.env.SEED_DEV_PASSWORD;
+  if (!password || password.length < 10) {
+    throw new Error(
+      'SEED_DEV_PASSWORD must be set to at least 10 characters ' +
+        '(local dev seed only, never production). Add it to .env — see .env.example.',
+    );
+  }
+  return password;
+}
 
 export const DEV_BRANCHES = [
   {
@@ -105,7 +122,7 @@ export const DEV_USERS: DevUser[] = [
 export const devData: SeedStep = {
   name: 'dev branches & users',
   async run(db: Database) {
-    const passwordHash = await hashPassword(DEV_PASSWORD);
+    const passwordHash = await hashPassword(getSeedDevPassword());
 
     await db.transaction(async (tx) => {
       const branchIds = new Map<string, string>();

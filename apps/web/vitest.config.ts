@@ -62,6 +62,9 @@ export default defineConfig({
             DATABASE_URL: withDatabase(rootEnv.DATABASE_URL, testDb),
             TEST_DATABASE_MIGRATOR_URL: testMigratorUrl,
             BETTER_AUTH_SECRET: 'integration-test-secret-integration-test-secret',
+            // Seed password for the test DB (from CI env or root .env). No default:
+            // getSeedDevPassword() fails fast with instructions if it is missing.
+            SEED_DEV_PASSWORD: process.env.SEED_DEV_PASSWORD ?? rootEnv.SEED_DEV_PASSWORD ?? '',
             REDIS_URL: '',
             MAIL_TRANSPORT: 'memory',
           },

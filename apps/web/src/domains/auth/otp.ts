@@ -3,6 +3,7 @@ import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import { schema } from '@jobbank/db';
 import { and, desc, eq, gt, isNull, lt, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
+import { maskPhoneForLog } from '@/lib/sms/mask';
 import { getSmsSender } from '@/lib/sms/sms';
 import { getAuthSecret } from './secret';
 
@@ -24,7 +25,9 @@ export function generateOtpCode(): string {
 /** Creates a fresh challenge (older open ones are superseded) and texts the code. */
 export async function issueOtp(phoneNumber: string, ipAddress: string | null): Promise<void> {
   const code = generateOtpCode();
-  console.log(`Issuing OTP for ${phoneNumber}: ${code} (expires in ${OTP_TTL_SECONDS}s)`);
+  // Never log the code itself: server logs are not a safe channel for a live login code.
+  // Only the masked phone is logged, so log access can never sign in as the applicant.
+  console.log(`Issuing OTP for ${maskPhoneForLog(phoneNumber)} (expires in ${OTP_TTL_SECONDS}s)`);
   await db.transaction(async (tx) => {
     await tx
       .update(t)

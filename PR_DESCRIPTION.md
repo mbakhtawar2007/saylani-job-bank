@@ -148,7 +148,7 @@ uvicorn app.main:app --port 8000     # Linux/Mac
 
 - Added VERIFIED company "Hamza Traders (Pvt) Ltd" (NTN 1234567-8) with owner, contact, HQ location
 - Company ID: `00000000-0000-4000-8000-00000000c001`
-- Employer account: `employer@jobbank.local` / `JobBank-Dev-2026!`
+- Employer account: `employer@jobbank.local` / the local `SEED_DEV_PASSWORD` from `.env` (never commit a real value)
 - Seeded via `packages/db/src/seed/dev-data.ts` (idempotent)
 
 ---

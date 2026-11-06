@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { GET as branches } from '@/app/api/v1/branches/route';
 import { POST as login } from '@/app/api/v1/auth/login/route';
-import { DEV_PASSWORD, bodyOf, call, clearRateLimits, errorOf, signIn } from './helpers';
+import { bodyOf, call, clearRateLimits, errorOf, getSeedDevPassword, signIn } from './helpers';
 
 describe('RBAC on GET /api/v1/branches', () => {
   it('rejects anonymous callers with 401', async () => {
@@ -52,7 +52,7 @@ describe('blocked account', () => {
     await clearRateLimits(['login-email', email]);
     const right = await call(login, '/api/v1/auth/login', {
       method: 'POST',
-      body: { email, password: DEV_PASSWORD },
+      body: { email, password: getSeedDevPassword() },
     });
     expect(right.status).toBe(403);
     const error = await errorOf(right);

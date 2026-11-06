@@ -48,6 +48,14 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # Ephemeral test credentials, generated fresh per run and never committed.
+      # The integration/Jest suites seed the test DB with SEED_DEV_PASSWORD and
+      # sign in with it; nothing in the repo may contain a real value for it.
+      - name: Generate ephemeral test credentials
+        run: |
+          echo "SEED_DEV_PASSWORD=$(openssl rand -base64 24)" >> "$GITHUB_ENV"
+          echo "BETTER_AUTH_SECRET=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
       # Mirrors the pg-init-roles config in docker-compose.yml (service containers can't take it).
       - name: Provision database roles
         run: |

@@ -8,7 +8,11 @@ import { expect, test } from '@playwright/test';
  * It is also the defect catcher: a page that 500s or renders an empty shell shows up here.
  */
 
-const DEV_PASSWORD = 'JobBank-Dev-2026!';
+const DEV_PASSWORD = process.env.SEED_DEV_PASSWORD ?? '';
+if (!DEV_PASSWORD)
+  throw new Error(
+    'SEED_DEV_PASSWORD must be set in .env (see .env.example) — local dev seed password, never production.',
+  );
 
 async function signIn(page: import('@playwright/test').Page, email: string) {
   await page.goto('/login');

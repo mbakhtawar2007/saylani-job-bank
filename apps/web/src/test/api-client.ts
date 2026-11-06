@@ -1,4 +1,4 @@
-import { DEV_PASSWORD } from '@jobbank/db/seed/dev-data';
+import { getSeedDevPassword } from '@jobbank/db/seed/dev-data';
 import * as OTPAuth from 'otpauth';
 import postgres from 'postgres';
 import { afterAll, expect } from 'vitest';
@@ -113,7 +113,7 @@ const routes = {
 };
 
 /** Signs in with email + password; completes the authenticator step when the account has one. */
-export async function signIn(email: string, password = DEV_PASSWORD): Promise<Jar> {
+export async function signIn(email: string, password = getSeedDevPassword()): Promise<Jar> {
   const jar = new Jar();
   const res = await call(await routes.login(), '/api/v1/auth/login', {
     method: 'POST',
@@ -136,7 +136,7 @@ export async function signIn(email: string, password = DEV_PASSWORD): Promise<Ja
 export async function enrollTwoFactor(
   email: string,
   jar: Jar,
-  password = DEV_PASSWORD,
+  password = getSeedDevPassword(),
 ): Promise<string[]> {
   const start = await call(await routes.enroll(), '/api/v1/account/2fa/enroll', {
     method: 'POST',

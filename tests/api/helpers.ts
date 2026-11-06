@@ -10,7 +10,9 @@ import { getRedis } from '@/lib/redis/client';
 import { devOutbox } from '@/lib/sms/sms';
 
 export const BASE = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-export const DEV_PASSWORD = 'JobBank-Dev-2026!';
+import { getSeedDevPassword } from '@jobbank/db/seed/dev-data';
+
+export { getSeedDevPassword };
 /** Seeded phone sign-in account (Ahmed Applicant). */
 export const SEEDED_APPLICANT_PHONE = '3001234567';
 
@@ -120,7 +122,7 @@ export interface SignInSuccess {
 /** Password sign-in with the rate limiter reset first; throws unless signed in. */
 export async function signIn(
   email: string,
-  password: string = DEV_PASSWORD,
+  password: string = getSeedDevPassword(),
   jar: Jar = new Jar(),
 ): Promise<SignInSuccess> {
   await clearRateLimits(['login-email', email.trim().toLowerCase()]);

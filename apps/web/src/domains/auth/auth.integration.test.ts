@@ -1,6 +1,6 @@
 import { ROLE_PERMISSIONS, type Role } from '@jobbank/shared';
 import { schema } from '@jobbank/db';
-import { DEV_PASSWORD, DEV_USERS } from '@jobbank/db/seed/dev-data';
+import { DEV_USERS, getSeedDevPassword } from '@jobbank/db/seed/dev-data';
 import { and, count, desc, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { POST as login } from '@/app/api/v1/auth/login/route';
@@ -220,7 +220,7 @@ describe('email + password sign-in', () => {
   it('only reveals a disabled account to someone who knows its password', async () => {
     const right = await call(login, '/api/v1/auth/login', {
       method: 'POST',
-      body: { email: 'disabled.staff@jobbank.local', password: DEV_PASSWORD },
+      body: { email: 'disabled.staff@jobbank.local', password: getSeedDevPassword() },
     });
     expect(right.status).toBe(403);
     expect(right.body.error.details).toEqual({ reason: 'ACCOUNT_DISABLED' });
@@ -247,7 +247,7 @@ describe('email + password sign-in', () => {
   it('refuses cross-site sign-in posts (CSRF)', async () => {
     const res = await call(login, '/api/v1/auth/login', {
       method: 'POST',
-      body: { email: 'employer@jobbank.local', password: DEV_PASSWORD },
+      body: { email: 'employer@jobbank.local', password: getSeedDevPassword() },
       headers: { origin: 'https://evil.example' },
     });
     expect(res.status).toBe(403);

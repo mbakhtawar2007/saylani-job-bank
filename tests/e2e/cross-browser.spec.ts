@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test';
 
+/** Local dev seed password — set SEED_DEV_PASSWORD in .env (see .env.example). */
+const DEV_PASSWORD = process.env.SEED_DEV_PASSWORD ?? '';
+if (!DEV_PASSWORD)
+  throw new Error(
+    'SEED_DEV_PASSWORD must be set in .env (see .env.example) — local dev seed password, never production.',
+  );
+
 /**
  * Cross-browser smoke: a small set of critical flows that must work in Chromium,
  * Firefox AND WebKit (Safari engine). Kept deliberately tiny so the suite stays fast —
@@ -32,7 +39,7 @@ test.describe('cross-browser smoke', () => {
     await page.goto('/login');
     await page.getByRole('button', { name: /Staff \/ Admin/ }).click();
     await page.getByLabel(/Email/).fill('staff.khi@jobbank.local');
-    await page.getByLabel(/Password/).fill('JobBank-Dev-2026!');
+    await page.getByLabel(/Password/).fill(DEV_PASSWORD);
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 
     await expect(page).toHaveURL(/\/staff$/);

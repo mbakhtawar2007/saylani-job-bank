@@ -1,7 +1,11 @@
 import { expect, test } from '@playwright/test';
 
 /** Shared dev credentials — see packages/db/src/seed/dev-data.ts. */
-const DEV_PASSWORD = 'JobBank-Dev-2026!';
+const DEV_PASSWORD = process.env.SEED_DEV_PASSWORD ?? '';
+if (!DEV_PASSWORD)
+  throw new Error(
+    'SEED_DEV_PASSWORD must be set in .env (see .env.example) — local dev seed password, never production.',
+  );
 
 /** Seeded Super Admin (2FA not enrolled). */
 const SUPER_ADMIN_EMAIL = 'superadmin@jobbank.local';
