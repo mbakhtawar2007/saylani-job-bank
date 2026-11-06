@@ -47,12 +47,17 @@ export {
   companyFilters,
   correctCompanyDetails,
   getCompanyDetail,
+  getCompanyOnboarding,
   listCompanies,
+  markCompanyRegistrationVerifiedSigned,
   reinstateCompany,
+  staffOnboardCompany,
   staffRegisterCompany,
   suspendCompany,
   transferCompany,
   type CompanyListItem,
+  type CompanyOnboarding,
+  type CompanyOnboardingNotes,
 } from './staff';
 export {
   claimCompany,

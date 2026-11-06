@@ -39,7 +39,9 @@ export const companyMachine = defineMachine<
       from: ['DRAFT', 'REJECTED'],
       event: 'SUBMIT',
       to: 'SUBMITTED',
-      actors: ['EMPLOYER'],
+      // Staff submit on behalf of a company they onboarded (verified & signed first);
+      // employers submit their own company. The submission guard still applies.
+      actors: ['EMPLOYER', 'STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN'],
       guard: submissionGuard,
     },
     { from: 'SUBMITTED', event: 'CLAIM', to: 'UNDER_VERIFICATION', actors: ['VERIFIER'] },

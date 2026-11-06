@@ -176,6 +176,13 @@
       "when": 1793894570078,
       "tag": "0024_branch_registration_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1793941351604,
+      "tag": "0025_verified_signed_and_permanent_address",
+      "breakpoints": true
     }
   ]
 }

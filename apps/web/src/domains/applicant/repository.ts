@@ -27,6 +27,7 @@ export type SignedIn = RequestContext & { actor: Actor };
 
 export const a = schema.applicants;
 export const addr = schema.applicantAddresses;
+export const permAddr = schema.applicantPermanentAddresses;
 export const edu = schema.applicantEducation;
 export const exp = schema.applicantExperience;
 export const skl = schema.applicantSkills;
@@ -86,6 +87,14 @@ export interface ApplicantProfile {
     areaCode: string | null;
     location: GeoPoint;
   } | null;
+  /** Permanent home address (section 5); null when not collected. */
+  permanentAddress: {
+    addressLine: string;
+    cityCode: string;
+    areaCode: string | null;
+  } | null;
+  /** Free-text notes (section 6); null when none were recorded. */
+  additionalNotes: string | null;
   education: {
     levelCode: string;
     institution: string | null;
@@ -128,6 +137,10 @@ export interface ApplicantProfile {
   identityLocked: boolean;
   /** Only staff can move an activated profile to another branch. */
   branchLocked: boolean;
+  /** When the first-counter paper form was verified and signed (null until then). */
+  registrationVerifiedSignedAt: string | null;
+  /** Who recorded the verified & signed mark (user id, null until then). */
+  registrationVerifiedSignedBy: string | null;
   activatedAt: string | null;
   createdAt: string;
 }
@@ -327,6 +340,7 @@ export async function buildProfile(
   const [
     [user],
     [address],
+    [permanentAddress],
     education,
     experience,
     skills,
@@ -343,6 +357,7 @@ export async function buildProfile(
       .from(schema.users)
       .where(eq(schema.users.id, row.userId)),
     executor.select().from(addr).where(eq(addr.applicantId, row.id)),
+    executor.select().from(permAddr).where(eq(permAddr.applicantId, row.id)),
     executor.select().from(edu).where(eq(edu.applicantId, row.id)).orderBy(asc(edu.sortOrder)),
     executor.select().from(exp).where(eq(exp.applicantId, row.id)).orderBy(asc(exp.sortOrder)),
     executor.select().from(skl).where(eq(skl.applicantId, row.id)).orderBy(asc(skl.skillCode)),
@@ -386,6 +401,14 @@ export async function buildProfile(
           location: address.location,
         }
       : null,
+    permanentAddress: permanentAddress
+      ? {
+          addressLine: permanentAddress.addressLine,
+          cityCode: permanentAddress.cityCode,
+          areaCode: permanentAddress.areaCode,
+        }
+      : null,
+    additionalNotes: row.additionalNotes,
     education: education.map((e) => ({
       levelCode: e.levelCode,
       institution: e.institution,
@@ -429,6 +452,8 @@ export async function buildProfile(
     completeness,
     identityLocked: identityLocked(row),
     branchLocked: branchLocked(row),
+    registrationVerifiedSignedAt: row.registrationVerifiedSignedAt?.toISOString() ?? null,
+    registrationVerifiedSignedBy: row.registrationVerifiedSignedBy,
     activatedAt: row.activatedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
   };

@@ -9,7 +9,6 @@ import {
   Briefcase,
   Gauge,
   ListTree,
-  QrCode,
   SlidersHorizontal,
   TrendingUp,
   UserRound,
@@ -66,7 +65,6 @@ export function navigationFor(role: Role): { title?: string; items: NavItemConfi
           items: [
             overview,
             { href: '/branch-admin/applicants', label: 'Applicants', icon: Contact },
-            { href: '/branch-admin/applicants/verify-token', label: 'Verify Token', icon: QrCode },
             { href: '/branch-admin/companies', label: 'Companies', icon: Building2 },
             { href: '/branch-admin/jobs', label: 'Jobs', icon: Briefcase },
             { href: '/branch-admin/staff', label: 'Staff', icon: Users },
@@ -89,7 +87,7 @@ export function navigationFor(role: Role): { title?: string; items: NavItemConfi
           items: [
             overview,
             { href: '/staff/applicants', label: 'Applicants', icon: Contact },
-            { href: '/staff/applicants/verify-token', label: 'Verify Token', icon: QrCode },
+            { href: '/staff/companies', label: 'Companies', icon: Building2 },
           ],
         },
       ];

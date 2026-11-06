@@ -1,14 +1,24 @@
 'use client';
 
 import { COMPANY_SIZE_LABELS, LEGAL_STRUCTURE_LABELS, type CompanyStatus } from '@jobbank/shared';
-import { ArrowLeft, ExternalLink, Pause, Play } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Pause, Play, Printer } from 'lucide-react';
 import NextLink from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useEffect, useState } from 'react';
 import { Badge, Button, StatusPill, Textarea } from '@/components/atoms';
 import { FormField, KeyValue } from '@/components/molecules';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
-import type { CompanyView } from '@/domains/company';
+import { formatDate } from '@/lib/format/date';
+import type { CompanyOnboarding, CompanyView } from '@/domains/company';
+import { CompanyRegistrationFormPrint } from '@/app/(dashboard)/_components/companies/CompanyRegistrationFormPrint';
+
+interface MasterDataOption {
+  id: string;
+  code: string;
+  label: string;
+  parentId: string | null;
+}
 
 const STATUS_PILL: Record<
   CompanyStatus,
@@ -26,22 +36,54 @@ const STATUS_PILL: Record<
 
 export function StaffCompanyPanel({
   company,
+  onboarding,
   canSuspend,
   canManage: _canManage,
+  canOnboard = false,
 }: {
   company: CompanyView;
+  onboarding?: CompanyOnboarding | null;
   canSuspend: boolean;
   canManage: boolean;
+  canOnboard?: boolean;
 }) {
   const pathname = usePathname();
   const backHref = pathname.includes('super-admin')
     ? '/super-admin/companies'
-    : '/branch-admin/companies';
+    : pathname.includes('/staff/')
+      ? '/staff/companies'
+      : '/branch-admin/companies';
   const [company_, setCompany_] = useState(company);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [suspendNote, setSuspendNote] = useState('');
   const [showSuspendForm, setShowSuspendForm] = useState(false);
+  const [printReady, setPrintReady] = useState(false);
+  const [verifiedSigned, setVerifiedSigned] = useState(
+    Boolean(company.registrationVerifiedSignedAt),
+  );
+  const [industries, setIndustries] = useState<MasterDataOption[]>([]);
+
+  useEffect(() => {
+    setPrintReady(true);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    apiFetch<MasterDataOption[]>('/api/v1/master-data?type=INDUSTRY')
+      .then(({ data }) => {
+        if (active) setIndustries(data ?? []);
+      })
+      .catch(() => {
+        // Industry label falls back to the raw industry code on the print form.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const industryLabel =
+    industries.find((i) => i.code === company_.details.industryCode)?.label ?? null;
 
   const pill = STATUS_PILL[company_.status];
 
@@ -77,6 +119,24 @@ export function StaffCompanyPanel({
     }
   }
 
+  async function markAsVerifiedSigned() {
+    setPending('verified-signed');
+    setError(null);
+    try {
+      const { data } = await apiFetch<{
+        verifiedSigned: boolean;
+        status: string;
+        company: CompanyView;
+      }>(`/api/v1/companies/${company_.id}/registration-form/verified-signed`, { method: 'POST' });
+      setCompany_(data.company);
+      setVerifiedSigned(true);
+    } catch (err) {
+      setError(err instanceof ApiClientError ? err.message : 'Something went wrong.');
+    } finally {
+      setPending(null);
+    }
+  }
+
   return (
     <div className="grid w-full gap-6">
       <div>
@@ -98,6 +158,19 @@ export function StaffCompanyPanel({
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            {onboarding && (
+              <Button variant="secondary" leftIcon={<Printer />} onClick={() => window.print()}>
+                Print registration form
+              </Button>
+            )}
+            {canOnboard && onboarding && company_.status === 'DRAFT' && !verifiedSigned && (
+              <Button
+                loading={pending === 'verified-signed'}
+                onClick={() => void markAsVerifiedSigned()}
+              >
+                Mark as verified &amp; signed
+              </Button>
+            )}
             {canSuspend && company_.status === 'VERIFIED' && !showSuspendForm && (
               <Button
                 variant="danger"
@@ -124,6 +197,12 @@ export function StaffCompanyPanel({
       {error && (
         <div className="bg-danger-soft text-danger-soft-fg rounded-xl px-4 py-3 text-sm">
           {error}
+        </div>
+      )}
+
+      {verifiedSigned && (
+        <div className="bg-success-soft text-success-soft-fg rounded-xl px-4 py-3 text-sm">
+          Verification and signature recorded. The company is now in the verifier queue (Submitted).
         </div>
       )}
 
@@ -187,6 +266,50 @@ export function StaffCompanyPanel({
         )}
       </section>
 
+      {onboarding && (
+        <section className="border-border bg-surface grid gap-4 rounded-xl border p-5">
+          <h2 className="text-fg font-semibold">Onboarding</h2>
+          <KeyValue
+            columns={2}
+            items={[
+              {
+                label: 'Onboarded by',
+                value: onboarding.onboardedBy
+                  ? `${onboarding.onboardedBy.name ?? ''}${onboarding.onboardedBy.roleLabel ? ` (${onboarding.onboardedBy.roleLabel})` : ''}`
+                  : '—',
+              },
+              {
+                label: 'Visit date',
+                value: onboarding.visitDate ? formatDate(onboarding.visitDate) : '—',
+              },
+              {
+                label: 'Registration form',
+                value: company_.registrationVerifiedSignedAt
+                  ? `Verified & signed ${formatDate(company_.registrationVerifiedSignedAt)}`
+                  : 'Not yet verified & signed',
+              },
+              {
+                label: 'Company agreed to work with us',
+                value: onboarding.agreed ? 'Yes' : 'No',
+              },
+              { label: 'Head-office address', value: onboarding.notes.headOfficeAddress ?? '—' },
+              { label: 'Other sites', value: onboarding.notes.otherSites ?? '—' },
+              {
+                label: 'Roles to hire for',
+                value: onboarding.notes.workforceRoles ?? '—',
+              },
+              { label: 'Type of work', value: onboarding.notes.workforceType ?? '—' },
+              { label: 'Shifts / timings', value: onboarding.notes.workforceShifts ?? '—' },
+              { label: 'Number of openings', value: onboarding.notes.workforceOpenings ?? '—' },
+              { label: 'Years in business', value: onboarding.notes.yearsInBusiness ?? '—' },
+              { label: 'Previous hiring', value: onboarding.notes.previousHiring ?? '—' },
+              { label: 'Certifications', value: onboarding.notes.certifications ?? '—' },
+              { label: 'Additional notes', value: onboarding.notes.additionalNotes ?? '—' },
+            ]}
+          />
+        </section>
+      )}
+
       <section className="border-border bg-surface grid gap-4 rounded-xl border p-5">
         <h2 className="text-fg font-semibold">Primary contact</h2>
         {company_.contacts.length === 0 ? (
@@ -236,6 +359,16 @@ export function StaffCompanyPanel({
           </div>
         </section>
       )}
+      {onboarding && printReady
+        ? createPortal(
+            <CompanyRegistrationFormPrint
+              company={company_}
+              onboarding={onboarding}
+              industryLabel={industryLabel}
+            />,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

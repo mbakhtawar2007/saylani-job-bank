@@ -5,7 +5,6 @@ export {
   INVITE_TTL_DAYS,
   InvalidLinkError,
   issueAccountToken,
-  issueBranchRegistrationToken,
   pendingInvitation,
   previewInvitation,
   requestPasswordReset,

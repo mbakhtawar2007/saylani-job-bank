@@ -254,8 +254,11 @@ export async function setMyLocation(
     const assignedBranchId = cityBranches[0]!.id;
     const branchChanged = row.branchId !== assignedBranchId;
     if (branchChanged && branchLocked(row)) {
-      // Profile is active — keep current branch silently (city change requires staff transfer).
-      // We still update the address fields below.
+      // A locked (active) profile cannot move branches on its own — staff transfer only.
+      // Address updates in the same branch still work; only the branch move is refused.
+      throw new ForbiddenError(
+        'Your profile is locked to its current branch. Ask branch staff to transfer you.',
+      );
     }
 
     const values = {

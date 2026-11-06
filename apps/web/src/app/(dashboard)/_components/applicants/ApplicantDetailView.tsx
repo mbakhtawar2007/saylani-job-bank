@@ -1204,6 +1204,12 @@ export function ApplicantDetailView({
               {applicant.createdByStaff.name ?? 'staff account'}.
             </p>
           )}
+          {applicant.registrationVerifiedSignedAt && (
+            <p className="text-fg-muted mt-2 text-sm">
+              Registration form verified &amp; signed{' '}
+              {formatDate(applicant.registrationVerifiedSignedAt)}.
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
             {applicant.can.manage && <EditDetailsDialog applicant={applicant} />}
             {applicant.can.manage && <ChangePhoneDialog applicant={applicant} />}

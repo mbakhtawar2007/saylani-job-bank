@@ -62,6 +62,10 @@ export const companies = pgTable(
     status: text({ enum: COMPANY_STATUSES }).notNull().default('DRAFT'),
     /** Why the company was suspended (shown to Job Bank staff). */
     statusReason: text(),
+    /** When the first-counter paper form was verified and signed (null until then). */
+    registrationVerifiedSignedAt: timestamp({ withTimezone: true }),
+    /** Who recorded the verified & signed mark. */
+    registrationVerifiedSignedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
     verifiedAt: timestamp({ withTimezone: true }),
     createdBy: uuid()
       .notNull()

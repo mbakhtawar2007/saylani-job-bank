@@ -274,6 +274,69 @@ const companyFields = {
 export const registerCompanySchema = z.object(companyFields);
 export type RegisterCompanyInput = z.infer<typeof registerCompanySchema>;
 
+/**
+ * Staff field-visit onboarding: a Saylani staff member visits a company, the company
+ * agrees to hire through Saylani, and the staff member registers it on its behalf.
+ * Few required fields so the form is quick to fill during/after a visit; the rest is
+ * completable later. Legal structure and company size stay required: the database keeps
+ * them NOT NULL, so making them optional would need a migration.
+ */
+export const staffOnboardCompanySchema = z
+  .object({
+    ...companyFields,
+    branchId: z.uuid('Choose a branch'),
+    contactName: z
+      .string('Enter the contact person’s name')
+      .trim()
+      .min(3, 'Enter the contact person’s full name')
+      .max(120),
+    contactDesignation: optionalText(120),
+    contactPhone: pkPhoneSchema,
+    contactEmail: optionalEmail,
+    visitDate: z
+      .string('Choose the visit date')
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose the visit date')
+      .refine((value) => {
+        // Reject impossible calendar dates (e.g. 2026-02-30), which the
+        // format regex alone would accept.
+        const [year, month, day] = value.split('-').map(Number);
+        const date = new Date(Date.UTC(year!, month! - 1, day));
+        return (
+          date.getUTCFullYear() === year &&
+          date.getUTCMonth() === month! - 1 &&
+          date.getUTCDate() === day
+        );
+      }, 'Choose a real calendar date')
+      .refine((value) => {
+        // Compare date strings in Asia/Karachi so a visit "today" in Pakistan
+        // is never rejected by a server running in another timezone.
+        const today = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Karachi',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(new Date());
+        return value <= today;
+      }, 'The visit date cannot be in the future'),
+    /** The company must have agreed to work with Saylani. */
+    agreed: z.boolean(),
+    headOfficeAddress: optionalText(300),
+    otherSites: optionalText(500),
+    workforceRoles: optionalText(300),
+    workforceType: optionalText(300),
+    workforceShifts: optionalText(300),
+    workforceOpenings: optionalText(60),
+    yearsInBusiness: optionalText(60),
+    previousHiring: optionalText(500),
+    certifications: optionalText(500),
+    additionalNotes: optionalText(2000),
+  })
+  .refine((v) => v.agreed === true, {
+    message: 'Confirm the company agreed to work with us',
+    path: ['agreed'],
+  });
+export type StaffOnboardCompanyInput = z.infer<typeof staffOnboardCompanySchema>;
+
 /** Every field optional and without defaults (a default would overwrite on every PATCH). */
 export const updateCompanySchema = z.object(companyFields).partial();
 export type UpdateCompanyInput = z.infer<typeof updateCompanySchema>;

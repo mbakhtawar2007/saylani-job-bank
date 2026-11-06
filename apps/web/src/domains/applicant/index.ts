@@ -43,8 +43,3 @@ export {
   type ApplicantStaffView,
   type IdentityCheckView,
 } from './staff';
-export {
-  confirmRegistrationToken,
-  lookupRegistrationToken,
-  type RegistrationTokenApplicant,
-} from './registration-tokens';

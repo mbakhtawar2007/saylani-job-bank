@@ -115,7 +115,7 @@
       overflow: visible !important;
     }
 
-    body > *:not(:has(.registration-token-print-root)):not(:has(.registration-form-print-root)) {
+    body > *:not(.registration-form-print-root):not(:has(.registration-form-print-root)) {
       display: none !important;
     }
 
@@ -146,17 +146,6 @@
       padding: 0 !important;
       color: #111 !important;
       font-size: 9pt !important;
-    }
-
-    .registration-token-code {
-      display: inline-block !important;
-      max-width: 100% !important;
-      white-space: nowrap !important;
-      word-break: keep-all !important;
-      overflow-wrap: normal !important;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
-      font-size: 9pt !important;
-      letter-spacing: 0 !important;
     }
 
     .registration-form-section {
@@ -190,74 +179,6 @@
 
     .registration-form-print-sheet .no-print {
       display: none !important;
-    }
-
-    .registration-token-print-root,
-    .registration-token-print-root * {
-      visibility: visible !important;
-    }
-
-    .registration-token-print-root {
-      position: absolute !important;
-      top: 0 !important;
-      left: 0 !important;
-      width: 100% !important;
-      height: auto !important;
-      min-height: 0 !important;
-      max-width: none !important;
-      max-height: none !important;
-      transform: none !important;
-      overflow: visible !important;
-      display: block !important;
-      border: 0 !important;
-      padding: 0 !important;
-      background: white !important;
-      box-shadow: none !important;
-    }
-
-    .registration-token-print-root > :not(.registration-token-print-slip),
-    .registration-token-print-slip .no-print {
-      display: none !important;
-    }
-
-    .registration-token-print-slip {
-      box-sizing: border-box !important;
-      display: grid !important;
-      grid-template-columns: minmax(0, 1fr) !important;
-      justify-items: center !important;
-      width: 4.75in !important;
-      max-width: 100% !important;
-      margin: 0 auto !important;
-      padding: 0.18in !important;
-      gap: 0.08in !important;
-      overflow: visible !important;
-      border: 1px solid #222 !important;
-      background: white !important;
-      color: #111 !important;
-      box-shadow: none !important;
-      break-inside: avoid !important;
-      page-break-inside: avoid !important;
-      break-after: avoid-page !important;
-      page-break-after: avoid !important;
-    }
-
-    .registration-token-print-slip,
-    .registration-token-print-slip * {
-      color: #111 !important;
-    }
-
-    .registration-token-print-slip > .registration-token-code {
-      width: max-content !important;
-      max-width: 100% !important;
-      font-size: 11pt !important;
-      line-height: 1.2 !important;
-    }
-
-    .registration-token-print-slip img {
-      width: 1.45in !important;
-      height: 1.45in !important;
-      max-width: 100% !important;
-      object-fit: contain !important;
     }
   }
 }

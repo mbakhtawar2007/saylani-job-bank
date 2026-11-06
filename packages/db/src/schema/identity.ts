@@ -1,17 +1,14 @@
 import { sql } from 'drizzle-orm';
 import {
   boolean,
-  date,
   index,
   integer,
   pgTable,
   text,
   timestamp,
   unique,
-  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import { branches } from './branches';
 
 export const USER_STATUSES = ['ACTIVE', 'DISABLED', 'INVITED'] as const;
 export type UserStatus = (typeof USER_STATUSES)[number];
@@ -175,7 +172,7 @@ export const twoFactors = pgTable(
   (t) => [index('two_factors_user_idx').on(t.userId), index('two_factors_secret_idx').on(t.secret)],
 );
 
-export const ACCOUNT_TOKEN_PURPOSES = ['INVITE', 'PASSWORD_RESET', 'BRANCH_REGISTRATION'] as const;
+export const ACCOUNT_TOKEN_PURPOSES = ['INVITE', 'PASSWORD_RESET'] as const;
 export type AccountTokenPurpose = (typeof ACCOUNT_TOKEN_PURPOSES)[number];
 
 /**
@@ -191,18 +188,10 @@ export const accountTokens = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     purpose: text({ enum: ACCOUNT_TOKEN_PURPOSES }).notNull(),
     tokenHash: text().notNull().unique(),
-    branchId: uuid().references(() => branches.id, { onDelete: 'cascade' }),
-    registrationDay: date(),
-    registrationSequence: integer(),
     expiresAt: timestamp({ withTimezone: true }).notNull(),
     usedAt: timestamp({ withTimezone: true }),
     createdBy: uuid().references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [
-    index('account_tokens_user_idx').on(t.userId, t.purpose),
-    uniqueIndex('account_tokens_branch_registration_seq_unique')
-      .on(t.branchId, t.registrationDay, t.registrationSequence)
-      .where(sql`${t.purpose} = 'BRANCH_REGISTRATION'`),
-  ],
+  (t) => [index('account_tokens_user_idx').on(t.userId, t.purpose)],
 );

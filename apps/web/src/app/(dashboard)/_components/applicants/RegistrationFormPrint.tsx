@@ -2,9 +2,21 @@
 
 import { GENDER_LABELS, JOB_TYPE_LABELS, SHIFT_LABELS, SKILL_LEVEL_LABELS } from '@jobbank/shared';
 import type { ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import type { ApplicantProfile } from '@/domains/applicant';
 import { formatDate } from '@/lib/format/date';
+import { apiFetch } from '@/lib/api/client';
 import { RegistrationTokenQr } from './RegistrationTokenQr';
+
+interface MasterDataOption {
+  id: string;
+  code: string;
+  label: string;
+  parentId: string | null;
+}
+
+const labelOf = (options: MasterDataOption[], code: string | null | undefined): string =>
+  (code && options.find((o) => o.code === code)?.label) || code || '';
 
 function FormSection({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -34,6 +46,38 @@ export function RegistrationFormPrint({
   branchName: string;
 }) {
   const { personal, address, preferences } = profile;
+  // Resolve master-data codes to human labels so the signed paper form shows
+  // e.g. "Bachelor's" instead of "BACHELORS". Unknown codes fall back to the
+  // raw code so nothing ever prints blank.
+  const [cities, setCities] = useState<MasterDataOption[]>([]);
+  const [areas, setAreas] = useState<MasterDataOption[]>([]);
+  const [educationLevels, setEducationLevels] = useState<MasterDataOption[]>([]);
+  const [jobCategories, setJobCategories] = useState<MasterDataOption[]>([]);
+  const [skills, setSkills] = useState<MasterDataOption[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all(
+      ['CITY', 'AREA', 'EDUCATION_LEVEL', 'JOB_CATEGORY', 'SKILL'].map((type) =>
+        apiFetch<MasterDataOption[]>(`/api/v1/master-data?type=${type}`).then(({ data }) => data),
+      ),
+    )
+      .then(([cityOptions, areaOptions, levels, categories, skillOptions]) => {
+        if (!active) return;
+        setCities(cityOptions ?? []);
+        setAreas(areaOptions ?? []);
+        setEducationLevels(levels ?? []);
+        setJobCategories(categories ?? []);
+        setSkills(skillOptions ?? []);
+      })
+      .catch(() => {
+        // Labels fall back to the raw codes on the print form.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   return (
     <div className="registration-form-print-root">
       <article className="registration-form-print-sheet grid gap-3 text-gray-950">
@@ -68,7 +112,10 @@ export function RegistrationFormPrint({
           {profile.education.length ? (
             profile.education.map((item, index) => (
               <div className="grid grid-cols-2 gap-x-4 gap-y-2" key={`${item.levelCode}-${index}`}>
-                <Field label="Education level / qualification" value={item.levelCode} />
+                <Field
+                  label="Education level / qualification"
+                  value={labelOf(educationLevels, item.levelCode)}
+                />
                 <Field label="Field of study" value={item.fieldOfStudy} />
                 <Field label="Institution" value={item.institution} />
                 <Field
@@ -103,7 +150,7 @@ export function RegistrationFormPrint({
               >
                 <Field label="Employer / organization" value={item.employerName} />
                 <Field label="Job title / role" value={item.jobTitle} />
-                <Field label="Work category" value={item.categoryCode} />
+                <Field label="Work category" value={labelOf(jobCategories, item.categoryCode)} />
                 <Field
                   label="Employment dates"
                   value={`${item.startMonth} - ${item.isCurrent ? 'Current' : (item.endMonth ?? '')}`}
@@ -122,7 +169,7 @@ export function RegistrationFormPrint({
                 <Field
                   key={skill.skillCode}
                   label="Skill"
-                  value={`${skill.skillCode} - ${SKILL_LEVEL_LABELS[skill.level]} (${skill.years} years)`}
+                  value={`${labelOf(skills, skill.skillCode)} - ${SKILL_LEVEL_LABELS[skill.level]} (${skill.years} years)`}
                 />
               ))}
             </div>
@@ -134,7 +181,9 @@ export function RegistrationFormPrint({
         <FormSection title="4. Work availability and preferences">
           <Field
             label="Preferred work categories / roles"
-            value={preferences?.categoryCodes.join(', ')}
+            value={preferences?.categoryCodes
+              .map((code) => labelOf(jobCategories, code))
+              .join(', ')}
           />
           <div className="grid grid-cols-2 gap-x-4 gap-y-2">
             <Field
@@ -158,14 +207,24 @@ export function RegistrationFormPrint({
         <FormSection title="5. Residential information">
           <Field label="Current residential address" value={address?.addressLine} />
           <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-            <Field label="Area of residence" value={address?.areaCode} />
-            <Field label="City" value={address?.cityCode} />
+            <Field label="Area of residence" value={labelOf(areas, address?.areaCode)} />
+            <Field label="City" value={labelOf(cities, address?.cityCode)} />
           </div>
-          <Field label="Permanent address" />
+          <Field label="Permanent address" value={profile.permanentAddress?.addressLine} />
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+            <Field
+              label="Permanent area"
+              value={labelOf(areas, profile.permanentAddress?.areaCode)}
+            />
+            <Field
+              label="Permanent city"
+              value={labelOf(cities, profile.permanentAddress?.cityCode)}
+            />
+          </div>
         </FormSection>
 
         <FormSection title="6. Additional relevant information">
-          <Field label="Additional details / assessment notes" />
+          <Field label="Additional details / assessment notes" value={profile.additionalNotes} />
           <div className="grid grid-cols-2 gap-x-8 gap-y-5 pt-3">
             <Field label="Applicant signature" />
             <Field label="Date" />

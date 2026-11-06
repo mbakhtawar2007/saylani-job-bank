@@ -95,10 +95,14 @@ describe('identity_verifications', () => {
 });
 
 describe('document types', () => {
-  it('marks only certificates and letters as multi-file', async () => {
+  it('marks certificates, letters and healthcare licences as multi-file', async () => {
     const rows = await app.client<{ code: string }[]>`
       SELECT code FROM master_data
       WHERE type = 'DOCUMENT_TYPE' AND (meta->>'multiple')::boolean ORDER BY code`;
-    expect(rows.map((r) => r.code)).toEqual(['EDUCATION_CERTIFICATE', 'EXPERIENCE_LETTER']);
+    expect(rows.map((r) => r.code)).toEqual([
+      'EDUCATION_CERTIFICATE',
+      'EXPERIENCE_LETTER',
+      'HEALTHCARE_LICENSE',
+    ]);
   });
 });

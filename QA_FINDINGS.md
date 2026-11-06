@@ -2,6 +2,7 @@
 
 **Run date:** 2026-11-05<br>
 **Scope:** QA only. No application code was changed, no commit or push was made, and the database was not reset.
+**Note:** This file is a point-in-time snapshot of the 2026-11-05 QA run; its counts and claims describe the repo as it was then, not the current state.
 
 ## Summary
 
@@ -160,7 +161,7 @@
 - **Where:** `apps/web/src/app/_landing/LandingPage.tsx`; e.g. line 815.
 - **Steps to reproduce:** Open `/` and click the top navigation, popular-category, or footer links.
 - **Expected:** Links navigate to their corresponding page or section.
-- **Actual:** The rendered page contains 36 anchors with `href="#"`.
+- **Actual:** The rendered page contains 6 anchors with `href="#"` (corrected 2026-11-06; the earlier count of 36 was wrong).
 - **Exact error:** No runtime error; the links resolve to `#` rather than a destination.
 
 ## E2E status

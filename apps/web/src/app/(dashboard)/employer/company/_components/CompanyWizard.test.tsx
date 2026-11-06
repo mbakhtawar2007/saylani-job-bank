@@ -131,6 +131,8 @@ describe('CompanyWizard', () => {
             documents: true,
           },
           verifiedAt: null,
+          registrationVerifiedSignedAt: null,
+          registrationVerifiedSignedBy: null,
           createdAt: '2026-10-01T00:00:00.000Z',
         }}
       />,

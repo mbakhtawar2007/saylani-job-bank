@@ -17,7 +17,6 @@ export function Modal({
   open,
   onOpenChange,
   size = 'md',
-  className,
 }: ModalProps) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -28,7 +27,6 @@ export function Modal({
           className={cn(
             'border-border bg-surface shadow-popover fixed top-1/2 left-1/2 z-60 grid max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] -translate-1/2 gap-4 overflow-y-auto rounded-xl border p-5',
             widths[size],
-            className,
           )}
         >
           <div className="flex items-start justify-between gap-4">

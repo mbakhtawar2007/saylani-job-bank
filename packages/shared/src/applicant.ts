@@ -392,6 +392,16 @@ export const staffRegisterApplicantSchema = registerApplicantSchema.extend({
   phone: z.string().trim().min(10).max(20),
   branchId: z.uuid('Choose a branch'),
   address: applicantLocationSchema.optional(),
+  /** Permanent home address (section 5). Same fields as the current address, no map pin. */
+  permanentAddress: z
+    .object({
+      addressLine: z.string().trim().max(300),
+      cityCode: masterDataCodeSchema,
+      areaCode: masterDataCodeSchema.nullish().transform((v) => v ?? null),
+    })
+    .optional(),
+  /** Free-text notes (section 6) for assessing the applicant's suitability. */
+  additionalNotes: optionalText(2000),
   education: educationSchema.optional(),
   experience: experienceSchema.optional(),
   skills: skillsSchema.optional(),

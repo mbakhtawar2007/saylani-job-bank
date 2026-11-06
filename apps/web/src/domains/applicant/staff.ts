@@ -56,6 +56,7 @@ import {
   idv,
   loadApplicant,
   lng,
+  permAddr,
   pref,
   skl,
   completenessFor,
@@ -63,6 +64,28 @@ import {
   type ApplicantRow,
   type SignedIn,
 } from './repository';
+import type { DbExecutor } from '@/lib/db';
+
+/** City must be active master data; an area must belong to that city. */
+async function assertCityArea(
+  executor: DbExecutor,
+  address: { cityCode: string; areaCode: string | null },
+  path: string,
+): Promise<void> {
+  const city = (
+    await assertActiveMasterData(executor, 'CITY', [address.cityCode], () => `${path}.cityCode`)
+  ).get(address.cityCode)!;
+  if (address.areaCode) {
+    const area = (
+      await assertActiveMasterData(executor, 'AREA', [address.areaCode], () => `${path}.areaCode`)
+    ).get(address.areaCode)!;
+    if (area.parentId !== city.id) {
+      throw new ValidationError([
+        { path: `${path}.areaCode`, message: `This area is not in ${city.label}` },
+      ]);
+    }
+  }
+}
 
 // ─── Search ────────────────────────────────────────────────────────────
 
@@ -306,40 +329,29 @@ export async function staffRegisterApplicant(
           dateOfBirth: input.dateOfBirth,
           gender: input.gender,
           email: input.email ?? null,
+          additionalNotes: input.additionalNotes ?? null,
         })
         .returning();
       applicantId = row!.id;
 
       if (input.address) {
-        const city = (
-          await assertActiveMasterData(
-            tx,
-            'CITY',
-            [input.address.cityCode],
-            () => 'address.cityCode',
-          )
-        ).get(input.address.cityCode)!;
-        if (input.address.areaCode) {
-          const area = (
-            await assertActiveMasterData(
-              tx,
-              'AREA',
-              [input.address.areaCode],
-              () => 'address.areaCode',
-            )
-          ).get(input.address.areaCode)!;
-          if (area.parentId !== city.id) {
-            throw new ValidationError([
-              { path: 'address.areaCode', message: `This area is not in ${city.label}` },
-            ]);
-          }
-        }
+        await assertCityArea(tx, input.address, 'address');
         await tx.insert(addr).values({
           applicantId: row!.id,
           addressLine: input.address.addressLine ?? '',
           cityCode: input.address.cityCode,
           areaCode: input.address.areaCode,
           location: input.address.location,
+        });
+      }
+
+      if (input.permanentAddress) {
+        await assertCityArea(tx, input.permanentAddress, 'permanentAddress');
+        await tx.insert(permAddr).values({
+          applicantId: row!.id,
+          addressLine: input.permanentAddress.addressLine,
+          cityCode: input.permanentAddress.cityCode,
+          areaCode: input.permanentAddress.areaCode,
         });
       }
 
@@ -474,6 +486,8 @@ export async function staffRegisterApplicant(
           branchId: input.branchId,
           profile: {
             address: input.address,
+            permanentAddress: input.permanentAddress,
+            additionalNotes: input.additionalNotes ?? null,
             education: input.education,
             experience: input.experience,
             skills: input.skills,
@@ -503,15 +517,34 @@ export async function staffRegisterApplicant(
       if (owner) {
         await recordAudit(ctx, {
           action: 'applicant.register_duplicate_cnic',
-          entityType: 'user',
+          entityType: 'applicant',
+          entityId: owner.id,
           branchId: input.branchId,
           metadata: { createdBy: ctx.actor.userId },
         });
         throw await cnicTakenError(db, owner);
       }
     }
-    if (isUniqueViolation(error)) {
+    if (isUniqueViolation(error, 'users_phone_number_unique')) {
+      const [phoneOwner] = await db
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.phoneNumber, phone));
+      await recordAudit(ctx, {
+        action: 'applicant.register_duplicate_phone',
+        entityType: 'user',
+        entityId: phoneOwner?.id,
+        branchId: input.branchId,
+        metadata: { createdBy: ctx.actor.userId },
+      });
       throw new ConflictError('This number is already registered. Please use account recovery.');
+    }
+    if (isUniqueViolation(error)) {
+      // Any other unique violation (e.g. a placeholder-email collision) is not a
+      // phone conflict — do not misreport it as one.
+      throw new ConflictError(
+        'This registration could not be saved because some details are already in use.',
+      );
     }
     throw error;
   }
@@ -521,7 +554,7 @@ export async function staffRegisterApplicant(
 export async function markApplicantRegistrationVerifiedSigned(
   ctx: SignedIn,
   applicantId: string,
-): Promise<void> {
+): Promise<{ verifiedSignedAt: Date; verifiedSignedBy: string }> {
   assertRole(ctx.actor, 'STAFF', 'BRANCH_ADMIN');
   assertPermission(ctx.actor, 'applicant:manage');
   const applicant = await loadApplicant(db, applicantId);
@@ -529,11 +562,22 @@ export async function markApplicantRegistrationVerifiedSigned(
     entityType: 'applicant',
     entityId: applicant.id,
   });
+  const verifiedAt = new Date();
   await runCommand(ctx, async ({ tx, audit }) => {
     const row = await loadApplicant(tx, applicantId, { forUpdate: true });
     if (row.status !== 'DRAFT') {
       throw new ConflictError('Only a draft applicant can be marked verified and signed.');
     }
+    if (row.registrationVerifiedSignedAt) {
+      throw new ConflictError('This registration form was already marked verified and signed.');
+    }
+    await tx
+      .update(a)
+      .set({
+        registrationVerifiedSignedAt: verifiedAt,
+        registrationVerifiedSignedBy: ctx.actor.userId,
+      })
+      .where(eq(a.id, row.id));
     audit({
       action: 'applicant.registration_form_verified_signed',
       entityType: 'applicant',
@@ -543,6 +587,7 @@ export async function markApplicantRegistrationVerifiedSigned(
       metadata: { verifiedBy: ctx.actor.userId },
     });
   });
+  return { verifiedSignedAt: verifiedAt, verifiedSignedBy: ctx.actor.userId };
 }
 
 export async function getApplicantForStaff(

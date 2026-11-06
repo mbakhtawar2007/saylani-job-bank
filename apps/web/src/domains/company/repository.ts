@@ -120,6 +120,10 @@ export interface CompanyView {
   verification: VerificationSummary | null;
   editable: CompanyEditability;
   verifiedAt: string | null;
+  /** When the first-counter paper form was verified and signed (null until then). */
+  registrationVerifiedSignedAt: string | null;
+  /** Who recorded the verified & signed mark (user id, null until then). */
+  registrationVerifiedSignedBy: string | null;
   createdAt: string;
 }
 
@@ -385,6 +389,8 @@ export async function buildCompanyView(
     verification: latest ? toVerificationSummary(latest) : null,
     editable: companyEditability(row.status),
     verifiedAt: row.verifiedAt?.toISOString() ?? null,
+    registrationVerifiedSignedAt: row.registrationVerifiedSignedAt?.toISOString() ?? null,
+    registrationVerifiedSignedBy: row.registrationVerifiedSignedBy,
     createdAt: row.createdAt.toISOString(),
   };
 }

@@ -59,6 +59,12 @@ export const applicants = pgTable(
     status: text({ enum: APPLICANT_STATUSES }).notNull().default('DRAFT'),
     /** Why staff deactivated the profile (shown to staff). */
     statusReason: text(),
+    /** When the first-counter paper form was verified and signed (null until then). */
+    registrationVerifiedSignedAt: timestamp({ withTimezone: true }),
+    /** Who recorded the verified & signed mark. */
+    registrationVerifiedSignedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+    /** Free-text notes from section 6 of the first-counter form. */
+    additionalNotes: text(),
     /** Current result of the staff identity check; history is in identity_verifications. */
     identityStatus: text({ enum: IDENTITY_STATUSES }).notNull().default('UNVERIFIED'),
     profileCompleteness: smallint().notNull().default(0),
@@ -92,6 +98,21 @@ export const applicantAddresses = pgTable('applicant_addresses', {
   cityCode: text().notNull(),
   areaCode: text(),
   location: geographyPoint().notNull(),
+  ...timestamps,
+});
+
+/**
+ * The applicant's permanent home address (one per applicant), mirroring
+ * `applicant_addresses`. No map pin is collected for it, so `location` is optional.
+ */
+export const applicantPermanentAddresses = pgTable('applicant_permanent_addresses', {
+  applicantId: uuid()
+    .primaryKey()
+    .references(() => applicants.id, { onDelete: 'cascade' }),
+  addressLine: text().notNull(),
+  cityCode: text().notNull(),
+  areaCode: text(),
+  location: geographyPoint(),
   ...timestamps,
 });
 

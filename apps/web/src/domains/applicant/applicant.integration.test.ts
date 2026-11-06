@@ -2,10 +2,9 @@ import { schema } from '@jobbank/db';
 import { and, desc, eq } from 'drizzle-orm';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { GET as getApplicant, PATCH as staffPatch } from '@/app/api/v1/applicants/[id]/route';
+import { POST as markVerifiedSigned } from '@/app/api/v1/applicants/[id]/registration-form/verified-signed/route';
 import { GET as staffDocUrl } from '@/app/api/v1/applicants/[id]/documents/[docId]/url/route';
 import { POST as verifyIdentity } from '@/app/api/v1/applicants/[id]/identity-verification/route';
-import { POST as confirmRegistrationToken } from '@/app/api/v1/applicants/registration-token/confirm/route';
-import { POST as lookupRegistrationToken } from '@/app/api/v1/applicants/registration-token/lookup/route';
 import { PUT as changePhone } from '@/app/api/v1/applicants/[id]/phone/route';
 import { PATCH as staffStatus } from '@/app/api/v1/applicants/[id]/status/route';
 import { POST as transfer } from '@/app/api/v1/applicants/[id]/transfer/route';
@@ -51,14 +50,12 @@ const branchId = async (code: string) =>
 let khi: string;
 let lhr: string;
 let staffJar: Jar;
-let lhrStaffJar: Jar;
 let staffUserId: string;
 
 beforeAll(async () => {
   khi = await branchId('KHI-GULSHAN');
   lhr = await branchId('LHR-JOHAR');
   staffJar = await signIn('staff.khi@jobbank.local');
-  lhrStaffJar = await signIn('staff.lhr@jobbank.local');
   staffUserId = (
     await db
       .select({ id: schema.users.id })
@@ -166,106 +163,39 @@ describe('staff-assisted applicant registration', () => {
 
     expect(applicant).toMatchObject({ status: 'DRAFT', branchId: khi });
     expect(applicantRole?.roleCode).toBe('APPLICANT');
-    expect(response.body.data.registrationToken.token).toMatch(/^KHI-GULSHAN-\d{8}-\d{3}$/);
+    // Revised process: registration issues no token — the form's QR encodes the
+    // applicant ID instead. The token is issued only if a later step needs one.
+    expect(response.body.data.registrationToken).toBeUndefined();
     expect(audit).toMatchObject({
       actorUserId: staffUserId,
       branchId: khi,
       metadata: { createdBy: staffUserId },
     });
-    const [tokenAudit] = await db
+  });
+
+  it('marks a DRAFT applicant verified & signed and audits it', async () => {
+    const created = await createStaffApplicant(khi);
+    expect(created.status).toBe(201);
+    const applicantId = created.body.data.id as string;
+    const response = await call(
+      markVerifiedSigned,
+      `/api/v1/applicants/${applicantId}/registration-form/verified-signed`,
+      { method: 'POST', jar: staffJar, params: { id: applicantId } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.verifiedSigned).toBe(true);
+    const [audit] = await db
       .select()
       .from(schema.auditLogs)
       .where(
         and(
-          eq(schema.auditLogs.action, 'applicant.registration_token_issued'),
+          eq(schema.auditLogs.action, 'applicant.registration_form_verified_signed'),
           eq(schema.auditLogs.entityId, applicantId),
         ),
       );
-    expect(tokenAudit?.after).toMatchObject({ tokenCodeHash: expect.any(String) });
-    expect(tokenAudit?.metadata).toMatchObject({ tokenId: expect.any(String) });
-  });
-
-  it('issues a distinct token for each applicant in the same branch and day', async () => {
-    const first = await createStaffApplicant(khi);
-    const second = await createStaffApplicant(khi);
-
-    expect(first.status).toBe(201);
-    expect(second.status).toBe(201);
-    expect(first.body.data.registrationToken.token).not.toBe(
-      second.body.data.registrationToken.token,
-    );
-    expect(first.body.data.registrationToken.token).toMatch(/^KHI-GULSHAN-\d{8}-\d{3}$/);
-    expect(second.body.data.registrationToken.token).toMatch(/^KHI-GULSHAN-\d{8}-\d{3}$/);
-  });
-
-  it('rejects a registration token presented at another branch', async () => {
-    const created = await createStaffApplicant(khi);
-    const response = await call(
-      lookupRegistrationToken,
-      '/api/v1/applicants/registration-token/lookup',
-      {
-        method: 'POST',
-        body: { token: created.body.data.registrationToken.token },
-        jar: lhrStaffJar,
-      },
-    );
-
-    expect(response.status).toBe(403);
-    expect(response.body.error.message).toBe('This registration token belongs to another branch.');
-  });
-
-  it('rejects an expired registration token', async () => {
-    const created = await createStaffApplicant(khi);
-    const userId = created.body.data.userId as string;
-    await db
-      .update(schema.accountTokens)
-      .set({ expiresAt: new Date(Date.now() - 1000) })
-      .where(
-        and(
-          eq(schema.accountTokens.userId, userId),
-          eq(schema.accountTokens.purpose, 'BRANCH_REGISTRATION'),
-        ),
-      );
-
-    const response = await call(
-      lookupRegistrationToken,
-      '/api/v1/applicants/registration-token/lookup',
-      {
-        method: 'POST',
-        body: { token: created.body.data.registrationToken.token },
-        jar: staffJar,
-      },
-    );
-
-    expect(response.status).toBe(400);
-    expect(response.body.error.message).toContain('registration token has expired');
-  });
-
-  it('allows lookup without consuming, then rejects using the token twice', async () => {
-    const created = await createStaffApplicant(khi);
-    const token = created.body.data.registrationToken.token as string;
-    const lookup = await call(
-      lookupRegistrationToken,
-      '/api/v1/applicants/registration-token/lookup',
-      { method: 'POST', body: { token }, jar: staffJar },
-    );
-    expect(lookup.status).toBe(200);
-    expect(lookup.body.data.fullName).toBe(created.body.data.personal.fullName);
-
-    const confirmation = await call(
-      confirmRegistrationToken,
-      '/api/v1/applicants/registration-token/confirm',
-      { method: 'POST', body: { token }, jar: staffJar },
-    );
-    expect(confirmation.status).toBe(200);
-
-    const repeated = await call(
-      confirmRegistrationToken,
-      '/api/v1/applicants/registration-token/confirm',
-      { method: 'POST', body: { token }, jar: staffJar },
-    );
-    expect(repeated.status).toBe(409);
-    expect(repeated.body.error.message).toContain('already been used');
+    expect(audit).toBeDefined();
+    expect(audit?.metadata).toMatchObject({ verifiedBy: staffUserId });
   });
 });
 
@@ -276,6 +206,14 @@ const location = (branch: string) => ({
   areaCode: 'KARACHI_GULSHAN_E_IQBAL',
   branchId: branch,
 });
+
+/** A genuine move to the Lahore branch (city code drives the auto-assign). */
+const lahoreLocation = {
+  location: { lat: 31.4697, lng: 74.2728 },
+  addressLine: 'House 12, Block G1',
+  cityCode: 'LAHORE',
+  areaCode: 'LAHORE_JOHAR_TOWN',
+};
 
 async function upload(jar: Jar, typeCode: string, bytes = PNG, contentType = 'image/png') {
   const presigned = await call(presignDoc, '/api/v1/applicants/me/documents', {
@@ -604,7 +542,7 @@ describe('documents and activation', () => {
 
     const moveBranch = await call(putLocation, '/api/v1/applicants/me/location', {
       method: 'PUT',
-      body: location(lhr),
+      body: lahoreLocation,
       jar,
     });
     expect(moveBranch.status).toBe(403);

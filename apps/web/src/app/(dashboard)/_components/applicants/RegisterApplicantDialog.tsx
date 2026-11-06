@@ -16,7 +16,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import type { FormEvent } from 'react';
 import { useEffect, useState } from 'react';
-import { Button, Checkbox, Input, RadioGroup, Select } from '@/components/atoms';
+import { Button, Checkbox, Input, RadioGroup, Select, Textarea } from '@/components/atoms';
 import type { SelectOption } from '@/components/atoms';
 import { CNICInput, FormField, Modal, PhoneInput } from '@/components/molecules';
 import { MapPinPicker, type LatLng } from '@/components/organisms';
@@ -125,6 +125,12 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
   });
   const [address, setAddress] = useState({ addressLine: '', cityCode: '', areaCode: '' });
   const [location, setLocation] = useState<LatLng | null>(null);
+  const [permanentAddress, setPermanentAddress] = useState({
+    addressLine: '',
+    cityCode: '',
+    areaCode: '',
+  });
+  const [additionalNotes, setAdditionalNotes] = useState('');
   const [education, setEducation] = useState<EducationForm[]>([emptyEducation()]);
   const [experience, setExperience] = useState<ExperienceForm[]>([emptyExperience()]);
   const [hasNoExperience, setHasNoExperience] = useState(false);
@@ -195,6 +201,8 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
       });
       setAddress({ addressLine: '', cityCode: '', areaCode: '' });
       setLocation(null);
+      setPermanentAddress({ addressLine: '', cityCode: '', areaCode: '' });
+      setAdditionalNotes('');
       setEducation([emptyEducation()]);
       setExperience([emptyExperience()]);
       setHasNoExperience(false);
@@ -222,6 +230,9 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
     const hasAddress = Boolean(
       address.addressLine || address.cityCode || address.areaCode || location,
     );
+    const hasPermanentAddress = Boolean(
+      permanentAddress.addressLine || permanentAddress.cityCode || permanentAddress.areaCode,
+    );
     const hasPreferences = Boolean(
       categoryCodes.length ||
       shifts.length ||
@@ -233,6 +244,8 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
     const payload = {
       ...form,
       ...(hasAddress ? { address: { ...address, location: location ?? undefined } } : {}),
+      ...(hasPermanentAddress ? { permanentAddress } : {}),
+      additionalNotes,
       education: {
         items: educationItems.map((item) => ({
           ...item,
@@ -279,6 +292,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
         body: parsed.data,
       });
       setApplicant(data);
+      setVerifiedSigned(Boolean(data.registrationVerifiedSignedAt));
       setOpen(false);
       router.replace(pathname);
       router.refresh();
@@ -298,9 +312,22 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
     setMarkingSigned(true);
     setAlert(null);
     try {
-      await apiFetch(`/api/v1/applicants/${applicant.id}/registration-form/verified-signed`, {
+      const { data } = await apiFetch<{
+        verifiedSigned: boolean;
+        verifiedSignedAt: string;
+        verifiedSignedBy: string;
+      }>(`/api/v1/applicants/${applicant.id}/registration-form/verified-signed`, {
         method: 'POST',
       });
+      setApplicant((current) =>
+        current
+          ? {
+              ...current,
+              registrationVerifiedSignedAt: data.verifiedSignedAt,
+              registrationVerifiedSignedBy: data.verifiedSignedBy,
+            }
+          : current,
+      );
       setVerifiedSigned(true);
       router.refresh();
     } catch (error) {
@@ -312,6 +339,8 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
 
   const selectedCity = cities.find((city) => city.code === address.cityCode);
   const cityAreas = areas.filter((area) => area.parentId === selectedCity?.id);
+  const selectedPermanentCity = cities.find((city) => city.code === permanentAddress.cityCode);
+  const permanentCityAreas = areas.filter((area) => area.parentId === selectedPermanentCity?.id);
   const educationOptions = educationLevels.map((item) => ({ value: item.code, label: item.label }));
   const categoryOptions = jobCategories.map((item) => ({ value: item.code, label: item.label }));
   const printForm =
@@ -928,20 +957,67 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                 )}
               </>
             )}
-            <p className="text-fg-muted text-sm">
-              Permanent address is not part of the current applicant profile and will remain blank
-              on the form.
-            </p>
+            <p className="text-sm font-medium">Permanent address</p>
+            <FormField label="Permanent address" error={errors['permanentAddress.addressLine']}>
+              <Input
+                autoComplete="street-address"
+                value={permanentAddress.addressLine}
+                onChange={(event) =>
+                  setPermanentAddress((current) => ({
+                    ...current,
+                    addressLine: event.target.value,
+                  }))
+                }
+                placeholder="House, street, block"
+              />
+            </FormField>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FormField label="Permanent city" error={errors['permanentAddress.cityCode']}>
+                <Select
+                  value={permanentAddress.cityCode}
+                  onChange={(event) =>
+                    setPermanentAddress((current) => ({
+                      ...current,
+                      cityCode: event.target.value,
+                      areaCode: '',
+                    }))
+                  }
+                  options={cities.map((city) => ({ value: city.code, label: city.label }))}
+                  placeholder="Choose a city"
+                />
+              </FormField>
+              <FormField label="Permanent area" error={errors['permanentAddress.areaCode']}>
+                <Select
+                  value={permanentAddress.areaCode}
+                  onChange={(event) =>
+                    setPermanentAddress((current) => ({
+                      ...current,
+                      areaCode: event.target.value,
+                    }))
+                  }
+                  options={permanentCityAreas.map((area) => ({
+                    value: area.code,
+                    label: area.label,
+                  }))}
+                  placeholder="Choose an area"
+                  disabled={!selectedPermanentCity}
+                />
+              </FormField>
+            </div>
           </section>
 
           <section className="grid gap-3">
             <h2 className="text-fg border-b pb-2 font-semibold">
               6. Additional relevant information
             </h2>
-            <p className="text-fg-muted text-sm">
-              The applicant profile has no general notes field; no extra information is recorded
-              outside the existing profile fields.
-            </p>
+            <FormField label="Additional notes" error={errors.additionalNotes}>
+              <Textarea
+                value={additionalNotes}
+                onChange={(event) => setAdditionalNotes(event.target.value)}
+                rows={4}
+                placeholder="Anything else that helps assess the applicant's suitability"
+              />
+            </FormField>
           </section>
 
           {branches.length === 0 && (
