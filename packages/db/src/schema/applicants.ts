@@ -74,6 +74,10 @@ export const applicants = pgTable(
   },
   (t) => [
     index('applicants_branch_status_idx').on(t.branchId, t.status),
+    // Trigram indexes for the staff `ILIKE '%q%'` name search (profile.ts/staff.ts).
+    // pg_trgm's gin_trgm_ops is the default GIN opclass for text, so plain
+    // USING gin is enough once the extension exists (migration 0027).
+    index('applicants_full_name_trgm_idx').using('gin', t.fullName),
     check('applicants_cnic_format', sql`${t.cnic} ~ '^[1-9][0-9]{12}$'`),
     check('applicants_status_valid', sql`${t.status} in (${list(APPLICANT_STATUSES)})`),
     check(

@@ -1,14 +1,16 @@
 import 'server-only';
 import type { CompanyPresignInput } from '@jobbank/shared';
-import { and, eq, isNull, ne } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { recordAudit, runCommand } from '@/domains/shared/audit';
 import {
-  ConflictError,
-  ForbiddenError,
-  NotFoundError,
-  ValidationError,
-} from '@/domains/shared/errors';
-import { enforceRateLimit } from '@/domains/shared/rate-limit';
+  confirmDocumentUpload,
+  presignDocumentUpload,
+  viewDocumentLink,
+  type DocumentLink,
+  type DocumentTable,
+  type PresignedDocument,
+} from '@/domains/shared/documents';
+import { ConflictError, ForbiddenError, NotFoundError } from '@/domains/shared/errors';
 import {
   assertBranchAccess,
   assertPermission,
@@ -16,20 +18,6 @@ import {
   type Actor,
 } from '@/domains/shared/scope';
 import { db, type DbExecutor } from '@/lib/db';
-import {
-  assertUploadAllowed,
-  buildObjectKey,
-  deleteObject,
-  detectContentType,
-  getObjectPrefix,
-  headObject,
-  malwareScanner,
-  presignDownload,
-  presignUpload,
-  scansEnforced,
-  UploadRejectedError,
-  type PresignedUpload,
-} from '@/lib/s3/storage';
 import { companyEditability } from './rules';
 import {
   buildCompanyView,
@@ -43,13 +31,17 @@ import {
 } from './repository';
 import { getCompanyOnboarding } from './staff';
 
-const MB = 1024 * 1024;
-const VIEW_LINK_SECONDS = 120;
+export type { DocumentLink };
+export type PresignedCompanyDocument = PresignedDocument;
 
-export interface PresignedCompanyDocument {
-  documentId: string;
-  upload: PresignedUpload;
-}
+/** Document table columns the shared upload pipeline touches. */
+const companyDocumentStore: DocumentTable = {
+  table: docs,
+  id: docs.id,
+  owner: docs.companyId,
+  typeCode: docs.typeCode,
+  replacedAt: docs.replacedAt,
+};
 
 function assertDocumentEditable(row: CompanyRow): void {
   if (!companyEditability(row.status).documents) {
@@ -70,61 +62,17 @@ async function presignDocumentForCompany(
   row: CompanyRow,
   input: CompanyPresignInput,
 ): Promise<PresignedCompanyDocument> {
-  if (!row.branchId) {
-    throw new ConflictError('Set your head office location and branch before uploading documents');
-  }
-  assertDocumentEditable(row);
-  const types = await companyDocumentTypes();
-  const type = types.find((t) => t.code === input.typeCode && t.isActive);
-  if (!type) throw new ValidationError([{ path: 'typeCode', message: 'Choose a document type' }]);
-  try {
-    assertUploadAllowed(input.contentType, input.sizeBytes, {
-      contentTypes: type.meta.mimeTypes,
-      maxSizeBytes: type.meta.maxSizeMb * MB,
-    });
-  } catch (error) {
-    if (error instanceof UploadRejectedError) {
-      throw new ValidationError([{ path: 'file', message: error.message }]);
-    }
-    throw error;
-  }
-  await enforceRateLimit(
-    'company-upload',
-    row.id,
-    { limit: 30, windowSeconds: 3600 },
-    'Too many uploads. Please try again in an hour.',
-  );
-  const key = buildObjectKey({
-    branchId: row.branchId,
-    entity: 'company',
-    entityId: row.id,
-    contentType: input.contentType,
-  });
-  // Not audited: nothing stored yet. The confirm step records the upload.
-  const documentId = await runCommand(
+  return presignDocumentUpload({
     ctx,
-    async ({ tx }) => {
-      const [doc] = await tx
-        .insert(docs)
-        .values({
-          companyId: row.id,
-          typeCode: type.code,
-          storageKey: key,
-          fileName: input.fileName,
-          contentType: input.contentType,
-          sizeBytes: input.sizeBytes,
-        })
-        .returning({ id: docs.id });
-      return doc!.id;
-    },
-    { audited: false },
-  );
-  const upload = await presignUpload({
-    key,
-    contentType: input.contentType,
-    sizeBytes: input.sizeBytes,
+    store: companyDocumentStore,
+    row,
+    input,
+    entity: 'company',
+    types: (await companyDocumentTypes()).filter((t) => t.isActive),
+    rateLimitName: 'company-upload',
+    branchError: 'Set your head office location and branch before uploading documents',
+    assertEditableBeforeType: () => assertDocumentEditable(row),
   });
-  return { documentId, upload };
 }
 
 /** Step 1 for the employer: presign an upload for their own company. */
@@ -151,17 +99,10 @@ async function ownDocument(executor: DbExecutor, row: CompanyRow, documentId: st
  * verify the file's magic bytes match its declared type, scan for malware, then make
  * it the current document of its type (superseding earlier uploads). Used by the
  * employer's own upload and by the staff upload for onboarded companies — storage
- * check, type check, scan handling, supersede and audit are identical.
- *
- * Outcomes: a magic-byte mismatch deletes the object and the row stays
- * PENDING_UPLOAD (company document statuses have no REJECTED value — the audit
- * row is the record, and the user re-uploads); an 'infected' scan marks the row
- * INFECTED and quarantines the object; a 'skipped' scan leaves the row
- * PENDING_UPLOAD with scanResult 'skipped' — never servable, never counted as
- * present — and the user retries confirm later, but ONLY in production (see
- * scansEnforced): in development/test 'skipped' is recorded and the upload
- * completes, because no scanner service exists yet. Only a 'clean' scan, or a
- * 'skipped' scan outside production, marks the document UPLOADED.
+ * check, type check, scan handling, supersede and audit are identical. See
+ * `confirmDocumentUpload` in `@/domains/shared/documents` for the shared outcomes
+ * (mismatch leaves the row PENDING_UPLOAD — the company enum has no REJECTED value;
+ * 'skipped' scans block only in production).
  */
 async function confirmDocumentForCompany(
   ctx: SignedIn,
@@ -171,120 +112,18 @@ async function confirmDocumentForCompany(
   const doc = await ownDocument(db, row, documentId);
   if (doc.status !== 'PENDING_UPLOAD') return buildCompanyView(db, row);
   assertDocumentEditable(row);
-
-  const stored = await headObject(doc.storageKey);
-  if (!stored) throw new ConflictError('We did not receive the file. Please upload it again.');
-  if (stored.sizeBytes !== doc.sizeBytes || stored.contentType !== doc.contentType) {
-    throw new ConflictError('The uploaded file does not match. Please upload it again.');
-  }
-  // The PUT's Content-Type header is attacker-controlled, so the stored bytes
-  // themselves are the only trustworthy type signal. Check them before scanning.
-  const prefix = await getObjectPrefix(doc.storageKey);
-  const actualType = prefix ? detectContentType(prefix) : null;
-  if (actualType !== doc.contentType) {
-    // Delete the spoofed object first: a mismatched row must not leave a live
-    // file in storage. If the delete itself fails, leave the row PENDING_UPLOAD
-    // (propagate the error) so the user can retry.
-    await deleteObject(doc.storageKey);
-    await runCommand(ctx, async ({ tx, audit }) => {
-      await tx.update(docs).set({ scanResult: 'skipped' }).where(eq(docs.id, doc.id));
-      audit({
-        action: 'company.document_type_mismatch',
-        entityType: 'company',
-        entityId: row.id,
-        branchId: row.branchId,
-        metadata: {
-          documentId: doc.id,
-          typeCode: doc.typeCode,
-          declared: doc.contentType,
-          detected: actualType ?? 'unknown',
-        },
-      });
-    });
-    throw new ConflictError(
-      'The file contents do not match its type. Please upload the correct file.',
-    );
-  }
-  const scan = await malwareScanner.scan(doc.storageKey);
-  if (scan === 'infected') {
-    // Best-effort quarantine: remove the object. Serving is already blocked
-    // (INFECTED is not a present status, and viewLink refuses it), so a failed
-    // delete is not fatal.
-    await deleteObject(doc.storageKey).catch(() => undefined);
-  }
-  if (scan === 'skipped' && scansEnforced()) {
-    // No scanner result in production: hold the upload. The row stays
-    // PENDING_UPLOAD so the user can retry confirm once a scanner exists or
-    // recovers; it is not counted as a present document and cannot be viewed
-    // or downloaded. Outside production scansEnforced() is false, so this
-    // branch is skipped and the upload completes with scanResult 'skipped'
-    // recorded (see scansEnforced in lib/s3/storage.ts).
-    await runCommand(ctx, async ({ tx, audit }) => {
-      await tx.update(docs).set({ scanResult: 'skipped' }).where(eq(docs.id, doc.id));
-      audit({
-        action: 'company.document_scan_pending',
-        entityType: 'company',
-        entityId: row.id,
-        branchId: row.branchId,
-        metadata: { documentId: doc.id, typeCode: doc.typeCode },
-      });
-    });
-    throw new ConflictError(
-      'This file has not been virus-scanned yet. Please try again in a few minutes.',
-    );
-  }
-
-  await runCommand(ctx, async ({ tx, audit }) => {
-    if (scan === 'infected') {
-      await tx
-        .update(docs)
-        .set({ status: 'INFECTED', scanResult: scan, reviewNote: 'The file failed a virus check' })
-        .where(eq(docs.id, doc.id));
-      audit({
-        action: 'company.document_infected',
-        entityType: 'company',
-        entityId: row.id,
-        branchId: row.branchId,
-        metadata: { documentId: doc.id, typeCode: doc.typeCode },
-      });
-      return;
-    }
-    const now = new Date();
-    // Company document types are single-document: supersede any earlier upload of the same type.
-    const replaced = await tx
-      .update(docs)
-      .set({ replacedAt: now })
-      .where(
-        and(
-          eq(docs.companyId, row.id),
-          eq(docs.typeCode, doc.typeCode),
-          ne(docs.id, doc.id),
-          isNull(docs.replacedAt),
-        ),
-      )
-      .returning({ id: docs.id });
-    await tx
-      .update(docs)
-      .set({ status: 'UPLOADED', scanResult: scan, uploadedAt: now })
-      .where(eq(docs.id, doc.id));
-    // A replacement upload resets the verifier's per-document decision to PENDING.
-    audit({
-      action: 'company.document_upload',
-      entityType: 'company',
-      entityId: row.id,
-      branchId: row.branchId,
-      metadata: {
-        documentId: doc.id,
-        typeCode: doc.typeCode,
-        sizeBytes: doc.sizeBytes,
-        scan,
-        replaced: replaced.map((r) => r.id),
-      },
-    });
+  await confirmDocumentUpload({
+    ctx,
+    store: companyDocumentStore,
+    doc,
+    entityType: 'company',
+    entityId: row.id,
+    branchId: row.branchId,
+    ownerId: row.id,
+    multiple: false,
+    mismatch: { status: null, reviewNote: null },
+    infectedStatus: 'INFECTED',
   });
-  if (scan === 'infected') {
-    throw new ConflictError('This file failed a virus check and was not saved.');
-  }
   return buildCompanyView(db, await loadCompany(db, row.id));
 }
 
@@ -382,30 +221,7 @@ export async function removeMyCompanyDocument(
   return buildCompanyView(db, await requireOwnCompany(db, ctx.actor));
 }
 
-export interface DocumentLink {
-  url: string;
-  expiresAt: string;
-}
-
 const PRESENT_STATUSES = ['UPLOADED', 'REJECTED'] as const;
-
-async function viewLink(doc: typeof docs.$inferSelect): Promise<DocumentLink> {
-  // An infected file is never served, even if its status would otherwise allow
-  // a link. (INFECTED is not a present status, so this is defence in depth.)
-  if (doc.scanResult === 'infected') {
-    throw new ConflictError('This upload failed a virus check');
-  }
-  if (!PRESENT_STATUSES.includes(doc.status as (typeof PRESENT_STATUSES)[number])) {
-    throw new ConflictError('This upload was not completed');
-  }
-  return {
-    url: await presignDownload(doc.storageKey, {
-      expiresInSeconds: VIEW_LINK_SECONDS,
-      disposition: 'inline',
-    }),
-    expiresAt: new Date(Date.now() + VIEW_LINK_SECONDS * 1000).toISOString(),
-  };
-}
 
 /** Short-lived download link for the employer to view their own upload. */
 export async function myCompanyDocumentLink(
@@ -414,7 +230,7 @@ export async function myCompanyDocumentLink(
 ): Promise<DocumentLink> {
   assertPermission(actor, 'company:register');
   const row = await requireOwnCompany(db, actor);
-  return viewLink(await ownDocument(db, row, documentId));
+  return viewDocumentLink(await ownDocument(db, row, documentId), PRESENT_STATUSES);
 }
 
 /** Staff (verifier / Branch Admin) viewing a company document — audited. */
@@ -426,7 +242,7 @@ export async function staffCompanyDocumentLink(
   const row = await loadCompany(db, companyId);
   assertBranchAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
   const doc = await ownDocument(db, row, documentId);
-  const link = await viewLink(doc);
+  const link = await viewDocumentLink(doc, PRESENT_STATUSES);
   await recordAudit(ctx, {
     action: 'company.document_view',
     entityType: 'company',

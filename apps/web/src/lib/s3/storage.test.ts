@@ -27,7 +27,16 @@ describe('object keys', () => {
 describe('upload rules', () => {
   it('allows PDFs and images up to 10 MB', () => {
     expect(() => assertUploadAllowed('application/pdf', 2_000_000)).not.toThrow();
-    expect(() => assertUploadAllowed('image/webp', 10 * 1024 * 1024)).not.toThrow();
+    expect(() => assertUploadAllowed('image/jpeg', 10 * 1024 * 1024)).not.toThrow();
+    expect(() => assertUploadAllowed('image/png', 10 * 1024 * 1024)).not.toThrow();
+  });
+
+  // WebP is recognised by the magic-byte sniffers (so a smuggled WebP is caught
+  // as a mismatch) but is not an allowed upload type: the shared
+  // DOCUMENT_MIME_TYPES allowlist forbids it (Phase 3C align-down).
+  it('rejects image/webp', () => {
+    expect(() => assertUploadAllowed('image/webp', 100)).toThrow(UploadRejectedError);
+    expect(() => assertUploadAllowed('image/webp', 100)).toThrow(/not allowed/);
   });
 
   it.each([

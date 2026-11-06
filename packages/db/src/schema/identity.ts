@@ -23,22 +23,30 @@ const timestamps = {
  * fields) so the auth library can read/write it directly.
  * Applicants who sign up by phone get a placeholder email (see PLACEHOLDER_EMAIL_DOMAIN).
  */
-export const users = pgTable('users', {
-  id: uuid().primaryKey().defaultRandom(),
-  name: text().notNull(),
-  email: text().notNull().unique(),
-  emailVerified: boolean().notNull().default(false),
-  image: text(),
-  phoneNumber: text().unique(),
-  phoneNumberVerified: boolean().notNull().default(false),
-  status: text({ enum: USER_STATUSES }).notNull().default('ACTIVE'),
-  /** Job title / designation for staff, e.g. "Placement Officer". */
-  title: text(),
-  /** Set by Better Auth's two-factor plugin once an authenticator app is confirmed. */
-  twoFactorEnabled: boolean().notNull().default(false),
-  lastLoginAt: timestamp({ withTimezone: true }),
-  ...timestamps,
-});
+export const users = pgTable(
+  'users',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    name: text().notNull(),
+    email: text().notNull().unique(),
+    emailVerified: boolean().notNull().default(false),
+    image: text(),
+    phoneNumber: text().unique(),
+    phoneNumberVerified: boolean().notNull().default(false),
+    status: text({ enum: USER_STATUSES }).notNull().default('ACTIVE'),
+    /** Job title / designation for staff, e.g. "Placement Officer". */
+    title: text(),
+    /** Set by Better Auth's two-factor plugin once an authenticator app is confirmed. */
+    twoFactorEnabled: boolean().notNull().default(false),
+    lastLoginAt: timestamp({ withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [
+    // Trigram indexes for the staff `ILIKE '%q%'` name/email search (user/user.ts).
+    index('users_name_trgm_idx').using('gin', t.name),
+    index('users_email_trgm_idx').using('gin', t.email),
+  ],
+);
 
 /** Applicants registering by phone have no email; Better Auth still needs a unique one. */
 export const PLACEHOLDER_EMAIL_DOMAIN = 'phone.jobbank.invalid';

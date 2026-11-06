@@ -54,7 +54,7 @@ The ports are 5433 and 6380 rather than the defaults, so they don't clash with a
 
 ## Signing in locally
 
-`pnpm db:seed` creates two branches (Karachi Gulshan and Lahore Johar Town) and one account per role. These are development-only accounts and are never seeded in production.
+`pnpm db:seed` seeds reference and master data. Development accounts (two branches — Karachi Gulshan and Lahore Johar Town — and one account per role) are included only with `SEED_DEV_DATA=true`. These are development-only accounts and are never seeded in production.
 
 - **Staff and employers** sign in at http://localhost:3000/login under **Staff & employers**. The emails and the shared development password are in [`packages/db/src/seed/dev-data.ts`](packages/db/src/seed/dev-data.ts).
 - **Applicants** use the **Job seekers** tab with a mobile number. In development, the SMS code is printed in the `pnpm dev` terminal (look for `📱 [dev SMS …]`). Any new Pakistani mobile number registers a new applicant.

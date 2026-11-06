@@ -97,6 +97,11 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
   const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, alert);
   const [company, setCompany] = useState<OnboardedCompany | null>(null);
   const [printReady, setPrintReady] = useState(false);
+  // True once the print form's QR code and logo have settled. The Print
+  // button stays disabled until then — and until the industry label fetch
+  // has settled too, or the form prints the raw industry code.
+  const [printLabelsReady, setPrintLabelsReady] = useState(false);
+  const [industriesSettled, setIndustriesSettled] = useState(false);
   const [verifiedSigned, setVerifiedSigned] = useState(false);
   const [markingSigned, setMarkingSigned] = useState(false);
   const [industries, setIndustries] = useState<MasterDataOption[]>([]);
@@ -137,7 +142,12 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
   }, []);
 
   useEffect(() => {
-    if (!open || industries.length > 0) return;
+    if (!open) return;
+    if (industries.length > 0) {
+      // Already loaded on a previous open: the label is available.
+      setIndustriesSettled(true);
+      return;
+    }
     let active = true;
     setLoadingOptions(true);
     setAlert(null);
@@ -149,7 +159,10 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
         if (active) setAlert(errorMessage(error));
       })
       .finally(() => {
-        if (active) setLoadingOptions(false);
+        if (active) {
+          setLoadingOptions(false);
+          setIndustriesSettled(true);
+        }
       });
     return () => {
       active = false;
@@ -160,6 +173,7 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
     setOpen(next);
     if (next) {
       setCompany(null);
+      setPrintLabelsReady(false);
       setVerifiedSigned(false);
       setErrors({});
       setAlert(null);
@@ -211,6 +225,9 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
         body: parsed.data,
       });
       setCompany(data);
+      // A new company mounts a fresh print form (keyed by id): its QR and
+      // logo have not loaded yet.
+      setPrintLabelsReady(false);
       setVerifiedSigned(Boolean(data.registrationVerifiedSignedAt));
       setOpen(false);
       router.replace(pathname);
@@ -262,9 +279,11 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
     company && printReady
       ? createPortal(
           <CompanyRegistrationFormPrint
+            key={company.id}
             company={company}
             onboarding={company.onboarding}
             industryLabel={industryLabel}
+            onReady={() => setPrintLabelsReady(true)}
           />,
           document.body,
         )
@@ -675,11 +694,17 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
                 </p>
               </div>
               <div className="flex gap-2">
-                <Button onClick={() => window.print()}>Print form</Button>
+                <Button
+                  onClick={() => window.print()}
+                  disabled={!printLabelsReady || !industriesSettled}
+                >
+                  {printLabelsReady && industriesSettled ? 'Print form' : 'Preparing print…'}
+                </Button>
                 <Button
                   variant="secondary"
                   onClick={() => {
                     setCompany(null);
+                    setPrintLabelsReady(false);
                     router.refresh();
                   }}
                 >

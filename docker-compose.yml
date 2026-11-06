@@ -2,6 +2,25 @@ name: jobbank
 
 # Config files are injected inline (not bind-mounted) so Docker never needs macOS
 # permission to read the project folder — that prompt can silently hang container starts.
+#
+# SECURITY — local dev only, never expose this stack:
+# - Every port is published on 127.0.0.1 only. Nothing here listens on the LAN,
+#   so the stack is unreachable from other machines. (Docker Engine < 28 had a
+#   bug that could let same-segment hosts reach loopback-published ports — use 28+.)
+# - Every password/secret is a REQUIRED env var (${VAR:?message} fails fast with
+#   instructions if it is unset). There are no default passwords anywhere in this
+#   file any more. Set them in the repo-root .env (see .env.example) BEFORE any
+#   compose command — even `docker compose down` parses this file and will fail
+#   without them. Values must contain no spaces (they are interpolated into SQL
+#   and command lines). Generate with: openssl rand -base64 18
+# - The app connects through DATABASE_URL / DATABASE_MIGRATOR_URL / REDIS_URL /
+#   S3_* / SMTP_* in the same .env: the passwords there MUST match the values
+#   below, or the app cannot connect to its own infra.
+# - Residual exposure, by design: Mailpit's UI/API and SMTP are authenticated
+#   (MP_UI_AUTH / MP_SMTP_AUTH), Redis requires a password, SeaweedFS S3 access
+#   is keyed — but all of these are only as strong as the .env values, and any
+#   process on this machine can reach the loopback ports. Do not run this stack
+#   on a shared host.
 
 services:
   postgres:
@@ -11,10 +30,10 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: jobbank
-      POSTGRES_PASSWORD: jobbank
+      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set in .env - see .env.example}'
       POSTGRES_DB: jobbank
     ports:
-      - '5433:5432'
+      - '127.0.0.1:5433:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
     configs:
@@ -35,7 +54,9 @@ services:
       -master.volumeSizeLimitMB=64 -volume.max=20
       -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
     ports:
-      - '8333:8333'
+      # Only the S3 API port is published. The SeaweedFS master/filer admin ports
+      # (9333/8888) stay inside the compose network — never publish them.
+      - '127.0.0.1:8333:8333'
     volumes:
       - s3data:/data
     configs:
@@ -64,8 +85,13 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # Password required: unauthenticated Redis let anyone on the network read,
+    # write or flush the rate-limit/cache data. The app degrades to in-memory
+    # rate limits if it cannot authenticate (see lib/redis/client.ts), so put
+    # the SAME password into REDIS_URL in .env or Redis silently goes unused.
+    command: 'redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is not set in .env - see .env.example}'
     ports:
-      - '6380:6379'
+      - '127.0.0.1:6380:6379'
     volumes:
       - redisdata:/data
     healthcheck:
@@ -77,9 +103,17 @@ services:
   mailpit:
     image: axllent/mailpit:latest
     restart: unless-stopped
+    environment:
+      # Basic auth for the web UI + REST API (MP_UI_AUTH) and for SMTP senders
+      # (MP_SMTP_AUTH). The app authenticates when SMTP_USER is set, so put the
+      # MP_SMTP_AUTH pair into SMTP_USER / SMTP_PASSWORD in .env. ALLOW_INSECURE
+      # is required because the local SMTP listener is unencrypted by design.
+      MP_UI_AUTH: '${MAILPIT_UI_AUTH:?MAILPIT_UI_AUTH is not set in .env - use user-password form, see .env.example}'
+      MP_SMTP_AUTH: '${MAILPIT_SMTP_AUTH:?MAILPIT_SMTP_AUTH is not set in .env - use user-password form, see .env.example}'
+      MP_SMTP_AUTH_ALLOW_INSECURE: 'true'
     ports:
-      - '1025:1025'
-      - '8025:8025'
+      - '127.0.0.1:1025:1025'
+      - '127.0.0.1:8025:8025'
 
 volumes:
   pgdata:
@@ -95,7 +129,7 @@ configs:
       -- jobbank  : owner / migrator (created by the image via POSTGRES_USER)
       -- app_rw   : runtime role used by the Next.js app. Privileges are granted by
       --            migrations; append-only tables get INSERT/SELECT only.
-      CREATE ROLE app_rw LOGIN PASSWORD 'app_rw';
+      CREATE ROLE app_rw LOGIN PASSWORD '${APP_RW_PASSWORD:?APP_RW_PASSWORD is not set in .env - see .env.example}';
       GRANT CONNECT ON DATABASE jobbank TO app_rw;
 
       CREATE DATABASE jobbank_test OWNER jobbank;
@@ -106,7 +140,7 @@ configs:
         "identities": [
           {
             "name": "jobbank-dev",
-            "credentials": [{ "accessKey": "jobbank", "secretKey": "jobbank-dev-secret" }],
+            "credentials": [{ "accessKey": "${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is not set in .env - see .env.example}", "secretKey": "${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is not set in .env - see .env.example}" }],
             "actions": ["Admin", "Read", "Write", "List", "Tagging"]
           }
         ]

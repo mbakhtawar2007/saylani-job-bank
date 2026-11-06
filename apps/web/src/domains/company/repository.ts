@@ -292,19 +292,38 @@ export function toVerificationSummary(row: VerificationRow, now = new Date()): V
  * What still blocks submission: a main contact, the head office + branch, and every required
  * document for the legal structure (a document the verifier rejected must be replaced).
  */
-export async function submissionMissing(executor: DbExecutor, row: CompanyRow): Promise<string[]> {
-  const [contactRows, [hq], required, current] = await Promise.all([
-    executor
-      .select({ isPrimary: contacts.isPrimary })
-      .from(contacts)
-      .where(eq(contacts.companyId, row.id)),
-    executor
-      .select({ id: locs.id })
-      .from(locs)
-      .where(and(eq(locs.companyId, row.id), eq(locs.kind, 'HQ'))),
-    requiredDocumentTypes(executor, row.legalStructure),
-    currentDocuments(executor, row.id),
-  ]);
+/**
+ * Inputs submissionMissing needs, already fetched by the caller (buildCompanyView
+ * loads every one of these rows anyway). Pass them in to avoid re-querying; when
+ * omitted, submissionMissing fetches them itself.
+ */
+export interface SubmissionMissingPreload {
+  contactRows: { isPrimary: boolean }[];
+  hq: { id: string } | undefined;
+  required: CompanyDocumentType[];
+  current: CompanyDocumentRow[];
+}
+
+export async function submissionMissing(
+  executor: DbExecutor,
+  row: CompanyRow,
+  preloaded?: SubmissionMissingPreload,
+): Promise<string[]> {
+  const [contactRows, hq, required, current] = preloaded
+    ? [preloaded.contactRows, preloaded.hq, preloaded.required, preloaded.current]
+    : await Promise.all([
+        executor
+          .select({ isPrimary: contacts.isPrimary })
+          .from(contacts)
+          .where(eq(contacts.companyId, row.id)),
+        executor
+          .select({ id: locs.id })
+          .from(locs)
+          .where(and(eq(locs.companyId, row.id), eq(locs.kind, 'HQ')))
+          .then((rows) => rows[0]),
+        requiredDocumentTypes(executor, row.legalStructure),
+        currentDocuments(executor, row.id),
+      ]);
   const missing: string[] = [];
   if (!contactRows.some((r) => r.isPrimary)) missing.push('a main contact person');
   if (!hq || !row.branchId) missing.push('the head office location and branch');
@@ -340,25 +359,32 @@ export async function buildCompanyView(
   executor: DbExecutor,
   row: CompanyRow,
 ): Promise<CompanyView> {
-  const [contactRows, locationRows, documents, required, latest, branch, missing] =
-    await Promise.all([
-      executor
-        .select()
-        .from(contacts)
-        .where(eq(contacts.companyId, row.id))
-        .orderBy(desc(contacts.isPrimary), asc(contacts.sortOrder)),
-      executor
-        .select()
-        .from(locs)
-        .where(and(eq(locs.companyId, row.id), isNull(locs.archivedAt)))
-        .orderBy(asc(locs.createdAt)),
-      currentDocuments(executor, row.id),
-      requiredDocumentTypes(executor, row.legalStructure),
-      latestVerification(executor, row.id),
-      row.branchId ? getBranchContact(row.branchId, executor) : Promise.resolve(null),
-      submissionMissing(executor, row),
-    ]);
+  const [contactRows, locationRows, documents, required, latest, branch] = await Promise.all([
+    executor
+      .select()
+      .from(contacts)
+      .where(eq(contacts.companyId, row.id))
+      .orderBy(desc(contacts.isPrimary), asc(contacts.sortOrder)),
+    executor
+      .select()
+      .from(locs)
+      .where(and(eq(locs.companyId, row.id), isNull(locs.archivedAt)))
+      .orderBy(asc(locs.createdAt)),
+    currentDocuments(executor, row.id),
+    requiredDocumentTypes(executor, row.legalStructure),
+    latestVerification(executor, row.id),
+    row.branchId ? getBranchContact(row.branchId, executor) : Promise.resolve(null),
+  ]);
   const hq = locationRows.find((l) => l.kind === 'HQ');
+  // submissionMissing reuses the rows already fetched above instead of
+  // re-querying contacts, the HQ location, the required types and the
+  // documents (it used to add 5 more queries, 2 of them duplicates).
+  const missing = await submissionMissing(executor, row, {
+    contactRows,
+    hq,
+    required,
+    current: documents,
+  });
   return {
     id: row.id,
     status: row.status,

@@ -102,7 +102,7 @@
 
   @media print {
     @page {
-      size: letter portrait;
+      size: A4 portrait;
       margin: 0.25in;
     }
 
@@ -141,16 +141,27 @@
 
     .registration-form-print-sheet {
       width: 100% !important;
-      max-width: 7.8in !important;
+      /* A4 printable width at 0.25in margins is 7.77in. */
+      max-width: 7.7in !important;
       margin: 0 auto !important;
       padding: 0 !important;
       color: #111 !important;
       font-size: 9pt !important;
+      /* Grid containers paginate poorly in print: a grid sheet can push its
+         last items onto a near-blank second page instead of flowing. Block
+         layout flows across pages; the gap is replaced by margins below. */
+      display: block !important;
+    }
+
+    .registration-form-print-sheet > * + * {
+      margin-top: 0.12in !important;
     }
 
     .registration-form-section {
-      break-inside: avoid !important;
-      page-break-inside: avoid !important;
+      /* Sections must be allowed to break across pages: break-inside: avoid
+         on a whole section pushes it entirely to page 2 when it does not fit
+         on page 1, leaving a near-blank second page. Individual fields keep
+         break-inside: avoid below, so no single field is ever split. */
       border-color: #555 !important;
       padding: 0.12in !important;
     }
@@ -180,6 +191,12 @@
     .registration-form-print-sheet header,
     .registration-form-print-sheet strong {
       color: #111 !important;
+    }
+
+    /* The registration reference is a long mono string: let it wrap at any
+       character rather than overflowing (or awkwardly wrapping) its column. */
+    .registration-form-print-sheet .font-mono {
+      overflow-wrap: anywhere !important;
     }
 
     .registration-form-print-sheet .no-print {

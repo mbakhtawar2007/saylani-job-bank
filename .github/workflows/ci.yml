@@ -39,6 +39,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Dependency-free gates: fail fast before installing anything.
+      - name: Secret scan (tracked files)
+        run: bash scripts/ci/secret-scan.sh
+
+      - name: Migration consistency check
+        run: node scripts/ci/check-migrations.mjs
+
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc

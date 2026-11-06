@@ -13,6 +13,7 @@ import { and, asc, eq, gte, inArray, lt, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand, type RequestContext } from '@/domains/shared/audit';
 import { ConflictError, NotFoundError, ValidationError, zodIssues } from '@/domains/shared/errors';
+import { MAX_UNPAGINATED_LIST_ROWS } from '@/domains/shared/pagination';
 import { assertPermission, hasPermission, type Actor } from '@/domains/shared/scope';
 import { db, type DbExecutor } from '@/lib/db';
 
@@ -81,7 +82,8 @@ export async function listMasterData(
     .select(columns)
     .from(md)
     .where(and(...conditions))
-    .orderBy(asc(md.sortOrder), asc(md.label));
+    .orderBy(asc(md.sortOrder), asc(md.label))
+    .limit(MAX_UNPAGINATED_LIST_ROWS);
 }
 
 /** Items of one type with the given codes (active or not), for validating stored references. */
@@ -287,7 +289,12 @@ export async function listHolidays(query: { year?: number } = {}): Promise<Holid
   const where = query.year
     ? and(gte(h.date, `${query.year}-01-01`), lt(h.date, `${query.year + 1}-01-01`))
     : undefined;
-  return db.select(holidayColumns).from(h).where(where).orderBy(asc(h.date));
+  return db
+    .select(holidayColumns)
+    .from(h)
+    .where(where)
+    .orderBy(asc(h.date))
+    .limit(MAX_UNPAGINATED_LIST_ROWS);
 }
 
 /** Active holiday dates (for the working-day calendar). */

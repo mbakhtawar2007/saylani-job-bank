@@ -64,8 +64,8 @@ const nextConfig: NextConfig = {
   transpilePackages: ['@jobbank/db', '@jobbank/shared'],
   outputFileTracingRoot: repoRoot,
   env: { APP_VERSION: pkg.version },
-  // Linting runs as its own turbo task (pnpm lint) and in CI; don't repeat it in builds.
-  eslint: { ignoreDuringBuilds: true },
+  // No eslint.ignoreDuringBuilds: lint runs as part of the build, so a lint
+  // error fails the build the same way it fails `pnpm lint` and CI.
   // Evaluated at build time: build with the S3_ENDPOINT and map tile URL of the target environment.
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];

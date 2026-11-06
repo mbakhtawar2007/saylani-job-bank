@@ -2,7 +2,7 @@
 
 import { GENDER_LABELS, JOB_TYPE_LABELS, SHIFT_LABELS, SKILL_LEVEL_LABELS } from '@jobbank/shared';
 import type { ReactNode } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ApplicantProfile } from '@/domains/applicant';
 import { formatDate } from '@/lib/format/date';
 import { apiFetch } from '@/lib/api/client';
@@ -41,9 +41,18 @@ function Field({ label, value }: { label: string; value?: string | number | null
 export function RegistrationFormPrint({
   profile,
   branchName,
+  onReady,
 }: {
   profile: ApplicantProfile;
   branchName: string;
+  /**
+   * Fired once everything the printout depends on has settled: the
+   * master-data labels (codes resolved to human labels, or the fetch failed
+   * and raw codes are the fallback), the QR code, and the logo image.
+   * Print triggers must wait for this — printing earlier shows raw codes
+   * and "Preparing QR code…" on the paper form.
+   */
+  onReady?: () => void;
 }) {
   const { personal, address, preferences } = profile;
   // Resolve master-data codes to human labels so the signed paper form shows
@@ -54,6 +63,17 @@ export function RegistrationFormPrint({
   const [educationLevels, setEducationLevels] = useState<MasterDataOption[]>([]);
   const [jobCategories, setJobCategories] = useState<MasterDataOption[]>([]);
   const [skills, setSkills] = useState<MasterDataOption[]>([]);
+  const [labelsSettled, setLabelsSettled] = useState(false);
+  const [qrSettled, setQrSettled] = useState(false);
+  const [logoSettled, setLogoSettled] = useState(false);
+  const notifiedRef = useRef(false);
+
+  useEffect(() => {
+    if (labelsSettled && qrSettled && logoSettled && !notifiedRef.current) {
+      notifiedRef.current = true;
+      onReady?.();
+    }
+  }, [labelsSettled, qrSettled, logoSettled, onReady]);
 
   useEffect(() => {
     let active = true;
@@ -72,6 +92,9 @@ export function RegistrationFormPrint({
       })
       .catch(() => {
         // Labels fall back to the raw codes on the print form.
+      })
+      .finally(() => {
+        if (active) setLabelsSettled(true);
       });
     return () => {
       active = false;
@@ -90,6 +113,8 @@ export function RegistrationFormPrint({
                 width={120}
                 height={40}
                 className="h-10 w-[120px] shrink-0 object-contain"
+                onLoad={() => setLogoSettled(true)}
+                onError={() => setLogoSettled(true)}
               />
               <p className="text-xs font-semibold tracking-widest uppercase">Saylani Job Bank</p>
             </div>
@@ -100,7 +125,11 @@ export function RegistrationFormPrint({
             </p>
           </div>
           <div className="grid justify-items-center gap-1">
-            <RegistrationTokenQr value={profile.id} width={180} />
+            <RegistrationTokenQr
+              value={profile.id}
+              width={180}
+              onReady={() => setQrSettled(true)}
+            />
             <span className="text-xs">Applicant reference QR</span>
           </div>
         </header>

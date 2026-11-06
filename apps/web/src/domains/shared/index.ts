@@ -3,6 +3,7 @@
  * (never from another domain's internals).
  */
 export * from './audit';
+export * from './documents';
 export * from './errors';
 export * from './events';
 export * from './http';

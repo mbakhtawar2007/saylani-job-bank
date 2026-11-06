@@ -195,6 +195,10 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
   const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, alert);
   const [applicant, setApplicant] = useState<ApplicantStaffView | null>(null);
   const [printReady, setPrintReady] = useState(false);
+  // True once the print form's labels, QR code and logo have all settled.
+  // The Print button stays disabled until then: printing earlier puts raw
+  // master-data codes and "Preparing QR code…" on the paper form.
+  const [printLabelsReady, setPrintLabelsReady] = useState(false);
   const [verifiedSigned, setVerifiedSigned] = useState(false);
   const [markingSigned, setMarkingSigned] = useState(false);
   const [cities, setCities] = useState<MasterDataOption[]>([]);
@@ -388,6 +392,9 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
         body: parsed.data,
       });
       setApplicant(data);
+      // A new applicant mounts a fresh print form (keyed by id): its labels,
+      // QR and logo have not loaded yet.
+      setPrintLabelsReady(false);
       setVerifiedSigned(Boolean(data.registrationVerifiedSignedAt));
       setOpen(false);
       router.replace(pathname);
@@ -446,7 +453,12 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
   const printForm =
     applicant && printReady
       ? createPortal(
-          <RegistrationFormPrint profile={applicant} branchName={applicant.branch?.name ?? ''} />,
+          <RegistrationFormPrint
+            key={applicant.id}
+            profile={applicant}
+            branchName={applicant.branch?.name ?? ''}
+            onReady={() => setPrintLabelsReady(true)}
+          />,
           document.body,
         )
       : null;
@@ -1328,11 +1340,14 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                 </p>
               </div>
               <div className="flex gap-2">
-                <Button onClick={() => window.print()}>Print form</Button>
+                <Button onClick={() => window.print()} disabled={!printLabelsReady}>
+                  {printLabelsReady ? 'Print form' : 'Preparing print…'}
+                </Button>
                 <Button
                   variant="secondary"
                   onClick={() => {
                     setApplicant(null);
+                    setPrintLabelsReady(false);
                     router.refresh();
                   }}
                 >

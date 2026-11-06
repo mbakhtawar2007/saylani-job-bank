@@ -68,6 +68,10 @@ export const jobs = pgTable(
     index('jobs_company_idx').on(t.companyId),
     index('jobs_branch_status_idx').on(t.branchId, t.status),
     index('jobs_category_idx').on(t.categoryCode),
+    // Trigram index for the staff `ILIKE '%q%'` title search (job/staff.ts).
+    // categoryCode is searched too but already has a btree index and is a
+    // short code, not free text — no trigram index there.
+    index('jobs_title_trgm_idx').using('gin', t.title),
     check(
       'jobs_salary_order',
       sql`salary_min IS NULL OR salary_max IS NULL OR salary_min <= salary_max`,

@@ -1,4 +1,5 @@
 /** Public API of the auth domain (route handlers and server components import from here). */
+export { assertPasswordNotBreached, isPasswordBreached } from './breached-password';
 export {
   acceptInvitation,
   hashAccountToken,
@@ -28,6 +29,15 @@ export {
   SIGNUP_CODE_TTL_SECONDS,
 } from './employer-signup';
 export { getServerAuthState, requireRole, requireSignedIn } from './server-session';
+export {
+  getCurrentSessionId,
+  listMySessions,
+  revokeAllMySessions,
+  revokeMySession,
+  sessionListSchema,
+  sessionViewSchema,
+  type SessionView,
+} from './sessions';
 export { clearTrustedDevices } from './service';
 export {
   AccountBlockedError,

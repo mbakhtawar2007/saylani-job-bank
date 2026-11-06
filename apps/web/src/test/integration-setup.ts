@@ -21,5 +21,8 @@ export default async function setup() {
     await sql.end({ timeout: 1 });
   }
   await runMigrations(url);
-  await runSeed(url);
+  // Integration tests sign in with the seeded dev accounts, so the test DB
+  // always gets dev data regardless of SEED_DEV_DATA (see packages/db seed.ts:
+  // `pnpm db:seed` is opt-in for developers, explicit here for tests).
+  await runSeed(url, { includeDevData: true });
 }

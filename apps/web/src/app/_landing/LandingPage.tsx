@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ArrowRight,
   ArrowUpRight,
@@ -13,7 +13,6 @@ import {
   Search,
   Shield,
   Star,
-  TrendingUp,
   Upload,
   Users,
   Zap,
@@ -113,33 +112,6 @@ const MAP_CARDS = [
 ];
 
 /* ── Count-up hook ───────────────────────────────────────────────────────── */
-function useCountUp(end: number, suffix = '', duration = 2000) {
-  const [display, setDisplay] = useState('0' + suffix);
-  const ref = useRef<HTMLDivElement>(null);
-  const started = useRef(false);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(
-      ([e]) => {
-        if (!e?.isIntersecting || started.current) return;
-        started.current = true;
-        const t0 = performance.now();
-        const tick = (now: number) => {
-          const p = Math.min((now - t0) / duration, 1);
-          setDisplay(Math.floor((1 - Math.pow(1 - p, 3)) * end).toLocaleString() + suffix);
-          if (p < 1) requestAnimationFrame(tick);
-        };
-        requestAnimationFrame(tick);
-      },
-      { threshold: 0.4 },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [end, suffix, duration]);
-  return { display, ref };
-}
-
 /* ── Single-open FAQ accordion ───────────────────────────────────────────── */
 function FAQList({ items }: { items: { q: string; a: string }[] }) {
   const [open, setOpen] = useState(0);
@@ -326,7 +298,7 @@ const STEPS = [
     n: '02',
     icon: Search,
     title: 'Get Matched to Jobs',
-    desc: 'Our system surfaces the best-fit roles from 500+ verified employers.',
+    desc: 'Our system surfaces the best-fit roles from verified employers.',
   },
   {
     n: '03',
@@ -360,12 +332,12 @@ const FAQS = [
   },
 ];
 const COMPANIES = [
-  { name: 'Engro Corp', sector: 'Energy & Conglomerate', jobs: 12 },
-  { name: 'HBL Bank', sector: 'Fintech & Banking', jobs: 20 },
-  { name: 'Jazz Telecom', sector: 'Telecommunications', jobs: 15 },
-  { name: 'Careem', sector: 'Mobility & Tech', jobs: 11 },
-  { name: 'Systems Ltd', sector: 'Enterprise Software', jobs: 18 },
-  { name: 'Telenor', sector: 'Telecom & Digital', jobs: 9 },
+  { name: 'Engro Corp', sector: 'Energy & Conglomerate' },
+  { name: 'HBL Bank', sector: 'Fintech & Banking' },
+  { name: 'Jazz Telecom', sector: 'Telecommunications' },
+  { name: 'Careem', sector: 'Mobility & Tech' },
+  { name: 'Systems Ltd', sector: 'Enterprise Software' },
+  { name: 'Telenor', sector: 'Telecom & Digital' },
 ];
 
 /* ── Phone mockup component ──────────────────────────────────────────────── */
@@ -482,11 +454,7 @@ function PhoneMockup() {
             </div>
             {/* Stats mini row */}
             <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
-              {[
-                ['5.2K+', 'Jobs'],
-                ['500+', 'Companies'],
-                ['Free', 'Always'],
-              ].map(([n, l]) => (
+              {[['Free', 'Always']].map(([n, l]) => (
                 <div
                   key={l}
                   style={{
@@ -643,24 +611,6 @@ function PhoneMockup() {
           </div>
         </div>
       </div>
-      <div
-        className="float"
-        style={{
-          position: 'absolute',
-          top: 36,
-          left: -40,
-          background: C.lime,
-          borderRadius: 12,
-          padding: '10px 14px',
-          boxShadow: '0 12px 32px rgba(200,240,69,0.35)',
-          zIndex: 20,
-        }}
-      >
-        <div style={{ fontWeight: 900, fontSize: 18, color: C.dark, lineHeight: 1 }}>5,200+</div>
-        <div style={{ color: C.primary, fontSize: 9, fontWeight: 700, marginTop: 2 }}>
-          Live Jobs
-        </div>
-      </div>
     </div>
   );
 }
@@ -677,11 +627,6 @@ export default function LandingPage({
   const [activeTab, setActiveTab] = useState('All');
   const [hoveredCity, setHoveredCity] = useState<string | null>(null);
   const [howTab, setHowTab] = useState<'applicants' | 'employers'>('applicants');
-
-  const s1 = useCountUp(5200, '+');
-  const s2 = useCountUp(50000, '+');
-  const s3 = useCountUp(500, '+');
-  const s4 = useCountUp(98, '%');
 
   useEffect(() => {
     const h = () => setScrolled(window.scrollY > 60);
@@ -1012,11 +957,7 @@ export default function LandingPage({
             className="a4"
             style={{ display: 'flex', gap: 28, paddingTop: 28, borderTop: `1px solid ${C.border}` }}
           >
-            {[
-              ['5,200+', 'Open Roles'],
-              ['500+', 'Companies'],
-              ['100%', 'Free'],
-            ].map(([n, l]) => (
+            {[['100%', 'Free']].map(([n, l]) => (
               <div key={l}>
                 <div
                   style={{
@@ -1063,9 +1004,6 @@ export default function LandingPage({
                     <Star key={i} size={10} color="#F59E0B" fill="#F59E0B" />
                   ))}
                 </div>
-                <span style={{ color: C.muted, fontSize: 11, fontWeight: 500 }}>
-                  50K+ Job Seekers
-                </span>
               </div>
             </div>
           </div>
@@ -1402,105 +1340,6 @@ export default function LandingPage({
                   </div>
                 );
               })()}
-
-            <div
-              className="float"
-              style={{
-                position: 'absolute',
-                left: '72.3%',
-                top: '86.8%',
-                animationDelay: '1s',
-                background: C.lime,
-                borderRadius: 16,
-                padding: '14px 18px',
-                boxShadow: '0 12px 36px rgba(200,240,69,0.40)',
-                zIndex: 10,
-              }}
-            >
-              <div
-                style={{
-                  fontWeight: 900,
-                  fontSize: 24,
-                  color: C.dark,
-                  lineHeight: 1,
-                  letterSpacing: '-0.04em',
-                }}
-              >
-                5,200+
-              </div>
-              <div style={{ color: C.primary, fontSize: 10, fontWeight: 700, marginTop: 3 }}>
-                Live Jobs Now
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ═══ STATS STRIP ════════════════════════════════════════════════════ */}
-      <section style={{ background: C.bg, padding: '0 40px' }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-          <div
-            style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', padding: '56px 0' }}
-          >
-            {[
-              { r: s1.ref, d: s1.display, l: 'Open Roles', s: 'Across Pakistan', icon: Briefcase },
-              { r: s2.ref, d: s2.display, l: 'Job Seekers', s: 'Registered & Active', icon: Users },
-              {
-                r: s3.ref,
-                d: s3.display,
-                l: 'Employers',
-                s: 'Verified & Trusted',
-                icon: Building2,
-              },
-              {
-                r: s4.ref,
-                d: s4.display,
-                l: 'Success Rate',
-                s: 'Of applicants hired',
-                icon: TrendingUp,
-              },
-            ].map(({ r, d, l, s, icon: Icon }, i) => (
-              <div
-                key={l}
-                ref={r}
-                style={{
-                  textAlign: 'center',
-                  padding: '0 32px',
-                  borderRight: i < 3 ? `1px solid ${C.border}` : 'none',
-                }}
-              >
-                <div
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 12,
-                    background: C.limeLight,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    margin: '0 auto 14px',
-                  }}
-                >
-                  <Icon size={20} color={C.primary} />
-                </div>
-                <div
-                  style={{
-                    fontSize: 'clamp(32px,4vw,52px)',
-                    fontWeight: 900,
-                    color: C.text,
-                    lineHeight: 1,
-                    marginBottom: 6,
-                    letterSpacing: '-0.04em',
-                  }}
-                >
-                  {d}
-                </div>
-                <div style={{ color: C.text, fontWeight: 700, fontSize: 14, marginBottom: 3 }}>
-                  {l}
-                </div>
-                <div style={{ color: C.muted, fontSize: 12 }}>{s}</div>
-              </div>
-            ))}
           </div>
         </div>
       </section>
@@ -1547,8 +1386,8 @@ export default function LandingPage({
               Trusted by Leading Companies &amp; Enterprises
             </h2>
             <p style={{ color: C.muted, fontSize: 15, maxWidth: 500, margin: '0 auto' }}>
-              Over 500+ verified organizations and industry leaders recruit qualified, pre-screened
-              talent from Saylani Job Bank.
+              Verified organizations and industry leaders recruit qualified, pre-screened talent
+              from Saylani Job Bank.
             </p>
           </div>
           <div
@@ -1590,20 +1429,11 @@ export default function LandingPage({
                   </div>
                   <div style={{ color: C.muted, fontSize: 11, marginTop: 3 }}>{co.sector}</div>
                 </div>
-                <div style={{ background: C.limeLight, borderRadius: 8, padding: '4px 10px' }}>
-                  <span style={{ color: C.primary, fontSize: 11, fontWeight: 700 }}>
-                    {co.jobs} Openings
-                  </span>
-                </div>
               </div>
             ))}
           </div>
           <div style={{ display: 'flex', gap: 40, justifyContent: 'center' }}>
-            {[
-              '500+ Registered Companies',
-              'Direct Hiring Without Brokerage',
-              '100% Pre-Evaluated Talent',
-            ].map((t) => (
+            {['Direct Hiring Without Brokerage', '100% Pre-Evaluated Talent'].map((t) => (
               <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                 <CheckCircle2 size={15} color={C.primary} strokeWidth={2.5} />
                 <span style={{ color: C.muted, fontSize: 13, fontWeight: 600 }}>{t}</span>
@@ -1873,7 +1703,7 @@ export default function LandingPage({
                     Post a Job <ArrowRight size={14} />
                   </NextLink>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    {['500+ Candidates', 'Free', 'Verified'].map((t) => (
+                    {['Free', 'Verified'].map((t) => (
                       <span
                         key={t}
                         style={{
@@ -2550,83 +2380,6 @@ export default function LandingPage({
                 }}
               />
             </div>
-            <div
-              className="float"
-              style={{
-                position: 'absolute',
-                bottom: 40,
-                right: -28,
-                background: C.dark,
-                borderRadius: 20,
-                padding: '20px 24px',
-                boxShadow: '0 20px 52px rgba(0,0,0,0.2)',
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 36,
-                  fontWeight: 900,
-                  color: C.lime,
-                  lineHeight: 1,
-                  letterSpacing: '-0.04em',
-                }}
-              >
-                50K+
-              </div>
-              <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 4 }}>
-                Job Seekers
-              </div>
-            </div>
-            <div
-              style={{
-                position: 'absolute',
-                top: 40,
-                left: -24,
-                background: C.bg,
-                borderRadius: 18,
-                padding: '16px 20px',
-                boxShadow: '0 16px 44px rgba(0,0,0,0.10)',
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 28,
-                  fontWeight: 900,
-                  color: C.primary,
-                  lineHeight: 1,
-                  letterSpacing: '-0.04em',
-                }}
-              >
-                500+
-              </div>
-              <div style={{ color: C.muted, fontSize: 12, marginTop: 4, fontWeight: 500 }}>
-                Verified Employers
-              </div>
-            </div>
-            <div
-              style={{
-                position: 'absolute',
-                top: '50%',
-                left: -36,
-                transform: 'translateY(-50%)',
-                background: C.lime,
-                borderRadius: 16,
-                padding: '14px 18px',
-                boxShadow: '0 12px 36px rgba(200,240,69,0.3)',
-              }}
-            >
-              <div style={{ display: 'flex', gap: 2, marginBottom: 5 }}>
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <Star key={i} size={11} color={C.dark} fill={C.dark} />
-                ))}
-              </div>
-              <div style={{ fontWeight: 900, color: C.dark, fontSize: 18, lineHeight: 1 }}>
-                4.9/5.0
-              </div>
-              <div style={{ color: C.primary, fontSize: 10, marginTop: 3, fontWeight: 700 }}>
-                12K+ Reviews
-              </div>
-            </div>
           </div>
           <div>
             <div
@@ -2789,17 +2542,6 @@ export default function LandingPage({
                 }}
               />
               <div style={{ position: 'absolute', bottom: 22, left: 22 }}>
-                <div
-                  style={{
-                    color: C.lime,
-                    fontWeight: 900,
-                    fontSize: 28,
-                    letterSpacing: '-0.03em',
-                    lineHeight: 1,
-                  }}
-                >
-                  10K+
-                </div>
                 <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, marginTop: 4 }}>
                   Successful Placements This Year
                 </div>
@@ -2877,7 +2619,7 @@ export default function LandingPage({
                   style={{ width: 7, height: 7, borderRadius: '50%', background: C.lime }}
                 />
                 <span style={{ color: C.lime, fontSize: 13, fontWeight: 600 }}>
-                  Join 50,000+ Pakistanis — free forever
+                  Join Pakistanis — free forever
                 </span>
               </div>
               <h2
@@ -2943,30 +2685,6 @@ export default function LandingPage({
                 >
                   Post a Job Free <Building2 size={15} />
                 </NextLink>
-              </div>
-              <div style={{ display: 'flex', gap: 24, marginTop: 36 }}>
-                {[
-                  ['50K+', 'Job Seekers'],
-                  ['5.2K+', 'Live Jobs'],
-                  ['500+', 'Employers'],
-                ].map(([n, l]) => (
-                  <div key={l}>
-                    <div
-                      style={{
-                        fontWeight: 900,
-                        fontSize: 20,
-                        color: C.lime,
-                        letterSpacing: '-0.03em',
-                        lineHeight: 1,
-                      }}
-                    >
-                      {n}
-                    </div>
-                    <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, marginTop: 3 }}>
-                      {l}
-                    </div>
-                  </div>
-                ))}
               </div>
             </div>
 

@@ -249,7 +249,50 @@ export function toDocumentView(row: typeof docs.$inferSelect): ApplicantDocument
 export async function completenessFor(
   executor: DbExecutor,
   row: ApplicantRow,
+  preloaded?: CompletenessPreload,
 ): Promise<Completeness> {
+  const inputs = preloaded ?? (await loadCompletenessInputs(executor, row));
+  const applicantCategories = new Set(inputs.preferenceCategories);
+  const presentTypes = new Set(inputs.presentDocuments.map((d) => d.typeCode));
+  const missingRequiredDocuments = missingApplicantDocumentRequirements(
+    inputs.documentTypes.filter((t) => t.isActive).map((t) => ({ code: t.code, ...t.meta })),
+    applicantCategories,
+    presentTypes,
+  );
+
+  return computeCompleteness({
+    hasPersonal: true,
+    hasLocation: inputs.hasAddress && row.branchId !== null,
+    skillCount: inputs.skillCount,
+    educationCount: inputs.educationCount,
+    experienceCount: inputs.experienceCount,
+    hasNoExperience: row.hasNoExperience,
+    hasPreferences: inputs.preferenceCategories.length > 0,
+    missingRequiredDocuments,
+    languageCount: inputs.languageCount,
+  });
+}
+
+/**
+ * Inputs completeness needs, already fetched by the caller (buildProfile loads
+ * every one of these rows anyway). Pass them in to avoid re-querying; when
+ * omitted, completenessFor fetches them itself (refreshProfileState, REACTIVATE).
+ */
+export interface CompletenessPreload {
+  hasAddress: boolean;
+  preferenceCategories: string[];
+  educationCount: number;
+  experienceCount: number;
+  skillCount: number;
+  languageCount: number;
+  documentTypes: ApplicantDocumentType[];
+  presentDocuments: (typeof docs.$inferSelect)[];
+}
+
+async function loadCompletenessInputs(
+  executor: DbExecutor,
+  row: ApplicantRow,
+): Promise<CompletenessPreload> {
   const countOf = async (table: typeof edu | typeof exp | typeof skl | typeof lng) =>
     (await executor.select({ n: count() }).from(table).where(eq(table.applicantId, row.id)))[0]
       ?.n ?? 0;
@@ -269,25 +312,16 @@ export async function completenessFor(
     applicantDocumentTypes(executor),
     currentDocuments(executor, row.id),
   ]);
-  const applicantCategories = new Set(preferences[0]?.categories ?? []);
-  const presentTypes = new Set(present.map((d) => d.typeCode));
-  const missingRequiredDocuments = missingApplicantDocumentRequirements(
-    types.filter((t) => t.isActive).map((t) => ({ code: t.code, ...t.meta })),
-    applicantCategories,
-    presentTypes,
-  );
-
-  return computeCompleteness({
-    hasPersonal: true,
-    hasLocation: address.length > 0 && row.branchId !== null,
-    skillCount,
+  return {
+    hasAddress: address.length > 0,
+    preferenceCategories: preferences[0]?.categories ?? [],
     educationCount,
     experienceCount,
-    hasNoExperience: row.hasNoExperience,
-    hasPreferences: (preferences[0]?.categories.length ?? 0) > 0,
-    missingRequiredDocuments,
+    skillCount,
     languageCount,
-  });
+    documentTypes: types,
+    presentDocuments: present,
+  };
 }
 
 /**
@@ -333,6 +367,15 @@ export async function refreshProfileState(
 
 // ─── Full profile ──────────────────────────────────────────────────────
 
+/**
+ * Full profile view. Query budget: 13 selects (12 sections + the DOCUMENT_TYPE
+ * master-data list) plus the caller's row load — the completeness inputs are
+ * the rows already fetched here, passed in so completenessFor does not
+ * re-query them (it used to add 8 more: address, preferences, 4 counts and a
+ * second copy of the documents). Callers that only need completeness
+ * (refreshProfileState, REACTIVATE) call completenessFor directly and it
+ * fetches what it needs.
+ */
 export async function buildProfile(
   executor: DbExecutor,
   row: ApplicantRow,
@@ -350,7 +393,7 @@ export async function buildProfile(
     documents,
     [lastCheck],
     branch,
-    completeness,
+    documentTypes,
   ] = await Promise.all([
     executor
       .select({ phone: schema.users.phoneNumber })
@@ -372,8 +415,18 @@ export async function buildProfile(
       .orderBy(desc(idv.createdAt))
       .limit(1),
     row.branchId ? getBranchContact(row.branchId, executor) : Promise.resolve(null),
-    completenessFor(executor, row),
+    applicantDocumentTypes(executor),
   ]);
+  const completeness = await completenessFor(executor, row, {
+    hasAddress: address !== undefined,
+    preferenceCategories: preferences?.categoryCodes ?? [],
+    educationCount: education.length,
+    experienceCount: experience.length,
+    skillCount: skills.length,
+    languageCount: languages.length,
+    documentTypes,
+    presentDocuments: documents,
+  });
 
   return {
     id: row.id,

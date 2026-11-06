@@ -12,6 +12,7 @@ import {
   type Actor,
 } from '@/domains/shared/scope';
 import { branchRadii, deleteRadiusPolicy, writeRadiusPolicy } from '@/domains/settings';
+import { MAX_UNPAGINATED_LIST_ROWS } from '@/domains/shared/pagination';
 import { db, type DbExecutor } from '@/lib/db';
 import { toGeography } from '@/lib/geospatial';
 
@@ -107,7 +108,8 @@ export async function listBranches(actor: Actor): Promise<BranchView[]> {
     .select(columns)
     .from(b)
     .where(branchScope(actor, b.id))
-    .orderBy(asc(b.name));
+    .orderBy(asc(b.name))
+    .limit(MAX_UNPAGINATED_LIST_ROWS);
   return withStaffCounts(rows);
 }
 

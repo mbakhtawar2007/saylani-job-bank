@@ -42,13 +42,24 @@ export async function createNotification(
   executor: DbExecutor,
   input: CreateNotificationInput,
 ): Promise<void> {
-  await executor.insert(n).values({
-    userId: input.userId,
-    type: input.type,
-    title: input.title,
-    body: input.body ?? '',
-    data: input.data ?? {},
-  });
+  await createNotifications(executor, [input]);
+}
+
+/** Insert many notifications in a single statement (fan-outs, batch sends). */
+export async function createNotifications(
+  executor: DbExecutor,
+  inputs: CreateNotificationInput[],
+): Promise<void> {
+  if (inputs.length === 0) return;
+  await executor.insert(n).values(
+    inputs.map((input) => ({
+      userId: input.userId,
+      type: input.type,
+      title: input.title,
+      body: input.body ?? '',
+      data: input.data ?? {},
+    })),
+  );
 }
 
 /** Fan-out to every employer user of a company (offer responses, …). */
@@ -61,10 +72,12 @@ export async function notifyCompanyEmployers(
     .select({ userId: cm.userId })
     .from(cm)
     .where(eq(cm.companyId, companyId));
-  for (const member of members) {
+  // One insert for the whole fan-out, not one per member.
+  const payloads = members.flatMap((member) => {
     const payload = build({ userId: member.userId });
-    if (payload) await createNotification(executor, payload);
-  }
+    return payload ? [payload] : [];
+  });
+  await createNotifications(executor, payloads);
 }
 
 export interface ListNotificationsQuery {

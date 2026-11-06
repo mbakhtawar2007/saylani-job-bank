@@ -60,6 +60,11 @@ export function StaffCompanyPanel({
   const [suspendNote, setSuspendNote] = useState('');
   const [showSuspendForm, setShowSuspendForm] = useState(false);
   const [printReady, setPrintReady] = useState(false);
+  // True once the print form's QR code and logo have settled. The Print
+  // button stays disabled until then — and until the industry label fetch
+  // has settled too, or the form prints the raw industry code.
+  const [printLabelsReady, setPrintLabelsReady] = useState(false);
+  const [industriesSettled, setIndustriesSettled] = useState(false);
   const [verifiedSigned, setVerifiedSigned] = useState(
     Boolean(company.registrationVerifiedSignedAt),
   );
@@ -83,6 +88,9 @@ export function StaffCompanyPanel({
       })
       .catch(() => {
         // Industry label falls back to the raw industry code on the print form.
+      })
+      .finally(() => {
+        if (active) setIndustriesSettled(true);
       });
     return () => {
       active = false;
@@ -196,8 +204,15 @@ export function StaffCompanyPanel({
           </div>
           <div className="flex flex-wrap gap-2">
             {onboarding && (
-              <Button variant="secondary" leftIcon={<Printer />} onClick={() => window.print()}>
-                Print registration form
+              <Button
+                variant="secondary"
+                leftIcon={<Printer />}
+                onClick={() => window.print()}
+                disabled={!printLabelsReady || !industriesSettled}
+              >
+                {printLabelsReady && industriesSettled
+                  ? 'Print registration form'
+                  : 'Preparing print…'}
               </Button>
             )}
             {canOnboard && onboarding && company_.status === 'DRAFT' && !verifiedSigned && (
@@ -490,9 +505,11 @@ export function StaffCompanyPanel({
       {onboarding && printReady
         ? createPortal(
             <CompanyRegistrationFormPrint
+              key={company_.id}
               company={company_}
               onboarding={onboarding}
               industryLabel={industryLabel}
+              onReady={() => setPrintLabelsReady(true)}
             />,
             document.body,
           )

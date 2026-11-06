@@ -2,6 +2,7 @@
 
 import { COMPANY_SIZE_LABELS, LEGAL_STRUCTURE_LABELS } from '@jobbank/shared';
 import type { ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CompanyOnboarding, CompanyView } from '@/domains/company';
 import { formatDate } from '@/lib/format/date';
 import { RegistrationTokenQr } from '../applicants/RegistrationTokenQr';
@@ -30,14 +31,33 @@ export function CompanyRegistrationFormPrint({
   company,
   onboarding,
   industryLabel,
+  onReady,
 }: {
   company: CompanyView;
   onboarding: CompanyOnboarding;
   industryLabel?: string | null;
+  /**
+   * Fired once everything the printout depends on has settled: the QR code
+   * and the logo image. (The industry label is resolved by the parent — its
+   * fetch must be settled before the print trigger fires too.) Print
+   * triggers must wait for this — printing earlier shows "Preparing QR
+   * code…" on the paper form.
+   */
+  onReady?: () => void;
 }) {
   const { details } = company;
   const primary = company.contacts.find((c) => c.isPrimary) ?? company.contacts[0];
   const { notes } = onboarding;
+  const [qrSettled, setQrSettled] = useState(false);
+  const [logoSettled, setLogoSettled] = useState(false);
+  const notifiedRef = useRef(false);
+
+  useEffect(() => {
+    if (qrSettled && logoSettled && !notifiedRef.current) {
+      notifiedRef.current = true;
+      onReady?.();
+    }
+  }, [qrSettled, logoSettled, onReady]);
   return (
     <div className="registration-form-print-root">
       <article className="registration-form-print-sheet grid gap-3 text-gray-950">
@@ -50,6 +70,8 @@ export function CompanyRegistrationFormPrint({
                 width={120}
                 height={40}
                 className="h-10 w-[120px] shrink-0 object-contain"
+                onLoad={() => setLogoSettled(true)}
+                onError={() => setLogoSettled(true)}
               />
               <p className="text-xs font-semibold tracking-widest uppercase">Saylani Job Bank</p>
             </div>
@@ -60,7 +82,11 @@ export function CompanyRegistrationFormPrint({
             </p>
           </div>
           <div className="grid justify-items-center gap-1">
-            <RegistrationTokenQr value={company.id} width={180} />
+            <RegistrationTokenQr
+              value={company.id}
+              width={180}
+              onReady={() => setQrSettled(true)}
+            />
             <span className="text-xs">Company reference QR</span>
           </div>
         </header>

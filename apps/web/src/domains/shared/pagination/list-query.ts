@@ -36,6 +36,17 @@ export function searchParamsToObject(params: URLSearchParams): Record<string, st
 }
 
 /**
+ * Hard cap for full-list endpoints that return an unpaginated array (master
+ * data, branches, holidays). These feed dropdowns and calendars, so they need
+ * the whole list — but an unbounded SELECT is one bad seed away from returning
+ * everything. 500 is 5x the default paginated page cap (100) and far above any
+ * real list here (a master-data type holds dozens of items; ~20 holidays a
+ * year; a handful of branches). If a list legitimately outgrows it, convert
+ * that endpoint to parseListQuery instead of raising this.
+ */
+export const MAX_UNPAGINATED_LIST_ROWS = 500;
+
+/**
  * PRD §8 "pagination + filtering standards": ?page=&pageSize=&sort=field:dir&q=&<filters>.
  * Unknown parameters are rejected so typos fail loudly instead of silently returning everything.
  */

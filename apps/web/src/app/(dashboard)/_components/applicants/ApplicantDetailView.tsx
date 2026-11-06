@@ -20,11 +20,13 @@ import {
   Calendar,
   Pencil,
   Phone,
+  Printer,
   UserCheck,
   UserX,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Badge, Button, Input, RadioGroup, Select, Textarea } from '@/components/atoms';
 import type { SelectOption } from '@/components/atoms';
 import {
@@ -47,6 +49,7 @@ import { formatPkMobileDisplay } from '@/lib/format/phone';
 import { errorMessage, toFieldErrors, type FieldErrors } from './form';
 import { DOCUMENT_STATUS_PILL, IDENTITY_PILL } from './labels';
 import { openDocument } from './open-document';
+import { RegistrationFormPrint } from './RegistrationFormPrint';
 import type { ProfileLabels } from './lists';
 
 function Card({
@@ -927,6 +930,14 @@ export function ApplicantDetailView({
   const pref = applicant.preferences;
   const canChangeStatus =
     applicant.can.manage && (applicant.status === 'ACTIVE' || applicant.status === 'INACTIVE');
+  // Re-print: the registration form is portal-mounted (hidden on screen,
+  // visible only in print) so its labels, QR code and logo load while the
+  // page is read. The button stays disabled until they have all settled.
+  const [printReady, setPrintReady] = useState(false);
+  const [printLabelsReady, setPrintLabelsReady] = useState(false);
+  useEffect(() => {
+    setPrintReady(true);
+  }, []);
 
   return (
     <div className="grid gap-6">
@@ -946,9 +957,21 @@ export function ApplicantDetailView({
         </p>
       )}
 
-      {applicant.can.shortlist && (
+      {(applicant.can.shortlist || applicant.can.manage) && (
         <div className="flex flex-wrap gap-2">
-          <ShortlistDialog applicant={applicant} openJobs={openJobs ?? []} />
+          {applicant.can.shortlist && (
+            <ShortlistDialog applicant={applicant} openJobs={openJobs ?? []} />
+          )}
+          {applicant.can.manage && (
+            <Button
+              variant="secondary"
+              leftIcon={<Printer />}
+              onClick={() => window.print()}
+              disabled={!printLabelsReady}
+            >
+              {printLabelsReady ? 'Print registration form' : 'Preparing print…'}
+            </Button>
+          )}
         </div>
       )}
 
@@ -1258,6 +1281,17 @@ export function ApplicantDetailView({
           </div>
         </Card>
       )}
+      {applicant.can.manage && printReady
+        ? createPortal(
+            <RegistrationFormPrint
+              key={applicant.id}
+              profile={applicant}
+              branchName={applicant.branch?.name ?? ''}
+              onReady={() => setPrintLabelsReady(true)}
+            />,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
