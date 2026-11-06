@@ -9,6 +9,7 @@ import { DashboardLayout } from '@/components/templates';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import type { SelectOption } from '@/components/atoms';
 import { RegisterApplicantDialog } from './applicants/RegisterApplicantDialog';
+import { RegisterCompanyDialog } from './companies/RegisterCompanyDialog';
 import { navigationFor } from './navigation';
 import { useSignOut } from './SignOutButton';
 
@@ -23,6 +24,8 @@ export interface RoleShellProps {
   switchableBranches?: { id: string; name: string }[];
   /** Branches this staff member may register applicants for. */
   registrationBranches?: SelectOption[];
+  /** Active branches this staff member may register companies for. */
+  companyRegistrationBranches?: SelectOption[];
   activeBranchId?: string | null;
   /** Applicants have no password/2FA settings. */
   showSecurity?: boolean;
@@ -35,6 +38,7 @@ export function RoleShell({
   branchNames,
   switchableBranches,
   registrationBranches,
+  companyRegistrationBranches,
   activeBranchId,
   showSecurity = true,
   children,
@@ -58,8 +62,15 @@ export function RoleShell({
     <DashboardLayout
       navigation={navigationFor(role)}
       sidebarAction={
-        registrationBranches ? (
-          <RegisterApplicantDialog branches={registrationBranches} placement="sidebar" />
+        registrationBranches || companyRegistrationBranches ? (
+          <div className="grid gap-2">
+            {registrationBranches && (
+              <RegisterApplicantDialog branches={registrationBranches} placement="sidebar" />
+            )}
+            {companyRegistrationBranches && (
+              <RegisterCompanyDialog branches={companyRegistrationBranches} placement="sidebar" />
+            )}
+          </div>
         ) : undefined
       }
       sidebarFooter={

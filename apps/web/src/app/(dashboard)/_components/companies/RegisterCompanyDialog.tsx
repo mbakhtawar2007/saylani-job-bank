@@ -36,6 +36,7 @@ const todayIso = () => {
 
 interface Props {
   branches: SelectOption[];
+  placement?: 'default' | 'sidebar';
 }
 
 const STRUCTURE_OPTIONS = LEGAL_STRUCTURES.map((v) => ({
@@ -44,7 +45,7 @@ const STRUCTURE_OPTIONS = LEGAL_STRUCTURES.map((v) => ({
 }));
 const SIZE_OPTIONS = COMPANY_SIZE_BANDS.map((v) => ({ value: v, label: COMPANY_SIZE_LABELS[v] }));
 
-export function RegisterCompanyDialog({ branches }: Props) {
+export function RegisterCompanyDialog({ branches, placement = 'default' }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -230,7 +231,11 @@ export function RegisterCompanyDialog({ branches }: Props) {
         open={open}
         onOpenChange={setDialogOpen}
         size="lg"
-        trigger={<Button leftIcon={<Building2 aria-hidden="true" />}>Register Company</Button>}
+        trigger={
+          <Button fullWidth={placement === 'sidebar'} leftIcon={<Building2 aria-hidden="true" />}>
+            Register Company
+          </Button>
+        }
       >
         <form className="grid gap-5" onSubmit={submit} noValidate>
           {alert && (

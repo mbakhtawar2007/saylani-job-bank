@@ -1,9 +1,7 @@
 import { listCompanies } from '@/domains/company';
 import { requireRole } from '@/domains/auth';
-import { listBranches } from '@/domains/branch';
 import { Badge, Link } from '@/components/atoms';
 import { EmptyState } from '@/components/molecules';
-import { RegisterCompanyDialog } from '../../_components/companies/RegisterCompanyDialog';
 import { Building2 } from 'lucide-react';
 
 export const metadata = { title: 'Companies' };
@@ -24,31 +22,23 @@ const STATUS_BADGE: Record<
 
 export default async function StaffCompaniesPage() {
   const { actor } = await requireRole('STAFF');
-  const [{ items, pagination }, branches] = await Promise.all([
-    listCompanies(actor, {
-      page: 1,
-      pageSize: 100,
-      limit: 100,
-      offset: 0,
-      sort: { field: 'legalName', direction: 'asc' },
-      q: undefined,
-      filters: {},
-    }),
-    listBranches(actor),
-  ]);
-
-  const myBranches = branches
-    .filter((b) => b.isActive && actor.branchIds.includes(b.id))
-    .map((b) => ({ value: b.id, label: b.name }));
+  const { items, pagination } = await listCompanies(actor, {
+    page: 1,
+    pageSize: 100,
+    limit: 100,
+    offset: 0,
+    sort: { field: 'legalName', direction: 'asc' },
+    q: undefined,
+    filters: {},
+  });
 
   return (
     <div className="grid w-full gap-6">
-      <header className="flex items-center justify-between">
+      <header>
         <div>
           <h1 className="text-fg text-2xl font-semibold">Companies</h1>
           <p className="text-fg-muted mt-1 text-sm">{pagination.total} companies you onboarded</p>
         </div>
-        <RegisterCompanyDialog branches={myBranches} />
       </header>
 
       {items.length === 0 ? (
