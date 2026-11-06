@@ -47,7 +47,7 @@ import {
   isSuperAdmin,
   type Actor,
 } from '@/domains/shared/scope';
-import { db } from '@/lib/db';
+import { db, type DbExecutor } from '@/lib/db';
 import { companyMachine, READY } from './machine';
 import {
   buildCompanyView,
@@ -65,6 +65,41 @@ import {
 // ─── Company listing ───────────────────────────────────────────────────
 
 export const COMPANY_SORTABLE = ['legalName', 'createdAt', 'status'] as const;
+
+const ACTIVE_NTN_CONSTRAINT = 'companies_ntn_active_uq';
+
+const ntnTaken = () =>
+  new ConflictError('A company with this NTN is already registered with Saylani Job Bank.', {
+    reason: 'NTN_TAKEN',
+  });
+
+/**
+ * Owner decision 4 (packages/db/src/schema/companies.ts): one LIVE company per NTN.
+ * A second DRAFT — or a re-registration after a REJECTED one — is allowed by design:
+ * drafts don't count (no squatting) and a rejected company may be re-registered by
+ * its real owner. That is deliberately looser than the CNIC rule (one applicant row
+ * per CNIC ever, `applicants_cnic_unique`): a mistyped NTN on a draft must not block
+ * a later correct registration, while a second live company must never exist.
+ *
+ * What the rule does require is that a live duplicate fails with a clean 409
+ * NTN_TAKEN — never a raw 500, and never a silent second DRAFT created next to a
+ * live company by a concurrent request. So every staff write below re-checks inside
+ * its transaction AND maps the partial-index violation to 409: the check-then-act
+ * read outside the transaction is only an early friendly error, never the guard.
+ */
+async function assertNtnFree(executor: DbExecutor, ntn: string, exceptId?: string) {
+  const [other] = await executor
+    .select({ id: c.id })
+    .from(c)
+    .where(
+      and(
+        eq(c.ntn, ntn),
+        notInArray(c.status, ['DRAFT', 'REJECTED']),
+        exceptId ? ne(c.id, exceptId) : undefined,
+      ),
+    );
+  if (other) throw ntnTaken();
+}
 
 export const companyFilters = {
   status: z.enum(COMPANY_STATUSES).optional(),
@@ -342,28 +377,31 @@ export async function staffRegisterCompany(
     .select({ id: c.id })
     .from(c)
     .where(and(eq(c.ntn, companyInput.ntn), sql`${c.status} not in ('DRAFT', 'REJECTED')`));
-  if (existing) {
-    throw new ConflictError(
-      'A company with this NTN is already registered with Saylani Job Bank.',
-      { reason: 'NTN_TAKEN' },
-    );
-  }
+  if (existing) throw ntnTaken();
 
   let createdId: string | null = null;
-  await runCommand(ctx, async ({ tx, audit }) => {
-    const [row] = await tx
-      .insert(c)
-      .values({ ...companyInput, branchId, createdBy: ctx.actor.userId })
-      .returning();
-    createdId = row!.id;
-    audit({
-      action: 'company.register',
-      entityType: 'company',
-      entityId: row!.id,
-      branchId,
-      after: { ...companyInput, branchId },
+  try {
+    await runCommand(ctx, async ({ tx, audit }) => {
+      // Re-check inside the transaction: a live company with this NTN may have
+      // appeared after the read above (see assertNtnFree).
+      await assertNtnFree(tx, companyInput.ntn);
+      const [row] = await tx
+        .insert(c)
+        .values({ ...companyInput, branchId, createdBy: ctx.actor.userId })
+        .returning();
+      createdId = row!.id;
+      audit({
+        action: 'company.register',
+        entityType: 'company',
+        entityId: row!.id,
+        branchId,
+        after: { ...companyInput, branchId },
+      });
     });
-  });
+  } catch (error) {
+    if (isUniqueViolation(error, ACTIVE_NTN_CONSTRAINT)) throw ntnTaken();
+    throw error;
+  }
 
   const [row] = await db.select().from(c).where(eq(c.id, createdId!));
   return buildCompanyView(db, row!);
@@ -495,38 +533,41 @@ export async function staffOnboardCompany(
     .select({ id: c.id })
     .from(c)
     .where(and(eq(c.ntn, companyInput.ntn), sql`${c.status} not in ('DRAFT', 'REJECTED')`));
-  if (existing) {
-    throw new ConflictError(
-      'A company with this NTN is already registered with Saylani Job Bank.',
-      { reason: 'NTN_TAKEN' },
-    );
-  }
+  if (existing) throw ntnTaken();
 
   let createdId: string | null = null;
-  await runCommand(ctx, async ({ tx, audit }) => {
-    const [row] = await tx
-      .insert(c)
-      .values({ ...companyInput, branchId, createdBy: ctx.actor.userId })
-      .returning();
-    createdId = row!.id;
-    await tx.insert(contacts).values({
-      companyId: row!.id,
-      name: contactName,
-      designation: contactDesignation,
-      phone: contactPhone,
-      email: contactEmail,
-      isPrimary: true,
-      sortOrder: 0,
+  try {
+    await runCommand(ctx, async ({ tx, audit }) => {
+      // Re-check inside the transaction: a live company with this NTN may have
+      // appeared after the read above (see assertNtnFree).
+      await assertNtnFree(tx, companyInput.ntn);
+      const [row] = await tx
+        .insert(c)
+        .values({ ...companyInput, branchId, createdBy: ctx.actor.userId })
+        .returning();
+      createdId = row!.id;
+      await tx.insert(contacts).values({
+        companyId: row!.id,
+        name: contactName,
+        designation: contactDesignation,
+        phone: contactPhone,
+        email: contactEmail,
+        isPrimary: true,
+        sortOrder: 0,
+      });
+      audit({
+        action: 'company.register',
+        entityType: 'company',
+        entityId: row!.id,
+        branchId,
+        after: { ...input, branchId },
+        metadata: { onboardedBy: ctx.actor.userId, visitDate, agreed },
+      });
     });
-    audit({
-      action: 'company.register',
-      entityType: 'company',
-      entityId: row!.id,
-      branchId,
-      after: { ...input, branchId },
-      metadata: { onboardedBy: ctx.actor.userId, visitDate, agreed },
-    });
-  });
+  } catch (error) {
+    if (isUniqueViolation(error, ACTIVE_NTN_CONSTRAINT)) throw ntnTaken();
+    throw error;
+  }
 
   const [row] = await db.select().from(c).where(eq(c.id, createdId!));
   const view = await buildCompanyView(db, row!);
@@ -653,7 +694,7 @@ export async function markCompanyRegistrationVerifiedSigned(
       });
     });
   } catch (error) {
-    if (isUniqueViolation(error, 'companies_ntn_active_uq')) {
+    if (isUniqueViolation(error, ACTIVE_NTN_CONSTRAINT)) {
       throw new ConflictError(
         'A company with this NTN is already registered with Saylani Job Bank.',
         { reason: 'NTN_TAKEN' },
@@ -675,21 +716,30 @@ export async function correctCompanyDetails(
   if (Object.keys(changes).length === 0) {
     throw new ValidationError([{ path: 'root', message: 'Change at least one field' }]);
   }
-  await runCommand(ctx, async ({ tx, audit }) => {
-    const row = await loadCompany(tx, companyId, { forUpdate: true });
-    const before = Object.fromEntries(
-      Object.keys(changes).map((k) => [k, row[k as keyof typeof row]]),
-    );
-    await tx.update(c).set(changes).where(eq(c.id, row.id));
-    audit({
-      action: 'company.correct',
-      entityType: 'company',
-      entityId: row.id,
-      branchId: row.branchId,
-      before,
-      after: changes,
-      metadata: { reason },
+  try {
+    await runCommand(ctx, async ({ tx, audit }) => {
+      const row = await loadCompany(tx, companyId, { forUpdate: true });
+      // A corrected NTN must not collide with another live company (see
+      // assertNtnFree). Previously there was no check here at all: the update
+      // hit the partial index and failed with a raw 500 instead of a 409.
+      if (changes.ntn) await assertNtnFree(tx, changes.ntn, row.id);
+      const before = Object.fromEntries(
+        Object.keys(changes).map((k) => [k, row[k as keyof typeof row]]),
+      );
+      await tx.update(c).set(changes).where(eq(c.id, row.id));
+      audit({
+        action: 'company.correct',
+        entityType: 'company',
+        entityId: row.id,
+        branchId: row.branchId,
+        before,
+        after: changes,
+        metadata: { reason },
+      });
     });
-  });
+  } catch (error) {
+    if (isUniqueViolation(error, ACTIVE_NTN_CONSTRAINT)) throw ntnTaken();
+    throw error;
+  }
   return getCompanyDetail(ctx.actor, companyId);
 }

@@ -9,7 +9,12 @@ import {
   ValidationError,
 } from '@/domains/shared/errors';
 import { enforceRateLimit } from '@/domains/shared/rate-limit';
-import { assertBranchAccess, assertPermission, type Actor } from '@/domains/shared/scope';
+import {
+  assertBranchAccess,
+  assertPermission,
+  isSuperAdmin,
+  type Actor,
+} from '@/domains/shared/scope';
 import { db, type DbExecutor } from '@/lib/db';
 import {
   assertUploadAllowed,
@@ -32,6 +37,7 @@ import {
   type CompanyView,
   type SignedIn,
 } from './repository';
+import { getCompanyOnboarding } from './staff';
 
 const MB = 1024 * 1024;
 const VIEW_LINK_SECONDS = 120;
@@ -50,15 +56,16 @@ function assertDocumentEditable(row: CompanyRow): void {
 }
 
 /**
- * Step 1: checks file against the document type's rules, creates a PENDING_UPLOAD row,
- * returns a presigned PUT the browser sends the file straight to.
+ * Step 1 (shared): checks file against the document type's rules, creates a
+ * PENDING_UPLOAD row, returns a presigned PUT the browser sends the file straight to.
+ * Used by the employer's own upload and by the staff upload for onboarded companies —
+ * the type allowlist, size limits, content-type locking and rate limit are identical.
  */
-export async function presignMyCompanyDocument(
+async function presignDocumentForCompany(
   ctx: SignedIn,
+  row: CompanyRow,
   input: CompanyPresignInput,
 ): Promise<PresignedCompanyDocument> {
-  assertPermission(ctx.actor, 'company:register');
-  const row = await requireOwnCompany(db, ctx.actor);
   if (!row.branchId) {
     throw new ConflictError('Set your head office location and branch before uploading documents');
   }
@@ -116,6 +123,16 @@ export async function presignMyCompanyDocument(
   return { documentId, upload };
 }
 
+/** Step 1 for the employer: presign an upload for their own company. */
+export async function presignMyCompanyDocument(
+  ctx: SignedIn,
+  input: CompanyPresignInput,
+): Promise<PresignedCompanyDocument> {
+  assertPermission(ctx.actor, 'company:register');
+  const row = await requireOwnCompany(db, ctx.actor);
+  return presignDocumentForCompany(ctx, row, input);
+}
+
 async function ownDocument(executor: DbExecutor, row: CompanyRow, documentId: string) {
   const [doc] = await executor
     .select()
@@ -126,15 +143,16 @@ async function ownDocument(executor: DbExecutor, row: CompanyRow, documentId: st
 }
 
 /**
- * Step 2: browser finished the PUT. Verify what actually landed in storage, scan for
- * malware, then make it the current document of its type (superseding earlier uploads).
+ * Step 2 (shared): browser finished the PUT. Verify what actually landed in storage,
+ * scan for malware, then make it the current document of its type (superseding earlier
+ * uploads). Used by the employer's own upload and by the staff upload for onboarded
+ * companies — storage check, scan handling, supersede and audit are identical.
  */
-export async function confirmMyCompanyDocument(
+async function confirmDocumentForCompany(
   ctx: SignedIn,
+  row: CompanyRow,
   documentId: string,
 ): Promise<CompanyView> {
-  assertPermission(ctx.actor, 'company:register');
-  const row = await requireOwnCompany(db, ctx.actor);
   const doc = await ownDocument(db, row, documentId);
   if (doc.status !== 'PENDING_UPLOAD') return buildCompanyView(db, row);
   assertDocumentEditable(row);
@@ -197,7 +215,78 @@ export async function confirmMyCompanyDocument(
   if (scan === 'infected') {
     throw new ConflictError('This file failed a virus check and was not saved.');
   }
-  return buildCompanyView(db, await requireOwnCompany(db, ctx.actor));
+  return buildCompanyView(db, await loadCompany(db, row.id));
+}
+
+/** Step 2 for the employer: confirm an upload for their own company. */
+export async function confirmMyCompanyDocument(
+  ctx: SignedIn,
+  documentId: string,
+): Promise<CompanyView> {
+  assertPermission(ctx.actor, 'company:register');
+  const row = await requireOwnCompany(db, ctx.actor);
+  return confirmDocumentForCompany(ctx, row, documentId);
+}
+
+// ─── Staff upload (F1) ─────────────────────────────────────────────────
+
+/**
+ * Gate for the staff upload path. A company qualifies only when staff onboarded it
+ * after a field visit — the outreach record is the marker (see getCompanyOnboarding,
+ * the same detector markCompanyRegistrationVerifiedSigned uses): employer
+ * self-registered companies and legacy staff-registered companies carry no visit /
+ * agreement record and are rejected here. Uploads happen while the company is still
+ * a DRAFT, i.e. before the paper form is marked verified & signed; once the company
+ * is with the verifier, documents are the verifier's to review, not staff's to
+ * change. Branch scope matches staffOnboardCompany / markCompanyRegistrationVerifiedSigned:
+ * Super Admin bypasses it, everyone else must be in the company's branch.
+ */
+async function loadStaffOnboardedCompany(ctx: SignedIn, companyId: string): Promise<CompanyRow> {
+  assertPermission(ctx.actor, 'company:onboard');
+  const row = await loadCompany(db, companyId);
+  if (!isSuperAdmin(ctx.actor)) {
+    assertBranchAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
+  }
+  const onboarding = await getCompanyOnboarding(ctx.actor, companyId);
+  if (!onboarding) {
+    throw new ForbiddenError(
+      'Documents for this company can only be uploaded by the employer who registered it.',
+    );
+  }
+  if (row.status !== 'DRAFT') {
+    throw new ConflictError(
+      'Documents can only be uploaded while the company is still a draft. Once it is with the verifier, only the verifier can review the documents.',
+    );
+  }
+  return row;
+}
+
+/**
+ * Step 1 (staff): presign an upload for a staff-onboarded DRAFT company.
+ * Same pipeline as the employer path — type allowlist, size limits, content-type
+ * locking and the per-company rate limit are identical.
+ */
+export async function presignStaffCompanyDocument(
+  ctx: SignedIn,
+  companyId: string,
+  input: CompanyPresignInput,
+): Promise<PresignedCompanyDocument> {
+  const row = await loadStaffOnboardedCompany(ctx, companyId);
+  return presignDocumentForCompany(ctx, row, input);
+}
+
+/**
+ * Step 2 (staff): confirm an upload for a staff-onboarded DRAFT company.
+ * Same pipeline as the employer path — storage check, malware scan, supersede of
+ * earlier uploads of the same type, and the same audit entries.
+ */
+export async function confirmStaffCompanyDocument(
+  ctx: SignedIn,
+  companyId: string,
+  documentId: string,
+): Promise<CompanyView> {
+  const row = await loadStaffOnboardedCompany(ctx, companyId);
+  return confirmDocumentForCompany(ctx, row, documentId);
 }
 
 /** Remove (supersede) a document. Required documents can only be replaced, not removed. */

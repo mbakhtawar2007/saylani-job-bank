@@ -31,6 +31,7 @@ import {
   buildProfile,
   cert,
   cnicOwner,
+  completenessFor,
   edu,
   exp,
   findApplicantForUser,
@@ -461,9 +462,12 @@ export async function setMyStatus(
   await runCommand(ctx, async ({ tx, audit }) => {
     const row = await requireOwnApplicant(tx, ctx.actor, { forUpdate: true });
     const event = status === 'INACTIVE' ? 'DEACTIVATE' : 'REACTIVATE';
-    const to = applicantMachine.transition(row.status, event, { activationMissing: [] }, [
-      'APPLICANT',
-    ]);
+    // REACTIVATE re-checks completeness (the machine guards it): a profile that
+    // lost its documents or location while inactive must not come back ACTIVE
+    // and matchable. DEACTIVATE needs no such check, so it is not computed.
+    const activationMissing =
+      event === 'REACTIVATE' ? (await completenessFor(tx, row)).activationMissing : [];
+    const to = applicantMachine.transition(row.status, event, { activationMissing }, ['APPLICANT']);
     await tx.update(a).set({ status: to, statusReason: null }).where(eq(a.id, row.id));
     audit({
       action: status === 'INACTIVE' ? 'applicant.deactivate' : 'applicant.reactivate',

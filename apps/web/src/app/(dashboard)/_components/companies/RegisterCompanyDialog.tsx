@@ -11,13 +11,19 @@ import { Building2 } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import type { FormEvent } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Select, Textarea } from '@/components/atoms';
 import type { SelectOption } from '@/components/atoms';
 import { FormField, Modal } from '@/components/molecules';
 import type { CompanyOnboarding, CompanyView } from '@/domains/company';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import { errorMessage, toFieldErrors, zodFieldErrors, type FieldErrors } from '../applicants/form';
+import {
+  FormErrorSummary,
+  fieldControlId,
+  humanizeFieldKey,
+  useFocusFieldErrors,
+} from '../FormErrorSummary';
 import { CompanyRegistrationFormPrint } from './CompanyRegistrationFormPrint';
 
 interface MasterDataOption {
@@ -45,6 +51,40 @@ const STRUCTURE_OPTIONS = LEGAL_STRUCTURES.map((v) => ({
 }));
 const SIZE_OPTIONS = COMPANY_SIZE_BANDS.map((v) => ({ value: v, label: COMPANY_SIZE_LABELS[v] }));
 
+/** Visible labels for error keys, used by the error summary. */
+const COMPANY_FIELD_LABELS: Record<string, string> = {
+  branchId: 'Branch',
+  legalName: 'Legal name',
+  tradeName: 'Trading name',
+  legalStructure: 'Legal structure',
+  ntn: 'NTN',
+  registrationNo: 'Registration No.',
+  industryCode: 'Industry',
+  sizeBand: 'Company size',
+  website: 'Website',
+  description: 'Description',
+  contactName: 'Contact person',
+  contactDesignation: 'Designation',
+  contactPhone: 'Phone',
+  contactEmail: 'Email',
+  visitDate: 'Visit date',
+  agreed: 'Company agreed to work with us',
+  headOfficeAddress: 'Head-office address',
+  otherSites: 'Other sites',
+  workforceRoles: 'Roles to hire for',
+  workforceType: 'Type of work',
+  workforceShifts: 'Shifts / timings',
+  workforceOpenings: 'Number of openings',
+  yearsInBusiness: 'Years in business',
+  certifications: 'Certifications',
+  previousHiring: 'Previous hiring experience',
+  additionalNotes: 'Additional details / assessment notes',
+};
+
+function companyFieldLabel(key: string): string {
+  return COMPANY_FIELD_LABELS[key] ?? humanizeFieldKey(key);
+}
+
 export function RegisterCompanyDialog({ branches, placement = 'default' }: Props) {
   const router = useRouter();
   const pathname = usePathname();
@@ -53,6 +93,8 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [alert, setAlert] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, alert);
   const [company, setCompany] = useState<OnboardedCompany | null>(null);
   const [printReady, setPrintReady] = useState(false);
   const [verifiedSigned, setVerifiedSigned] = useState(false);
@@ -158,6 +200,7 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
     const parsed = staffOnboardCompanySchema.safeParse(form);
     if (!parsed.success) {
       setErrors(zodFieldErrors(parsed.error));
+      requestErrorFocus();
       return;
     }
     setErrors({});
@@ -175,8 +218,12 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
     } catch (error) {
       if (error instanceof ApiClientError && error.issues.length > 0) {
         setErrors(toFieldErrors(error.issues));
+        requestErrorFocus();
       } else {
+        // A non-field server error supersedes any stale field errors.
+        setErrors({});
         setAlert(errorMessage(error));
+        requestAlertFocus();
       }
     } finally {
       setLoading(false);
@@ -237,7 +284,7 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
           </Button>
         }
       >
-        <form className="grid gap-5" onSubmit={submit} noValidate>
+        <form className="grid gap-5" onSubmit={submit} noValidate ref={formRef}>
           {alert && (
             <p
               role="alert"
@@ -248,7 +295,12 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
           )}
           {loadingOptions && <p className="text-fg-muted text-sm">Loading options…</p>}
           {branches.length > 1 && (
-            <FormField label="Branch" required error={errors.branchId}>
+            <FormField
+              label="Branch"
+              required
+              error={errors.branchId}
+              id={fieldControlId('branchId')}
+            >
               <Select
                 value={form.branchId}
                 onChange={(event) => updateForm({ branchId: event.target.value })}
@@ -261,21 +313,35 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
           <section className="grid gap-3">
             <h2 className="text-fg border-b pb-2 font-semibold">1. Company details</h2>
             <div className="grid gap-3 sm:grid-cols-2">
-              <FormField label="Legal name" required error={errors.legalName}>
+              <FormField
+                label="Legal name"
+                required
+                error={errors.legalName}
+                id={fieldControlId('legalName')}
+              >
                 <Input
                   value={form.legalName}
                   onChange={(e) => updateForm({ legalName: e.target.value })}
                   placeholder="Registered company name"
                 />
               </FormField>
-              <FormField label="Trading name" error={errors.tradeName}>
+              <FormField
+                label="Trading name"
+                error={errors.tradeName}
+                id={fieldControlId('tradeName')}
+              >
                 <Input
                   value={form.tradeName}
                   onChange={(e) => updateForm({ tradeName: e.target.value })}
                   placeholder="If different from legal name"
                 />
               </FormField>
-              <FormField label="Legal structure" required error={errors.legalStructure}>
+              <FormField
+                label="Legal structure"
+                required
+                error={errors.legalStructure}
+                id={fieldControlId('legalStructure')}
+              >
                 <Select
                   value={form.legalStructure}
                   onChange={(e) => updateForm({ legalStructure: e.target.value })}
@@ -283,21 +349,30 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
                   options={STRUCTURE_OPTIONS}
                 />
               </FormField>
-              <FormField label="NTN" required error={errors.ntn}>
+              <FormField label="NTN" required error={errors.ntn} id={fieldControlId('ntn')}>
                 <Input
                   value={form.ntn}
                   onChange={(e) => updateForm({ ntn: e.target.value })}
                   placeholder="e.g. 1234567-8"
                 />
               </FormField>
-              <FormField label="Registration No." error={errors.registrationNo}>
+              <FormField
+                label="Registration No."
+                error={errors.registrationNo}
+                id={fieldControlId('registrationNo')}
+              >
                 <Input
                   value={form.registrationNo}
                   onChange={(e) => updateForm({ registrationNo: e.target.value })}
                   placeholder="Optional"
                 />
               </FormField>
-              <FormField label="Industry" required error={errors.industryCode}>
+              <FormField
+                label="Industry"
+                required
+                error={errors.industryCode}
+                id={fieldControlId('industryCode')}
+              >
                 <Select
                   value={form.industryCode}
                   onChange={(e) => updateForm({ industryCode: e.target.value })}
@@ -305,7 +380,12 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
                   options={industryOptions}
                 />
               </FormField>
-              <FormField label="Company size" required error={errors.sizeBand}>
+              <FormField
+                label="Company size"
+                required
+                error={errors.sizeBand}
+                id={fieldControlId('sizeBand')}
+              >
                 <Select
                   value={form.sizeBand}
                   onChange={(e) => updateForm({ sizeBand: e.target.value })}
@@ -313,14 +393,19 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
                   options={SIZE_OPTIONS}
                 />
               </FormField>
-              <FormField label="Website" error={errors.website}>
+              <FormField label="Website" error={errors.website} id={fieldControlId('website')}>
                 <Input
                   value={form.website}
                   onChange={(e) => updateForm({ website: e.target.value })}
                   placeholder="https://example.com"
                 />
               </FormField>
-              <FormField label="Description" error={errors.description} className="sm:col-span-2">
+              <FormField
+                label="Description"
+                error={errors.description}
+                id={fieldControlId('description')}
+                className="sm:col-span-2"
+              >
                 <Textarea
                   value={form.description}
                   onChange={(e) => updateForm({ description: e.target.value })}
@@ -334,7 +419,12 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
           <section className="grid gap-3">
             <h2 className="text-fg border-b pb-2 font-semibold">2. Contact person</h2>
             <div className="grid gap-3 sm:grid-cols-2">
-              <FormField label="Contact person" required error={errors.contactName}>
+              <FormField
+                label="Contact person"
+                required
+                error={errors.contactName}
+                id={fieldControlId('contactName')}
+              >
                 <Input
                   autoComplete="name"
                   value={form.contactName}
@@ -342,14 +432,23 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
                   placeholder="Full name of the person you met"
                 />
               </FormField>
-              <FormField label="Designation" error={errors.contactDesignation}>
+              <FormField
+                label="Designation"
+                error={errors.contactDesignation}
+                id={fieldControlId('contactDesignation')}
+              >
                 <Input
                   value={form.contactDesignation}
                   onChange={(e) => updateForm({ contactDesignation: e.target.value })}
                   placeholder="e.g. HR Manager"
                 />
               </FormField>
-              <FormField label="Phone" required error={errors.contactPhone}>
+              <FormField
+                label="Phone"
+                required
+                error={errors.contactPhone}
+                id={fieldControlId('contactPhone')}
+              >
                 <Input
                   type="tel"
                   autoComplete="tel"
@@ -358,7 +457,11 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
                   placeholder="0300 1234567 or 021 34567890"
                 />
               </FormField>
-              <FormField label="Email" error={errors.contactEmail}>
+              <FormField
+                label="Email"
+                error={errors.contactEmail}
+                id={fieldControlId('contactEmail')}
+              >
                 <Input
                   type="email"
                   autoComplete="email"
@@ -373,7 +476,12 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
           <section className="grid gap-3">
             <h2 className="text-fg border-b pb-2 font-semibold">3. Outreach record</h2>
             <div className="grid gap-3 sm:grid-cols-2">
-              <FormField label="Visit date" required error={errors.visitDate}>
+              <FormField
+                label="Visit date"
+                required
+                error={errors.visitDate}
+                id={fieldControlId('visitDate')}
+              >
                 <Input
                   type="date"
                   max={todayIso()}
@@ -381,7 +489,7 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
                   onChange={(e) => updateForm({ visitDate: e.target.value })}
                 />
               </FormField>
-              <div className="flex items-end pb-1">
+              <div className="flex items-end pb-1" id={fieldControlId('agreed')}>
                 <Checkbox
                   label="Company agreed to work with us"
                   checked={form.agreed}
@@ -401,7 +509,11 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
 
           <section className="grid gap-3">
             <h2 className="text-fg border-b pb-2 font-semibold">4. Address &amp; locations</h2>
-            <FormField label="Head-office address" error={errors.headOfficeAddress}>
+            <FormField
+              label="Head-office address"
+              error={errors.headOfficeAddress}
+              id={fieldControlId('headOfficeAddress')}
+            >
               <Input
                 autoComplete="street-address"
                 value={form.headOfficeAddress}
@@ -409,7 +521,11 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
                 placeholder="Plot / building, street, area, city"
               />
             </FormField>
-            <FormField label="Other sites" error={errors.otherSites}>
+            <FormField
+              label="Other sites"
+              error={errors.otherSites}
+              id={fieldControlId('otherSites')}
+            >
               <Textarea
                 value={form.otherSites}
                 onChange={(e) => updateForm({ otherSites: e.target.value })}
@@ -422,28 +538,44 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
           <section className="grid gap-3">
             <h2 className="text-fg border-b pb-2 font-semibold">5. Workforce needs</h2>
             <div className="grid gap-3 sm:grid-cols-2">
-              <FormField label="Roles to hire for" error={errors.workforceRoles}>
+              <FormField
+                label="Roles to hire for"
+                error={errors.workforceRoles}
+                id={fieldControlId('workforceRoles')}
+              >
                 <Input
                   value={form.workforceRoles}
                   onChange={(e) => updateForm({ workforceRoles: e.target.value })}
                   placeholder="e.g. Machine operators, helpers"
                 />
               </FormField>
-              <FormField label="Type of work" error={errors.workforceType}>
+              <FormField
+                label="Type of work"
+                error={errors.workforceType}
+                id={fieldControlId('workforceType')}
+              >
                 <Input
                   value={form.workforceType}
                   onChange={(e) => updateForm({ workforceType: e.target.value })}
                   placeholder="e.g. Full-time, shift-based"
                 />
               </FormField>
-              <FormField label="Shifts / timings" error={errors.workforceShifts}>
+              <FormField
+                label="Shifts / timings"
+                error={errors.workforceShifts}
+                id={fieldControlId('workforceShifts')}
+              >
                 <Input
                   value={form.workforceShifts}
                   onChange={(e) => updateForm({ workforceShifts: e.target.value })}
                   placeholder="e.g. Day shift, 9am–6pm"
                 />
               </FormField>
-              <FormField label="Number of openings" error={errors.workforceOpenings}>
+              <FormField
+                label="Number of openings"
+                error={errors.workforceOpenings}
+                id={fieldControlId('workforceOpenings')}
+              >
                 <Input
                   value={form.workforceOpenings}
                   onChange={(e) => updateForm({ workforceOpenings: e.target.value })}
@@ -456,14 +588,22 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
           <section className="grid gap-3">
             <h2 className="text-fg border-b pb-2 font-semibold">6. Business background</h2>
             <div className="grid gap-3 sm:grid-cols-2">
-              <FormField label="Years in business" error={errors.yearsInBusiness}>
+              <FormField
+                label="Years in business"
+                error={errors.yearsInBusiness}
+                id={fieldControlId('yearsInBusiness')}
+              >
                 <Input
                   value={form.yearsInBusiness}
                   onChange={(e) => updateForm({ yearsInBusiness: e.target.value })}
                   placeholder="e.g. 5 years"
                 />
               </FormField>
-              <FormField label="Certifications" error={errors.certifications}>
+              <FormField
+                label="Certifications"
+                error={errors.certifications}
+                id={fieldControlId('certifications')}
+              >
                 <Input
                   value={form.certifications}
                   onChange={(e) => updateForm({ certifications: e.target.value })}
@@ -473,6 +613,7 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
               <FormField
                 label="Previous hiring experience"
                 error={errors.previousHiring}
+                id={fieldControlId('previousHiring')}
                 className="sm:col-span-2"
               >
                 <Textarea
@@ -487,7 +628,11 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
 
           <section className="grid gap-3">
             <h2 className="text-fg border-b pb-2 font-semibold">7. Additional information</h2>
-            <FormField label="Additional details / assessment notes" error={errors.additionalNotes}>
+            <FormField
+              label="Additional details / assessment notes"
+              error={errors.additionalNotes}
+              id={fieldControlId('additionalNotes')}
+            >
               <Textarea
                 value={form.additionalNotes}
                 onChange={(e) => updateForm({ additionalNotes: e.target.value })}
@@ -502,6 +647,7 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
               No branch is available for this account.
             </p>
           )}
+          <FormErrorSummary errors={errors} labelFor={companyFieldLabel} />
           <div className="flex justify-end gap-2">
             <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
               Cancel

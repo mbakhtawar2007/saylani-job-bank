@@ -58,6 +58,7 @@ import {
   lng,
   permAddr,
   pref,
+  refreshProfileState,
   skl,
   completenessFor,
   type ApplicantProfile,
@@ -498,11 +499,10 @@ export async function staffRegisterApplicant(
         },
         metadata: { createdBy: ctx.actor.userId },
       });
-      const completeness = await completenessFor(tx, row!);
-      await tx
-        .update(a)
-        .set({ profileCompleteness: completeness.percent })
-        .where(eq(a.id, row!.id));
+      // Recompute completeness and activate a complete profile in the same step:
+      // without this, a complete staff-created profile stayed DRAFT until the
+      // applicant's next self-service edit triggered refreshProfileState.
+      await refreshProfileState(cmd, row!.id);
     });
 
     if (!applicantId) throw new Error('Applicant registration completed without an applicant.');
@@ -550,7 +550,19 @@ export async function staffRegisterApplicant(
   }
 }
 
-/** Records the first-counter paper review without advancing the applicant's DRAFT status. */
+/**
+ * Records the first-counter paper review without advancing the applicant's DRAFT status.
+ *
+ * Deliberate asymmetry with companies, kept as a product decision: for companies the
+ * verified-and-signed mark GATES the next step (markCompanyRegistrationVerifiedSigned
+ * submits the DRAFT to the verifier queue in the same step). For applicants it is
+ * record-only evidence of the paper review — it does NOT gate activation. Applicants
+ * can also self-register and activate on completeness alone (refreshProfileState),
+ * so a blanket verified-signed activation guard would strand every self-service
+ * applicant in DRAFT with no paper form to sign. Nothing in the codebase gates
+ * applicant activation or matching on registrationVerifiedSignedAt; the timestamp
+ * is the audit evidence that the first-counter review happened.
+ */
 export async function markApplicantRegistrationVerifiedSigned(
   ctx: SignedIn,
   applicantId: string,
@@ -865,10 +877,15 @@ export async function staffSetApplicantStatus(
   await runCommand(ctx, async ({ tx, audit }) => {
     const row = await loadApplicant(tx, applicantId, { forUpdate: true });
     const event = input.status === 'INACTIVE' ? 'DEACTIVATE' : 'REACTIVATE';
+    // REACTIVATE re-checks completeness (the machine guards it): a profile that
+    // lost its documents or location while inactive must not come back ACTIVE
+    // and matchable. DEACTIVATE needs no such check, so it is not computed.
+    const activationMissing =
+      event === 'REACTIVATE' ? (await completenessFor(tx, row)).activationMissing : [];
     const to = applicantMachine.transition(
       row.status,
       event,
-      { activationMissing: [] },
+      { activationMissing },
       ctx.actor.roles,
     );
     await tx

@@ -57,6 +57,13 @@ export const applicantMachine = defineMachine<
       event: 'REACTIVATE',
       to: 'ACTIVE',
       actors: ['APPLICANT', 'STAFF', 'BRANCH_ADMIN'],
+      // Same completeness guard as ACTIVATE: a profile whose CNIC documents or
+      // location were deleted (or never completed) while it was inactive must
+      // not come back as matchable. Callers must pass the real activationMissing
+      // from completenessFor — passing [] here would silently skip the guard.
+      guard: ({ activationMissing }) =>
+        activationMissing.length === 0 ||
+        `Complete your ${activationMissing.map((id) => SECTION_NAMES[id]).join(', ')} first`,
     },
   ],
 });

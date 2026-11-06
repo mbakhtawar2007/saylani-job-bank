@@ -15,7 +15,7 @@ import { UserRoundPlus } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import type { FormEvent } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, RadioGroup, Select, Textarea } from '@/components/atoms';
 import type { SelectOption } from '@/components/atoms';
 import { CNICInput, FormField, Modal, PhoneInput } from '@/components/molecules';
@@ -23,6 +23,12 @@ import { MapPinPicker, type LatLng } from '@/components/organisms';
 import type { ApplicantStaffView } from '@/domains/applicant';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import { errorMessage, toFieldErrors, zodFieldErrors, type FieldErrors } from './form';
+import {
+  FormErrorSummary,
+  fieldControlId,
+  humanizeFieldKey,
+  useFocusFieldErrors,
+} from '../FormErrorSummary';
 import { RegistrationFormPrint } from './RegistrationFormPrint';
 
 interface MasterDataOption {
@@ -97,6 +103,86 @@ function toggle<T>(values: T[], value: T, checked: boolean): T[] {
   return checked ? [...new Set([...values, value])] : values.filter((item) => item !== value);
 }
 
+/** Visible labels for scalar error keys, used by the error summary. */
+const APPLICANT_FIELD_LABELS: Record<string, string> = {
+  branchId: 'Branch',
+  fullName: 'Full name',
+  fatherName: "Father's or husband's name",
+  cnic: 'CNIC number',
+  dateOfBirth: 'Date of birth',
+  gender: 'Gender',
+  phone: 'Mobile number',
+  email: 'Email',
+  'address.addressLine': 'Current residential address',
+  'address.cityCode': 'City',
+  'address.areaCode': 'Area of residence',
+  'address.location': 'Current home location on map',
+  'permanentAddress.addressLine': 'Permanent address',
+  'permanentAddress.cityCode': 'Permanent city',
+  'permanentAddress.areaCode': 'Permanent area',
+  additionalNotes: 'Additional notes',
+  'experience.hasNoExperience': 'No previous work experience',
+  'preferences.categoryCodes': 'Preferred work categories / roles',
+  'preferences.minSalaryPkr': 'Minimum monthly salary (PKR)',
+  'preferences.willingRadiusM': 'Travel distance (meters)',
+  'preferences.availableFrom': 'Available from',
+};
+
+const APPLICANT_ITEM_LABELS: Record<string, { section: string; leaves: Record<string, string> }> = {
+  education: {
+    section: 'Education',
+    leaves: {
+      levelCode: 'Education level / qualification',
+      institution: 'Institution',
+      fieldOfStudy: 'Field of study',
+      completionYear: 'Completion year',
+      grade: 'Grade / marks',
+    },
+  },
+  experience: {
+    section: 'Employment',
+    leaves: {
+      employerName: 'Employer / organization',
+      jobTitle: 'Job title / role',
+      categoryCode: 'Work category',
+      startMonth: 'Start month',
+      endMonth: 'End month',
+      description: 'Duties / professional background',
+    },
+  },
+  skills: {
+    section: 'Skill',
+    leaves: {
+      skillCode: 'Skill',
+      level: 'Skill level',
+      years: 'Years of experience',
+    },
+  },
+  certifications: {
+    section: 'Certification',
+    leaves: {
+      name: 'Certification name',
+      issuer: 'Issuing organization',
+      issuedMonth: 'Issued month',
+      expiresMonth: 'Expiry month',
+    },
+  },
+};
+
+function applicantFieldLabel(key: string): string {
+  const exact = APPLICANT_FIELD_LABELS[key];
+  if (exact) return exact;
+  const match = /^(education|experience|skills|certifications)\.items\.(\d+)\.(.+)$/.exec(key);
+  if (match) {
+    const section = match[1] ?? '';
+    const index = Number(match[2] ?? 0) + 1;
+    const leaf = match[3] ?? '';
+    const group = APPLICANT_ITEM_LABELS[section];
+    return `${group?.section ?? section} ${index} — ${group?.leaves[leaf] ?? humanizeFieldKey(leaf)}`;
+  }
+  return humanizeFieldKey(key);
+}
+
 export function RegisterApplicantDialog({ branches, placement = 'default' }: Props) {
   const router = useRouter();
   const pathname = usePathname();
@@ -105,6 +191,8 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [alert, setAlert] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, alert);
   const [applicant, setApplicant] = useState<ApplicantStaffView | null>(null);
   const [printReady, setPrintReady] = useState(false);
   const [verifiedSigned, setVerifiedSigned] = useState(false);
@@ -289,6 +377,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
     const parsed = staffRegisterApplicantSchema.safeParse(payload);
     if (!parsed.success) {
       setErrors(zodFieldErrors(parsed.error));
+      requestErrorFocus();
       return;
     }
     setErrors({});
@@ -306,8 +395,12 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
     } catch (error) {
       if (error instanceof ApiClientError && error.issues.length > 0) {
         setErrors(toFieldErrors(error.issues));
+        requestErrorFocus();
       } else {
+        // A non-field server error supersedes any stale field errors.
+        setErrors({});
         setAlert(errorMessage(error));
+        requestAlertFocus();
       }
     } finally {
       setLoading(false);
@@ -375,7 +468,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
           </Button>
         }
       >
-        <form className="grid gap-5" onSubmit={submit} noValidate>
+        <form className="grid gap-5" onSubmit={submit} noValidate ref={formRef}>
           {alert && (
             <p
               role="alert"
@@ -386,7 +479,12 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
           )}
           {loadingOptions && <p className="text-fg-muted text-sm">Loading profile options…</p>}
           {branches.length > 1 && (
-            <FormField label="Branch" required error={errors.branchId}>
+            <FormField
+              label="Branch"
+              required
+              error={errors.branchId}
+              id={fieldControlId('branchId')}
+            >
               <Select
                 value={form.branchId}
                 onChange={(event) => updateForm({ branchId: event.target.value })}
@@ -399,7 +497,12 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
           <section className="grid gap-3">
             <h2 className="text-fg border-b pb-2 font-semibold">1. Basic personal information</h2>
             <div className="grid gap-3 sm:grid-cols-2">
-              <FormField label="Full name" required error={errors.fullName}>
+              <FormField
+                label="Full name"
+                required
+                error={errors.fullName}
+                id={fieldControlId('fullName')}
+              >
                 <Input
                   autoComplete="name"
                   value={form.fullName}
@@ -421,13 +524,23 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                   }}
                 />
               </FormField>
-              <FormField label="Father's or husband's name" required error={errors.fatherName}>
+              <FormField
+                label="Father's or husband's name"
+                required
+                error={errors.fatherName}
+                id={fieldControlId('fatherName')}
+              >
                 <Input
                   value={form.fatherName}
                   onChange={(e) => updateForm({ fatherName: e.target.value })}
                 />
               </FormField>
-              <FormField label="CNIC number" required error={errors.cnic}>
+              <FormField
+                label="CNIC number"
+                required
+                error={errors.cnic}
+                id={fieldControlId('cnic')}
+              >
                 <CNICInput
                   value={form.cnic}
                   onChange={(cnic) => updateForm({ cnic: cnic.digits })}
@@ -437,6 +550,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                 label="Date of birth"
                 required
                 error={errors.dateOfBirth}
+                id={fieldControlId('dateOfBirth')}
                 hint={`The applicant must be at least ${MIN_APPLICANT_AGE}.`}
               >
                 <Input
@@ -447,7 +561,13 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                   onChange={(e) => updateForm({ dateOfBirth: e.target.value })}
                 />
               </FormField>
-              <FormField label="Gender" required error={errors.gender} className="sm:col-span-2">
+              <FormField
+                label="Gender"
+                required
+                error={errors.gender}
+                id={fieldControlId('gender')}
+                className="sm:col-span-2"
+              >
                 <RadioGroup
                   aria-label="Gender"
                   orientation="horizontal"
@@ -459,14 +579,19 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                   }))}
                 />
               </FormField>
-              <FormField label="Mobile number" required error={errors.phone}>
+              <FormField
+                label="Mobile number"
+                required
+                error={errors.phone}
+                id={fieldControlId('phone')}
+              >
                 <PhoneInput
                   aria-label="Mobile number"
                   value={form.phone}
                   onChange={(value) => updateForm({ phone: value.e164 ?? value.national })}
                 />
               </FormField>
-              <FormField label="Email" error={errors.email}>
+              <FormField label="Email" error={errors.email} id={fieldControlId('email')}>
                 <Input
                   type="email"
                   autoComplete="email"
@@ -484,6 +609,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                 <FormField
                   label="Education level / qualification"
                   error={errors[`education.items.${index}.levelCode`]}
+                  id={fieldControlId(`education.items.${index}.levelCode`)}
                 >
                   <Select
                     value={item.levelCode}
@@ -498,7 +624,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                     options={educationOptions}
                   />
                 </FormField>
-                <FormField label="Field of study">
+                <FormField
+                  label="Field of study"
+                  error={errors[`education.items.${index}.fieldOfStudy`]}
+                  id={fieldControlId(`education.items.${index}.fieldOfStudy`)}
+                >
                   <Input
                     value={item.fieldOfStudy}
                     onChange={(e) =>
@@ -510,7 +640,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                     }
                   />
                 </FormField>
-                <FormField label="Institution">
+                <FormField
+                  label="Institution"
+                  error={errors[`education.items.${index}.institution`]}
+                  id={fieldControlId(`education.items.${index}.institution`)}
+                >
                   <Input
                     value={item.institution}
                     onChange={(e) =>
@@ -522,7 +656,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                     }
                   />
                 </FormField>
-                <FormField label="Completion year">
+                <FormField
+                  label="Completion year"
+                  error={errors[`education.items.${index}.completionYear`]}
+                  id={fieldControlId(`education.items.${index}.completionYear`)}
+                >
                   <Input
                     type="number"
                     min={1950}
@@ -537,7 +675,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                     }
                   />
                 </FormField>
-                <FormField label="Grade / marks">
+                <FormField
+                  label="Grade / marks"
+                  error={errors[`education.items.${index}.grade`]}
+                  id={fieldControlId(`education.items.${index}.grade`)}
+                >
                   <Input
                     value={item.grade}
                     onChange={(e) =>
@@ -582,7 +724,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
             <h3 className="font-medium">Certifications</h3>
             {certifications.map((item, index) => (
               <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2" key={index}>
-                <FormField label="Certification name">
+                <FormField
+                  label="Certification name"
+                  error={errors[`certifications.items.${index}.name`]}
+                  id={fieldControlId(`certifications.items.${index}.name`)}
+                >
                   <Input
                     value={item.name}
                     onChange={(e) =>
@@ -594,7 +740,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                     }
                   />
                 </FormField>
-                <FormField label="Issuing organization">
+                <FormField
+                  label="Issuing organization"
+                  error={errors[`certifications.items.${index}.issuer`]}
+                  id={fieldControlId(`certifications.items.${index}.issuer`)}
+                >
                   <Input
                     value={item.issuer}
                     onChange={(e) =>
@@ -606,7 +756,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                     }
                   />
                 </FormField>
-                <FormField label="Issued month">
+                <FormField
+                  label="Issued month"
+                  error={errors[`certifications.items.${index}.issuedMonth`]}
+                  id={fieldControlId(`certifications.items.${index}.issuedMonth`)}
+                >
                   <Input
                     type="month"
                     value={item.issuedMonth}
@@ -619,7 +773,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                     }
                   />
                 </FormField>
-                <FormField label="Expiry month">
+                <FormField
+                  label="Expiry month"
+                  error={errors[`certifications.items.${index}.expiresMonth`]}
+                  id={fieldControlId(`certifications.items.${index}.expiresMonth`)}
+                >
                   <Input
                     type="month"
                     value={item.expiresMonth}
@@ -655,15 +813,26 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
 
           <section className="grid gap-3">
             <h2 className="text-fg border-b pb-2 font-semibold">3. Work experience and skills</h2>
-            <Checkbox
-              label="No previous work experience"
-              checked={hasNoExperience}
-              onCheckedChange={(checked) => setHasNoExperience(checked === true)}
-            />
+            <div id={fieldControlId('experience.hasNoExperience')}>
+              <Checkbox
+                label="No previous work experience"
+                checked={hasNoExperience}
+                onCheckedChange={(checked) => setHasNoExperience(checked === true)}
+              />
+              {errors['experience.hasNoExperience'] && (
+                <p role="alert" className="text-danger mt-1.5 text-sm">
+                  {errors['experience.hasNoExperience']}
+                </p>
+              )}
+            </div>
             {!hasNoExperience &&
               experience.map((item, index) => (
                 <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2" key={index}>
-                  <FormField label="Employer / organization">
+                  <FormField
+                    label="Employer / organization"
+                    error={errors[`experience.items.${index}.employerName`]}
+                    id={fieldControlId(`experience.items.${index}.employerName`)}
+                  >
                     <Input
                       value={item.employerName}
                       onChange={(e) =>
@@ -675,7 +844,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                       }
                     />
                   </FormField>
-                  <FormField label="Job title / role">
+                  <FormField
+                    label="Job title / role"
+                    error={errors[`experience.items.${index}.jobTitle`]}
+                    id={fieldControlId(`experience.items.${index}.jobTitle`)}
+                  >
                     <Input
                       value={item.jobTitle}
                       onChange={(e) =>
@@ -687,7 +860,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                       }
                     />
                   </FormField>
-                  <FormField label="Work category">
+                  <FormField
+                    label="Work category"
+                    error={errors[`experience.items.${index}.categoryCode`]}
+                    id={fieldControlId(`experience.items.${index}.categoryCode`)}
+                  >
                     <Select
                       value={item.categoryCode}
                       onChange={(e) =>
@@ -701,7 +878,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                       options={categoryOptions}
                     />
                   </FormField>
-                  <FormField label="Start month">
+                  <FormField
+                    label="Start month"
+                    error={errors[`experience.items.${index}.startMonth`]}
+                    id={fieldControlId(`experience.items.${index}.startMonth`)}
+                  >
                     <Input
                       type="month"
                       value={item.startMonth}
@@ -714,7 +895,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                       }
                     />
                   </FormField>
-                  <FormField label="End month">
+                  <FormField
+                    label="End month"
+                    error={errors[`experience.items.${index}.endMonth`]}
+                    id={fieldControlId(`experience.items.${index}.endMonth`)}
+                  >
                     <Input
                       type="month"
                       value={item.endMonth}
@@ -739,7 +924,12 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                       )
                     }
                   />
-                  <FormField label="Duties / professional background" className="sm:col-span-2">
+                  <FormField
+                    label="Duties / professional background"
+                    className="sm:col-span-2"
+                    error={errors[`experience.items.${index}.description`]}
+                    id={fieldControlId(`experience.items.${index}.description`)}
+                  >
                     <Input
                       value={item.description}
                       onChange={(e) =>
@@ -775,7 +965,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
             <h3 className="font-medium">Skills</h3>
             {skills.map((item, index) => (
               <div className="grid gap-3 sm:grid-cols-3" key={index}>
-                <FormField label="Skill">
+                <FormField
+                  label="Skill"
+                  error={errors[`skills.items.${index}.skillCode`]}
+                  id={fieldControlId(`skills.items.${index}.skillCode`)}
+                >
                   <Input
                     value={item.skillCode}
                     onChange={(e) =>
@@ -787,7 +981,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                     }
                   />
                 </FormField>
-                <FormField label="Skill level">
+                <FormField
+                  label="Skill level"
+                  error={errors[`skills.items.${index}.level`]}
+                  id={fieldControlId(`skills.items.${index}.level`)}
+                >
                   <Select
                     value={item.level}
                     onChange={(e) =>
@@ -804,7 +1002,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                     ]}
                   />
                 </FormField>
-                <FormField label="Years of experience">
+                <FormField
+                  label="Years of experience"
+                  error={errors[`skills.items.${index}.years`]}
+                  id={fieldControlId(`skills.items.${index}.years`)}
+                >
                   <Input
                     type="number"
                     min={0}
@@ -846,7 +1048,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
             <h2 className="text-fg border-b pb-2 font-semibold">
               4. Work availability and preferences
             </h2>
-            <fieldset className="grid gap-3">
+            <fieldset className="grid gap-3" id={fieldControlId('preferences.categoryCodes')}>
               <legend className="text-sm font-medium">Preferred work categories / roles</legend>
               <div className="grid gap-2 sm:grid-cols-2">
                 {jobCategories.map((item) => (
@@ -860,6 +1062,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                   />
                 ))}
               </div>
+              {errors['preferences.categoryCodes'] && (
+                <p role="alert" className="text-danger text-sm">
+                  {errors['preferences.categoryCodes']}
+                </p>
+              )}
             </fieldset>
             <fieldset className="grid gap-3">
               <legend className="text-sm font-medium">Preferred shifts</legend>
@@ -892,7 +1099,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
               </div>
             </fieldset>
             <div className="grid gap-3 sm:grid-cols-3">
-              <FormField label="Minimum monthly salary (PKR)">
+              <FormField
+                label="Minimum monthly salary (PKR)"
+                error={errors['preferences.minSalaryPkr']}
+                id={fieldControlId('preferences.minSalaryPkr')}
+              >
                 <Input
                   type="number"
                   min={0}
@@ -902,7 +1113,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                   }
                 />
               </FormField>
-              <FormField label="Travel distance (meters)">
+              <FormField
+                label="Travel distance (meters)"
+                error={errors['preferences.willingRadiusM']}
+                id={fieldControlId('preferences.willingRadiusM')}
+              >
                 <Input
                   type="number"
                   min={1000}
@@ -914,7 +1129,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                   }
                 />
               </FormField>
-              <FormField label="Available from">
+              <FormField
+                label="Available from"
+                error={errors['preferences.availableFrom']}
+                id={fieldControlId('preferences.availableFrom')}
+              >
                 <Input
                   type="date"
                   value={preference.availableFrom}
@@ -941,7 +1160,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                 }
               }}
             />
-            <FormField label="Current residential address">
+            <FormField
+              label="Current residential address"
+              error={errors['address.addressLine']}
+              id={fieldControlId('address.addressLine')}
+            >
               <Input
                 autoComplete="street-address"
                 value={address.addressLine}
@@ -952,7 +1175,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
               />
             </FormField>
             <div className="grid gap-3 sm:grid-cols-2">
-              <FormField label="City">
+              <FormField
+                label="City"
+                error={errors['address.cityCode']}
+                id={fieldControlId('address.cityCode')}
+              >
                 <Select
                   value={address.cityCode}
                   onChange={(e) =>
@@ -967,7 +1194,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                   disabled={sameAddress}
                 />
               </FormField>
-              <FormField label="Area of residence">
+              <FormField
+                label="Area of residence"
+                error={errors['address.areaCode']}
+                id={fieldControlId('address.areaCode')}
+              >
                 <Select
                   value={address.areaCode}
                   onChange={(e) =>
@@ -989,14 +1220,22 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                   height="14rem"
                 />
                 {errors['address.location'] && (
-                  <p role="alert" className="text-danger text-sm">
+                  <p
+                    role="alert"
+                    id={fieldControlId('address.location')}
+                    className="text-danger text-sm"
+                  >
                     {errors['address.location']}
                   </p>
                 )}
               </>
             )}
             <p className="text-sm font-medium">Permanent address</p>
-            <FormField label="Permanent address" error={errors['permanentAddress.addressLine']}>
+            <FormField
+              label="Permanent address"
+              error={errors['permanentAddress.addressLine']}
+              id={fieldControlId('permanentAddress.addressLine')}
+            >
               <Input
                 autoComplete="street-address"
                 value={permanentAddress.addressLine}
@@ -1005,7 +1244,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
               />
             </FormField>
             <div className="grid gap-3 sm:grid-cols-2">
-              <FormField label="Permanent city" error={errors['permanentAddress.cityCode']}>
+              <FormField
+                label="Permanent city"
+                error={errors['permanentAddress.cityCode']}
+                id={fieldControlId('permanentAddress.cityCode')}
+              >
                 <Select
                   value={permanentAddress.cityCode}
                   onChange={(event) =>
@@ -1015,7 +1258,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                   placeholder="Choose a city"
                 />
               </FormField>
-              <FormField label="Permanent area" error={errors['permanentAddress.areaCode']}>
+              <FormField
+                label="Permanent area"
+                error={errors['permanentAddress.areaCode']}
+                id={fieldControlId('permanentAddress.areaCode')}
+              >
                 <Select
                   value={permanentAddress.areaCode}
                   onChange={(event) => updatePermanentAddress({ areaCode: event.target.value })}
@@ -1034,7 +1281,11 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
             <h2 className="text-fg border-b pb-2 font-semibold">
               6. Additional relevant information
             </h2>
-            <FormField label="Additional notes" error={errors.additionalNotes}>
+            <FormField
+              label="Additional notes"
+              error={errors.additionalNotes}
+              id={fieldControlId('additionalNotes')}
+            >
               <Textarea
                 value={additionalNotes}
                 onChange={(event) => setAdditionalNotes(event.target.value)}
@@ -1049,6 +1300,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
               No branch is available for this account.
             </p>
           )}
+          <FormErrorSummary errors={errors} labelFor={applicantFieldLabel} />
           <div className="flex justify-end gap-2">
             <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
               Cancel

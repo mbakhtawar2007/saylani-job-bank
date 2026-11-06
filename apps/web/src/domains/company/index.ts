@@ -3,8 +3,10 @@ import './events';
 
 export {
   confirmMyCompanyDocument,
+  confirmStaffCompanyDocument,
   myCompanyDocumentLink,
   presignMyCompanyDocument,
+  presignStaffCompanyDocument,
   removeMyCompanyDocument,
   staffCompanyDocumentLink,
   type DocumentLink,

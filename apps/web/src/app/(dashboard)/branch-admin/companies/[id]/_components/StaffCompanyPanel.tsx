@@ -10,6 +10,7 @@ import { Badge, Button, StatusPill, Textarea } from '@/components/atoms';
 import { FormField, KeyValue } from '@/components/molecules';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import { formatDate } from '@/lib/format/date';
+import { putWithProgress } from '@/lib/upload/put-with-progress';
 import type { CompanyOnboarding, CompanyView } from '@/domains/company';
 import { CompanyRegistrationFormPrint } from '@/app/(dashboard)/_components/companies/CompanyRegistrationFormPrint';
 
@@ -61,6 +62,12 @@ export function StaffCompanyPanel({
   const [printReady, setPrintReady] = useState(false);
   const [verifiedSigned, setVerifiedSigned] = useState(
     Boolean(company.registrationVerifiedSignedAt),
+  );
+  const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
+  // Staff upload (F1): only for a staff-onboarded DRAFT that has not been marked
+  // verified & signed yet — the same condition as the verified-signed button.
+  const canUploadDocs = Boolean(
+    canOnboard && onboarding && company_.status === 'DRAFT' && !verifiedSigned,
   );
   const [industries, setIndustries] = useState<MasterDataOption[]>([]);
 
@@ -116,6 +123,36 @@ export function StaffCompanyPanel({
       window.open(data.url, '_blank');
     } catch {
       setError('Could not get document link.');
+    }
+  }
+
+  /**
+   * Staff document upload: presign → PUT straight to storage (with the signed
+   * headers) → confirm. Size and type are enforced server-side by the presign
+   * step; a rejected file surfaces the server's message in the panel error banner.
+   * Uploading a file of a type that already has one replaces it on confirm.
+   */
+  async function uploadDocument(typeCode: string, file: File) {
+    setUploadingDoc(typeCode);
+    setError(null);
+    try {
+      const { data: presign } = await apiFetch<{
+        documentId: string;
+        upload: { url: string; headers: Record<string, string> };
+      }>(`/api/v1/companies/${company_.id}/documents`, {
+        method: 'POST',
+        body: { typeCode, fileName: file.name, contentType: file.type, sizeBytes: file.size },
+      });
+      await putWithProgress({ url: presign.upload.url, file, headers: presign.upload.headers });
+      const { data: saved } = await apiFetch<CompanyView>(
+        `/api/v1/companies/${company_.id}/documents/${presign.documentId}/confirm`,
+        { method: 'POST' },
+      );
+      setCompany_(saved);
+    } catch (err) {
+      setError(err instanceof ApiClientError ? err.message : 'Upload failed. Please try again.');
+    } finally {
+      setUploadingDoc(null);
     }
   }
 
@@ -331,32 +368,123 @@ export function StaffCompanyPanel({
         )}
       </section>
 
-      {company_.documents.length > 0 && (
+      {(company_.documents.length > 0 || canUploadDocs) && (
         <section className="border-border bg-surface grid gap-4 rounded-xl border p-5">
           <h2 className="text-fg font-semibold">Documents</h2>
-          <div className="grid gap-3">
-            {company_.documents.map((doc) => (
-              <div key={doc.id} className="flex items-center justify-between gap-3">
-                <div className="grid gap-0.5">
-                  <p className="text-fg text-sm font-medium">{doc.typeCode.replace(/_/g, ' ')}</p>
-                  <p className="text-fg-muted text-xs">{doc.fileName}</p>
+          {canUploadDocs && (
+            <p className="text-fg-muted text-sm">
+              Upload the required documents before marking the form verified &amp; signed. PDF, JPG
+              or PNG — the file size and type are checked on upload. Uploading a file of a type that
+              already has one replaces it.
+            </p>
+          )}
+          {canUploadDocs ? (
+            <div className="grid gap-3">
+              {company_.requiredDocuments.map((code) => {
+                const current = company_.documents.find((d) => d.typeCode === code);
+                return (
+                  <div key={code} className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="grid gap-0.5">
+                      <p className="text-fg text-sm font-medium">{code.replace(/_/g, ' ')}</p>
+                      {current ? (
+                        <p className="text-fg-muted text-xs">{current.fileName}</p>
+                      ) : (
+                        <p className="text-fg-muted text-xs">Not uploaded yet</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {current?.reviewStatus === 'ACCEPTED' && (
+                        <Badge tone="success">Accepted</Badge>
+                      )}
+                      {current?.reviewStatus === 'REJECTED' && (
+                        <Badge tone="danger">Rejected</Badge>
+                      )}
+                      {current?.reviewStatus === 'PENDING' && <Badge tone="neutral">Pending</Badge>}
+                      {current && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void getDocUrl(current.id)}
+                          rightIcon={<ExternalLink className="size-3.5" />}
+                        >
+                          View
+                        </Button>
+                      )}
+                      {uploadingDoc === code ? (
+                        <span className="text-fg-muted text-sm">Uploading…</span>
+                      ) : (
+                        <input
+                          type="file"
+                          accept="application/pdf,image/jpeg,image/png"
+                          disabled={uploadingDoc !== null}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = '';
+                            if (file) void uploadDocument(code, file);
+                          }}
+                          className="text-fg-muted text-sm"
+                        />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {company_.requiredDocuments.length === 0 && (
+                <p className="text-fg-muted text-sm">
+                  No documents required for this business type yet.
+                </p>
+              )}
+              {company_.documents
+                .filter((d) => !company_.requiredDocuments.includes(d.typeCode))
+                .map((doc) => (
+                  <div key={doc.id} className="flex items-center justify-between gap-3">
+                    <div className="grid gap-0.5">
+                      <p className="text-fg text-sm font-medium">
+                        {doc.typeCode.replace(/_/g, ' ')}
+                      </p>
+                      <p className="text-fg-muted text-xs">{doc.fileName}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {doc.reviewStatus === 'ACCEPTED' && <Badge tone="success">Accepted</Badge>}
+                      {doc.reviewStatus === 'REJECTED' && <Badge tone="danger">Rejected</Badge>}
+                      {doc.reviewStatus === 'PENDING' && <Badge tone="neutral">Pending</Badge>}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void getDocUrl(doc.id)}
+                        rightIcon={<ExternalLink className="size-3.5" />}
+                      >
+                        View
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {company_.documents.map((doc) => (
+                <div key={doc.id} className="flex items-center justify-between gap-3">
+                  <div className="grid gap-0.5">
+                    <p className="text-fg text-sm font-medium">{doc.typeCode.replace(/_/g, ' ')}</p>
+                    <p className="text-fg-muted text-xs">{doc.fileName}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {doc.reviewStatus === 'ACCEPTED' && <Badge tone="success">Accepted</Badge>}
+                    {doc.reviewStatus === 'REJECTED' && <Badge tone="danger">Rejected</Badge>}
+                    {doc.reviewStatus === 'PENDING' && <Badge tone="neutral">Pending</Badge>}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void getDocUrl(doc.id)}
+                      rightIcon={<ExternalLink className="size-3.5" />}
+                    >
+                      View
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  {doc.reviewStatus === 'ACCEPTED' && <Badge tone="success">Accepted</Badge>}
-                  {doc.reviewStatus === 'REJECTED' && <Badge tone="danger">Rejected</Badge>}
-                  {doc.reviewStatus === 'PENDING' && <Badge tone="neutral">Pending</Badge>}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void getDocUrl(doc.id)}
-                    rightIcon={<ExternalLink className="size-3.5" />}
-                  >
-                    View
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </section>
       )}
       {onboarding && printReady
