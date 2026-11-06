@@ -127,8 +127,7 @@ export default function MapPinPickerClient({
     });
   };
 
-  const handleSearch = async (e?: React.FormEvent) => {
-    e?.preventDefault();
+  const handleSearch = async () => {
     const query = searchQuery.trim();
     if (!query) return;
     setSearching(true);
@@ -255,17 +254,24 @@ export default function MapPinPickerClient({
               Use my location
             </Button>
 
-            <form onSubmit={handleSearch} className="flex flex-1 items-center gap-1.5">
+            <div role="search" className="flex flex-1 items-center gap-1.5">
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    void handleSearch();
+                  }
+                }}
                 placeholder="Search area or landmark to place pin..."
                 className="border-border-strong bg-surface text-fg placeholder:text-fg-subtle focus:border-focus h-10 w-full rounded-lg border px-3 text-sm shadow-xs outline-none"
               />
               <Button
-                type="submit"
+                type="button"
                 variant="outline"
+                onClick={() => void handleSearch()}
                 disabled={searching || !searchQuery.trim()}
                 loading={searching}
                 leftIcon={<Search />}
@@ -273,7 +279,7 @@ export default function MapPinPickerClient({
               >
                 Search
               </Button>
-            </form>
+            </div>
           </div>
 
           {value ? (
