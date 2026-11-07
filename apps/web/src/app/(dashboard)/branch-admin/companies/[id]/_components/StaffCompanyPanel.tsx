@@ -51,9 +51,11 @@ export function StaffCompanyPanel({
   const pathname = usePathname();
   const backHref = pathname.includes('super-admin')
     ? '/super-admin/companies'
-    : pathname.includes('/staff/')
-      ? '/staff/companies'
-      : '/branch-admin/companies';
+    : pathname.includes('/verifier/')
+      ? '/verifier/companies'
+      : pathname.includes('/staff/')
+        ? '/staff/companies'
+        : '/branch-admin/companies';
   const [company_, setCompany_] = useState(company);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

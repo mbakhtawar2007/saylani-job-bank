@@ -40,8 +40,11 @@ export const companyMachine = defineMachine<
       event: 'SUBMIT',
       to: 'SUBMITTED',
       // Staff submit on behalf of a company they onboarded (verified & signed first);
-      // employers submit their own company. The submission guard still applies.
-      actors: ['EMPLOYER', 'STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN'],
+      // employers submit their own company. Verifiers submit companies they
+      // onboarded the same way — a different verifier then reviews them, so the
+      // creator can never approve their own onboarding (see claimCompany /
+      // verifyCompany in verifier.ts). The submission guard still applies.
+      actors: ['EMPLOYER', 'STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN', 'VERIFIER'],
       guard: submissionGuard,
     },
     { from: 'SUBMITTED', event: 'CLAIM', to: 'UNDER_VERIFICATION', actors: ['VERIFIER'] },

@@ -76,6 +76,7 @@ export function navigationFor(role: Role): { title?: string; items: NavItemConfi
         {
           items: [
             overview,
+            { href: '/verifier/companies', label: 'Companies', icon: Building2 },
             { href: '/verifier/queue', label: 'Verification queue', icon: CheckSquare },
           ],
         },

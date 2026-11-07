@@ -493,7 +493,7 @@ export async function getCompanyOnboarding(
 }
 
 /**
- * Staff, Branch Admin or Super Admin registers a company they visited and onboarded.
+ * Staff, Branch Admin, Super Admin or Verifier registers a company they visited and onboarded.
  * Creates a DRAFT company plus its main contact; the outreach record (who visited,
  * when, the company's agreement, and the extra notes) is stored in the
  * `company_onboarding` table, in the same transaction as the company row.
@@ -598,12 +598,14 @@ export async function staffOnboardCompany(
  * sends the DRAFT company to the verifier queue in the same step. Staff submission needs
  * only what the field visit guarantees — a main contact and a branch. The head office and
  * documents are checked by the verifier, who can request them if they are missing.
+ * Verifiers onboard and submit companies the same way; a different verifier reviews
+ * them (claimCompany / verifyCompany refuse the creator).
  */
 export async function markCompanyRegistrationVerifiedSigned(
   ctx: SignedIn,
   companyId: string,
 ): Promise<CompanyView> {
-  assertRole(ctx.actor, 'STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN');
+  assertRole(ctx.actor, 'STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN', 'VERIFIER');
   assertPermission(ctx.actor, 'company:onboard');
   const company = await loadCompany(db, companyId);
   if (!isSuperAdmin(ctx.actor)) {

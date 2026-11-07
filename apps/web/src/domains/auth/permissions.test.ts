@@ -21,6 +21,18 @@ describe('permission matrix encodes the PRD rules', () => {
     expect(holders('company:verify')).toEqual(['VERIFIER']);
   });
 
+  it('field-visit onboarding: staff, branch admins, verifiers and Super Admin onboard companies', () => {
+    expect(holders('company:onboard')).toEqual([
+      'SUPER_ADMIN',
+      'BRANCH_ADMIN',
+      'VERIFIER',
+      'STAFF',
+    ]);
+    // Onboarding is not management: a verifier can create companies but cannot
+    // correct locked details, transfer companies or assign verifiers.
+    expect(ROLE_PERMISSIONS.VERIFIER).not.toContain('company:manage');
+  });
+
   it('rule 5: decisions belong to their actors; nobody holds proxy decisions by default', () => {
     expect(holders('decision:employer')).toEqual(['EMPLOYER']);
     expect(holders('decision:applicant')).toEqual(['APPLICANT']);

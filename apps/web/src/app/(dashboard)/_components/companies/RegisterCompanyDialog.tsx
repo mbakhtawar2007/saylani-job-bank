@@ -578,7 +578,7 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
               </p>
             )}
             <p className="text-fg-muted text-sm">
-              Your name is recorded automatically as the staff member who onboarded this company.
+              Your name is recorded automatically as the person who onboarded this company.
             </p>
           </section>
 

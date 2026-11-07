@@ -21,7 +21,7 @@ async function Shell({
           branches.map((b) => ({ id: b.id, name: b.name })),
         )
       : Promise.resolve(undefined),
-    role === 'STAFF' || role === 'BRANCH_ADMIN'
+    role === 'STAFF' || role === 'BRANCH_ADMIN' || role === 'VERIFIER'
       ? listBranches(actor)
       : role === 'SUPER_ADMIN' && !actor.twoFactorPending
         ? listBranches({ ...actor, activeBranchId: null })
@@ -35,10 +35,10 @@ async function Shell({
       : role === 'STAFF' || role === 'BRANCH_ADMIN'
         ? branchOptions?.map((branch) => ({ value: branch.id, label: branch.name }))
         : undefined;
-  // Sidebar "Company Registration" button: Super Admin only.
+  // Sidebar "Company Registration" button: Super Admin and Verifier only.
   // Staff and Branch Admin no longer register companies from the sidebar.
   const companyRegistrationBranches =
-    role === 'SUPER_ADMIN'
+    role === 'SUPER_ADMIN' || role === 'VERIFIER'
       ? branchOptions
           ?.filter((branch) => branch.isActive)
           .map((branch) => ({ value: branch.id, label: branch.name }))

@@ -103,7 +103,13 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'audit:read',
     'report:read',
   ],
-  VERIFIER: ['branch:read', 'company:read', 'company:verify', 'blacklist:request'],
+  VERIFIER: [
+    'branch:read',
+    'company:read',
+    'company:onboard',
+    'company:verify',
+    'blacklist:request',
+  ],
   STAFF: [
     'branch:read',
     'company:read',

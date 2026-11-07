@@ -27,6 +27,7 @@ import {
   recordTransition,
   submissionMissing,
   ver,
+  type CompanyRow,
   type CompanyView,
   type SignedIn,
   type VerificationRow,
@@ -163,6 +164,21 @@ function assertAssignedVerifier(round: VerificationRow, actor: Actor) {
   }
 }
 
+/**
+ * Segregation of duties: whoever onboarded a company must never verify it.
+ * The creator submits it to the queue; a different verifier claims and decides.
+ * Checked at claim (the normal path) and again at verify, so a Super Admin
+ * assignment of the creator cannot slip through either.
+ */
+function assertNotOwnOnboarding(row: CompanyRow, actor: Actor) {
+  if (row.createdBy === actor.userId) {
+    throw new ConflictError(
+      'You cannot verify a company you onboarded. Ask another verifier or your Super Admin.',
+      { reason: 'CONFLICT_OF_INTEREST' },
+    );
+  }
+}
+
 async function autoConflictCheck(actor: Actor, companyId: string): Promise<string | null> {
   const [verifier] = await db
     .select({ email: schema.users.email, phone: schema.users.phoneNumber })
@@ -197,6 +213,7 @@ export async function claimCompany(ctx: SignedIn, companyId: string): Promise<Co
   await runCommand(ctx, async ({ tx, audit }) => {
     const row = await loadCompany(tx, companyId, { forUpdate: true });
     await assertCityAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
+    assertNotOwnOnboarding(row, ctx.actor);
     const to = companyMachine.transition(row.status, 'CLAIM', READY, ctx.actor.roles);
     const round = await openVerification(tx, row.id, { forUpdate: true });
     if (!round) throw new NotFoundError('Open verification for company', companyId);
@@ -384,6 +401,7 @@ export async function verifyCompany(
   await runCommand(ctx, async ({ tx, audit, emit }) => {
     const row = await loadCompany(tx, companyId, { forUpdate: true });
     await assertCityAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
+    assertNotOwnOnboarding(row, ctx.actor);
     const machineCtx: CompanyMachineContext = {
       submissionMissing: await submissionMissing(tx, row),
       documentsNotAccepted: await documentsNotAccepted(tx, row),
