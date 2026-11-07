@@ -1,6 +1,7 @@
 import {
   APPLICANT_DOCUMENT_STATUSES,
   APPLICANT_STATUSES,
+  APPLICANT_TOKEN_STATUSES,
   GENDERS,
   IDENTITY_METHODS,
   IDENTITY_OUTCOMES,
@@ -20,6 +21,7 @@ import {
   smallint,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { geographyPoint } from '../types/geography';
@@ -241,7 +243,9 @@ export const applicantPreferences = pgTable(
     availableFrom: date({ mode: 'string' }),
     ...timestamps,
   },
-  (t) => [check('applicant_preferences_salary', sql`${t.minSalaryPkr} is null or ${t.minSalaryPkr} >= 0`)],
+  (t) => [
+    check('applicant_preferences_salary', sql`${t.minSalaryPkr} is null or ${t.minSalaryPkr} >= 0`),
+  ],
 );
 
 /**
@@ -312,6 +316,51 @@ export const identityVerifications = pgTable(
     check(
       'identity_verifications_outcome_valid',
       sql`${t.outcome} in (${list(IDENTITY_OUTCOMES)})`,
+    ),
+  ],
+);
+
+/**
+ * First-counter token (2026-11-07 reversal): one row per token issued at a
+ * branch. The token number is a daily sequence per branch (1, 2, 3, … from
+ * `registration_day`, Pakistan calendar day); the unique index is the guard
+ * against two counters issuing the same number. `applicant_id` stays null
+ * until the later full-registration step links the completed profile.
+ */
+export const branchApplicantTokens = pgTable(
+  'branch_applicant_tokens',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    branchId: uuid()
+      .notNull()
+      .references(() => branches.id, { onDelete: 'restrict' }),
+    /** Pakistan calendar day the token was issued (token numbers reset daily). */
+    registrationDay: date({ mode: 'string' }).notNull(),
+    tokenNumber: integer().notNull(),
+    /** 13 digits, no dashes. */
+    cnic: text().notNull(),
+    applicantName: text().notNull(),
+    status: text({ enum: APPLICANT_TOKEN_STATUSES }).notNull().default('ISSUED'),
+    /** Linked once the full registration is completed for this token. */
+    applicantId: uuid().references(() => applicants.id, { onDelete: 'set null' }),
+    issuedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+    issuedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    ...timestamps,
+  },
+  (t) => [
+    index('branch_applicant_tokens_branch_day_idx').on(t.branchId, t.registrationDay),
+    // Daily sequence guard: two counters can never issue the same number.
+    uniqueIndex('branch_applicant_tokens_branch_day_number_unique').on(
+      t.branchId,
+      t.registrationDay,
+      t.tokenNumber,
+    ),
+    index('branch_applicant_tokens_cnic_idx').on(t.cnic),
+    check('branch_applicant_tokens_number_positive', sql`${t.tokenNumber} > 0`),
+    check('branch_applicant_tokens_cnic_format', sql`${t.cnic} ~ '^[1-9][0-9]{12}$'`),
+    check(
+      'branch_applicant_tokens_status_valid',
+      sql`${t.status} in (${list(APPLICANT_TOKEN_STATUSES)})`,
     ),
   ],
 );

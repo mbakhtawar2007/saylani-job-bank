@@ -402,6 +402,55 @@ export const staffRegisterApplicantSchema = registerApplicantSchema.extend({
 });
 export type StaffRegisterApplicantInput = z.infer<typeof staffRegisterApplicantSchema>;
 
+// ─── First-counter tokens ──────────────────────────────────────────────
+
+/**
+ * Token-only first step (2026-11-07 reversal of the full-registration-at-first-
+ * counter flow): the first counter collects only a CNIC + name, issues a
+ * numbered token for the day, and prints it. The full registration happens at
+ * a later step and links back through applicantId.
+ */
+export const APPLICANT_TOKEN_STATUSES = ['ISSUED', 'COMPLETED', 'CANCELLED'] as const;
+export type ApplicantTokenStatus = (typeof APPLICANT_TOKEN_STATUSES)[number];
+
+export const issueApplicantTokenSchema = z.object({
+  branchId: z.uuid('Choose a branch'),
+  cnic: cnicSchema,
+  applicantName: personName('the applicant name'),
+});
+export type IssueApplicantTokenInput = z.infer<typeof issueApplicantTokenSchema>;
+
+/** "KHI-GULSHAN" + 7 → "KHI-GULSHAN-007". The number resets each branch-day. */
+export function tokenCodeFor(branchCode: string, tokenNumber: number): string {
+  return `${branchCode}-${String(tokenNumber).padStart(3, '0')}`;
+}
+
+/** Calendar date (YYYY-MM-DD) in Pakistan time — token numbers reset on this day. */
+export function karachiDay(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Karachi',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+/** Response contract for the token-issue route (mirrors ApplicantTokenView). */
+export const applicantTokenSchema = z.object({
+  id: z.string(),
+  tokenNumber: z.number().int().positive(),
+  tokenCode: z.string(),
+  branchId: z.string(),
+  branchCode: z.string(),
+  branchName: z.string(),
+  cnic: z.string(),
+  applicantName: z.string(),
+  issuedAt: z.string(),
+  status: z.enum(APPLICANT_TOKEN_STATUSES),
+  applicantId: z.string().nullable(),
+});
+export type ApplicantTokenView = z.infer<typeof applicantTokenSchema>;
+
 // ─── Documents ─────────────────────────────────────────────────────────
 
 export const presignDocumentSchema = z.object({

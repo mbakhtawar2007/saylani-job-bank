@@ -32,6 +32,7 @@ export {
   updateMyPersonal,
 } from './profile';
 export type { ApplicantDocumentType, ApplicantDocumentView, ApplicantProfile } from './repository';
+export { issueApplicantToken, type ApplicantTokenView } from './tokens';
 export {
   APPLICANT_SORTABLE,
   applicantFilters,

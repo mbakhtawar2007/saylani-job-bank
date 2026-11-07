@@ -5,7 +5,8 @@
 /* Dark mode follows the data-theme attribute set by ThemeProvider (system-aware). */
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
-.registration-form-print-root {
+.registration-form-print-root,
+.applicant-token-print-root {
   display: none;
 }
 
@@ -115,7 +116,10 @@
       overflow: visible !important;
     }
 
-    body > *:not(.registration-form-print-root):not(:has(.registration-form-print-root)) {
+    body
+      > *:not(.registration-form-print-root):not(.applicant-token-print-root):not(
+        :has(.registration-form-print-root)
+      ):not(:has(.applicant-token-print-root)) {
       display: none !important;
     }
 
@@ -124,11 +128,14 @@
     }
 
     .registration-form-print-root,
-    .registration-form-print-root * {
+    .registration-form-print-root *,
+    .applicant-token-print-root,
+    .applicant-token-print-root * {
       visibility: visible !important;
     }
 
-    .registration-form-print-root {
+    .registration-form-print-root,
+    .applicant-token-print-root {
       display: block !important;
       position: absolute !important;
       top: 0 !important;
@@ -137,6 +144,51 @@
       max-width: none !important;
       overflow: visible !important;
       background: white !important;
+    }
+
+    /* Token slip: a small centred slip that must fit on one page. */
+    .applicant-token-print-slip {
+      width: 3.4in !important;
+      margin: 0 auto !important;
+      padding: 0.2in !important;
+      border: 2px solid #111 !important;
+      color: #111 !important;
+      font-size: 11pt !important;
+      text-align: center !important;
+      break-inside: avoid !important;
+      page-break-inside: avoid !important;
+    }
+
+    .applicant-token-print-slip header p:first-child {
+      font-size: 13pt !important;
+      font-weight: 700 !important;
+    }
+
+    .applicant-token-print-number {
+      margin: 0.12in 0 !important;
+      font-size: 28pt !important;
+      font-weight: 800 !important;
+      letter-spacing: 0.02em !important;
+    }
+
+    .applicant-token-print-slip dl {
+      text-align: left !important;
+    }
+
+    .applicant-token-print-slip dl > div {
+      display: flex !important;
+      justify-content: space-between !important;
+      gap: 0.15in !important;
+      padding: 0.03in 0 !important;
+    }
+
+    .applicant-token-print-slip dl dt {
+      color: #444 !important;
+    }
+
+    .applicant-token-print-slip dl dd {
+      font-weight: 600 !important;
+      text-align: right !important;
     }
 
     .registration-form-print-sheet {

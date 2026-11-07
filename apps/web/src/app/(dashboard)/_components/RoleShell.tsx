@@ -8,7 +8,7 @@ import { toast } from '@/components/molecules';
 import { DashboardLayout } from '@/components/templates';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import type { SelectOption } from '@/components/atoms';
-import { RegisterApplicantDialog } from './applicants/RegisterApplicantDialog';
+import { IssueApplicantTokenDialog } from './applicants/IssueApplicantTokenDialog';
 import { RegisterCompanyDialog } from './companies/RegisterCompanyDialog';
 import { navigationFor } from './navigation';
 import { useSignOut } from './SignOutButton';
@@ -65,7 +65,10 @@ export function RoleShell({
         registrationBranches || companyRegistrationBranches ? (
           <div className="grid gap-2">
             {registrationBranches && (
-              <RegisterApplicantDialog branches={registrationBranches} placement="sidebar" />
+              // Token-only first counter (2026-11-07 reversal): the sidebar
+              // issues a numbered token from a CNIC + name. The full
+              // RegisterApplicantDialog is kept for the later step.
+              <IssueApplicantTokenDialog branches={registrationBranches} placement="sidebar" />
             )}
             {companyRegistrationBranches && (
               <RegisterCompanyDialog branches={companyRegistrationBranches} placement="sidebar" />
