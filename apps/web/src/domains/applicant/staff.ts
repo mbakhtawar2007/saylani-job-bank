@@ -5,7 +5,6 @@ import {
   IDENTITY_STATUSES,
   ROLE_LABELS,
   ROLES,
-  masterDataCodeSchema,
   type ApplicantStatus,
   type IdentityMethod,
   type IdentityOutcome,
@@ -33,7 +32,7 @@ import {
 import { z } from 'zod';
 import { isPlaceholderEmail, placeholderEmailFor } from '@/domains/auth';
 import { getBranchContact, type BranchContact } from '@/domains/branch';
-import { assertActiveMasterData, masterDataLabels, resolveMatchRadius } from '@/domains/settings';
+import { assertActiveMasterData, masterDataLabels } from '@/domains/settings';
 import { recordAudit, runCommand } from '@/domains/shared/audit';
 import {
   ConflictError,
@@ -44,6 +43,7 @@ import {
 } from '@/domains/shared/errors';
 import { maskCnic, maskPhone } from '@/domains/shared/masking';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
+import { multiCode, multiEnum, multiUuid } from '@/domains/shared/filters';
 import {
   assertCityAccess,
   assertBranchAccess,
@@ -113,12 +113,13 @@ const dateOnlySchema = z
   .optional();
 
 export const applicantFilters = {
-  status: z.enum(APPLICANT_STATUSES).optional(),
-  identityStatus: z.enum(IDENTITY_STATUSES).optional(),
-  branchId: z.uuid().optional(),
-  cityCode: masterDataCodeSchema.optional(),
-  areaCode: masterDataCodeSchema.optional(),
-  skillCode: masterDataCodeSchema.optional(),
+  /** Multi-select (Daraz/OLX-style checkboxes): one repeated key per ticked box. */
+  status: multiEnum(APPLICANT_STATUSES),
+  identityStatus: multiEnum(IDENTITY_STATUSES),
+  branchId: multiUuid,
+  cityCode: multiCode,
+  areaCode: multiCode,
+  skillCode: multiCode,
   /** Registration date range (inclusive, UTC day boundaries). */
   createdFrom: dateOnlySchema,
   createdTo: dateOnlySchema,
@@ -144,12 +145,12 @@ export async function listApplicants(
   query: ListQuery<
     (typeof APPLICANT_SORTABLE)[number],
     {
-      status?: ApplicantStatus;
-      identityStatus?: IdentityStatus;
-      branchId?: string;
-      cityCode?: string;
-      areaCode?: string;
-      skillCode?: string;
+      status?: ApplicantStatus[];
+      identityStatus?: IdentityStatus[];
+      branchId?: string[];
+      cityCode?: string[];
+      areaCode?: string[];
+      skillCode?: string[];
       createdFrom?: string;
       createdTo?: string;
     }
@@ -162,11 +163,15 @@ export async function listApplicants(
       { path: 'createdFrom', message: 'Registered from must be on or before Registered to' },
     ]);
   }
-  if (f.branchId && !isSuperAdmin(actor) && !actor.branchIds.includes(f.branchId)) {
+  const outOfScopeBranch =
+    f.branchId && !isSuperAdmin(actor)
+      ? f.branchId.find((id) => !actor.branchIds.includes(id))
+      : undefined;
+  if (outOfScopeBranch) {
     throw new ScopeViolationError(undefined, {
       entityType: 'branch',
-      entityId: f.branchId,
-      branchId: f.branchId,
+      entityId: outOfScopeBranch,
+      branchId: outOfScopeBranch,
     });
   }
 
@@ -189,22 +194,22 @@ export async function listApplicants(
 
   const conditions: (SQL | undefined)[] = [
     cityScope,
-    f.status ? eq(a.status, f.status) : undefined,
-    f.identityStatus ? eq(a.identityStatus, f.identityStatus) : undefined,
-    f.branchId ? eq(a.branchId, f.branchId) : undefined,
-    f.cityCode ? eq(addr.cityCode, f.cityCode) : undefined,
-    f.areaCode ? eq(addr.areaCode, f.areaCode) : undefined,
+    f.status?.length ? inArray(a.status, f.status) : undefined,
+    f.identityStatus?.length ? inArray(a.identityStatus, f.identityStatus) : undefined,
+    f.branchId?.length ? inArray(a.branchId, f.branchId) : undefined,
+    f.cityCode?.length ? inArray(addr.cityCode, f.cityCode) : undefined,
+    f.areaCode?.length ? inArray(addr.areaCode, f.areaCode) : undefined,
     // Registration date range: from is the start of that day, to is the end (exclusive next day).
     f.createdFrom ? gte(a.createdAt, new Date(`${f.createdFrom}T00:00:00.000Z`)) : undefined,
     f.createdTo
       ? lt(a.createdAt, new Date(new Date(`${f.createdTo}T00:00:00.000Z`).getTime() + 86_400_000))
       : undefined,
-    f.skillCode
+    f.skillCode?.length
       ? exists(
           db
             .select({ one: sql`1` })
             .from(skl)
-            .where(and(eq(skl.applicantId, a.id), eq(skl.skillCode, f.skillCode))),
+            .where(and(eq(skl.applicantId, a.id), inArray(skl.skillCode, f.skillCode))),
         )
       : undefined,
   ];

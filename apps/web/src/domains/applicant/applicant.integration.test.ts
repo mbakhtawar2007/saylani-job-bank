@@ -642,6 +642,12 @@ describe('staff access', () => {
     expect(ids(await find('areaCode=KARACHI_GULSHAN_E_IQBAL'))).toContain(id);
     expect(ids(await find('areaCode=LAHORE_JOHAR_TOWN'))).not.toContain(id);
 
+    // Several values for one filter (sidebar checkboxes): any ticked value matches.
+    // The new profile is DRAFT or ACTIVE, never INACTIVE or RESTRICTED.
+    expect(ids(await find('status=DRAFT&status=ACTIVE'))).toContain(id);
+    expect(ids(await find('status=INACTIVE&status=RESTRICTED'))).not.toContain(id);
+    expect(ids(await find('cityCode=KARACHI&cityCode=LAHORE'))).toContain(id);
+
     // Free text matches the area label staff see, not just the code.
     expect(ids(await find(`q=${encodeURIComponent('Gulshan')}`))).toContain(id);
 

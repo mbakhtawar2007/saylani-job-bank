@@ -17,6 +17,7 @@ let KHI: string;
 let staffJar: Jar;
 let jobA: string;
 let jobB: string;
+let jobC: string;
 
 beforeAll(async () => {
   KHI = (
@@ -61,6 +62,8 @@ beforeAll(async () => {
       jobType: 'FULL_TIME',
       shift: 'DAY',
       vacancies: 3,
+      salaryMin: 50000,
+      salaryMax: 80000,
       status: 'OPEN',
       createdBy: employerUserId,
     })
@@ -84,6 +87,8 @@ beforeAll(async () => {
       jobType: 'PART_TIME',
       shift: 'NIGHT',
       vacancies: 2,
+      salaryMin: 30000,
+      salaryMax: 40000,
       status: 'PAUSED',
       createdBy: employerUserId,
     })
@@ -94,6 +99,30 @@ beforeAll(async () => {
     addressLine: 'Johar Town, Lahore',
     cityCode: 'LAHORE',
     location: sql`ST_SetSRID(ST_MakePoint(74.2728, 31.4697), 4326)::geography`,
+  });
+
+  // No salary listed at all: a salary filter must never match it.
+  const [c] = await db
+    .insert(j)
+    .values({
+      companyId,
+      branchId: KHI,
+      title: `Day Shift Helper ${tag}`,
+      categoryCode: 'DRIVING_DELIVERY',
+      description: 'Help load parcels during the day.',
+      jobType: 'FULL_TIME',
+      shift: 'DAY',
+      vacancies: 1,
+      status: 'OPEN',
+      createdBy: employerUserId,
+    })
+    .returning({ id: j.id });
+  jobC = c!.id;
+  await db.insert(jl).values({
+    jobId: jobC,
+    addressLine: 'Gulshan-e-Iqbal, Karachi',
+    cityCode: 'KARACHI',
+    location: sql`ST_SetSRID(ST_MakePoint(67.0899, 24.9256), 4326)::geography`,
   });
 });
 
@@ -142,6 +171,40 @@ describe('job search and filtering', () => {
     const rowA = openKhi.find((r) => r.id === jobA)!;
     expect(rowA.companyName).toContain(`Search Filter Traders ${tag}`);
     expect(rowA.cityLabel).toEqual(expect.any(String));
+  });
+
+  it('accepts several values for one filter, like sidebar checkboxes', async () => {
+    expect(ids(await find('status=OPEN&status=PAUSED'))).toEqual(
+      expect.arrayContaining([jobA, jobB]),
+    );
+    expect(ids(await find('jobType=FULL_TIME&jobType=PART_TIME'))).toEqual(
+      expect.arrayContaining([jobA, jobB]),
+    );
+    expect(ids(await find('cityCode=KARACHI&cityCode=LAHORE'))).toEqual(
+      expect.arrayContaining([jobA, jobB]),
+    );
+    // A single value still works exactly as before.
+    expect(ids(await find('status=OPEN'))).toContain(jobA);
+    expect(ids(await find('status=OPEN'))).not.toContain(jobB);
+  });
+
+  it('filters by salary range overlap, and skips jobs with no salary listed', async () => {
+    expect(ids(await find('salaryMin=45000'))).toContain(jobA);
+    expect(ids(await find('salaryMin=45000'))).not.toContain(jobB);
+    expect(ids(await find('salaryMin=45000'))).not.toContain(jobC);
+    expect(ids(await find('salaryMax=35000'))).toContain(jobB);
+    expect(ids(await find('salaryMax=35000'))).not.toContain(jobA);
+    expect(ids(await find('salaryMin=35000&salaryMax=55000'))).toEqual(
+      expect.arrayContaining([jobA, jobB]),
+    );
+    expect(ids(await find('salaryMin=35000&salaryMax=55000'))).not.toContain(jobC);
+    expect(
+      (await call(listJobs, '/api/v1/jobs?salaryMin=90000&salaryMax=10000', { jar: staffJar }))
+        .status,
+    ).toBe(422);
+    expect(
+      (await call(listJobs, '/api/v1/jobs?salaryMin=not-a-number', { jar: staffJar })).status,
+    ).toBe(422);
   });
 
   it('rejects an unknown filter value instead of silently returning everything', async () => {

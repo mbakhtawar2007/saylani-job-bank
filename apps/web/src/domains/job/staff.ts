@@ -3,7 +3,6 @@ import {
   JOB_STATUSES,
   JOB_TYPES,
   SHIFT_TYPES,
-  masterDataCodeSchema,
   type CreateJobInput,
   type JobStatus,
   type JobType,
@@ -12,7 +11,8 @@ import {
 import { and, asc, count, desc, eq, exists, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
-import { ForbiddenError, NotFoundError } from '@/domains/shared/errors';
+import { ForbiddenError, NotFoundError, ValidationError } from '@/domains/shared/errors';
+import { multiCode, multiEnum } from '@/domains/shared/filters';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
 import {
   assertCityAccess,
@@ -35,14 +35,28 @@ type SignedIn = RequestContext & { actor: Actor };
 export const JOB_SORTABLE = ['title', 'createdAt', 'status', 'vacancies'] as const;
 
 export const jobFilters = {
-  status: z.enum(JOB_STATUSES).optional(),
+  /** Multi-select (Daraz/OLX-style checkboxes): one repeated key per ticked box. */
+  status: multiEnum(JOB_STATUSES),
   companyId: z.uuid().optional(),
   branchId: z.uuid().optional(),
-  jobType: z.enum(JOB_TYPES).optional(),
-  categoryCode: masterDataCodeSchema.optional(),
+  jobType: multiEnum(JOB_TYPES),
+  categoryCode: multiCode,
   /** City of any of the job's locations. */
-  cityCode: masterDataCodeSchema.optional(),
-  shift: z.enum(SHIFT_TYPES).optional(),
+  cityCode: multiCode,
+  shift: multiEnum(SHIFT_TYPES),
+  /**
+   * Daraz-style price range, for salaries (PKR / month). A job matches when its
+   * salary range overlaps the requested one; jobs with no salary listed never
+   * match a salary filter. Empty query values are ignored, not read as 0.
+   */
+  salaryMin: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().min(0).max(100_000_000).optional(),
+  ),
+  salaryMax: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().min(0).max(100_000_000).optional(),
+  ),
 };
 
 export interface JobListItem {
@@ -67,18 +81,25 @@ export async function listJobs(
   query: ListQuery<
     (typeof JOB_SORTABLE)[number],
     {
-      status?: JobStatus;
+      status?: JobStatus[];
       companyId?: string;
       branchId?: string;
-      jobType?: JobType;
-      categoryCode?: string;
-      cityCode?: string;
-      shift?: ShiftType;
+      jobType?: JobType[];
+      categoryCode?: string[];
+      cityCode?: string[];
+      shift?: ShiftType[];
+      salaryMin?: number;
+      salaryMax?: number;
     }
   >,
 ) {
   assertPermission(actor, 'job:read');
   const f = query.filters;
+  if (f.salaryMin !== undefined && f.salaryMax !== undefined && f.salaryMin > f.salaryMax) {
+    throw new ValidationError([
+      { path: 'salaryMin', message: 'Minimum salary must not be more than maximum salary' },
+    ]);
+  }
 
   const conditions: SQL[] = [];
 
@@ -86,22 +107,34 @@ export async function listJobs(
   const scopeCondition = cityScope(actor, j.branchId);
   if (scopeCondition) conditions.push(scopeCondition);
 
-  if (f.status) conditions.push(eq(j.status, f.status));
+  if (f.status?.length) conditions.push(inArray(j.status, f.status));
   if (f.companyId) conditions.push(eq(j.companyId, f.companyId));
   if (f.branchId) conditions.push(eq(j.branchId, f.branchId));
-  if (f.jobType) conditions.push(eq(j.jobType, f.jobType));
-  if (f.categoryCode) conditions.push(eq(j.categoryCode, f.categoryCode));
-  if (f.shift) conditions.push(eq(j.shift, f.shift));
-  if (f.cityCode) {
+  if (f.jobType?.length) conditions.push(inArray(j.jobType, f.jobType));
+  if (f.categoryCode?.length) conditions.push(inArray(j.categoryCode, f.categoryCode));
+  if (f.shift?.length) conditions.push(inArray(j.shift, f.shift));
+  if (f.cityCode?.length) {
     conditions.push(
       exists(
         db
           .select({ one: sql`1` })
           .from(schema.jobLocations)
           .where(
-            and(eq(schema.jobLocations.jobId, j.id), eq(schema.jobLocations.cityCode, f.cityCode)),
+            and(
+              eq(schema.jobLocations.jobId, j.id),
+              inArray(schema.jobLocations.cityCode, f.cityCode),
+            ),
           ),
       ),
+    );
+  }
+  if (f.salaryMin !== undefined || f.salaryMax !== undefined) {
+    // Salary-range overlap: a missing bound is open-ended, but a job with no
+    // salary listed at all does not match a salary filter.
+    const min = f.salaryMin ?? 0;
+    const max = f.salaryMax ?? 100_000_000;
+    conditions.push(
+      sql`(${j.salaryMin} IS NOT NULL OR ${j.salaryMax} IS NOT NULL) AND (${j.salaryMin} IS NULL OR ${j.salaryMin} <= ${max}) AND (${j.salaryMax} IS NULL OR ${j.salaryMax} >= ${min})`,
     );
   }
   if (query.q) {
