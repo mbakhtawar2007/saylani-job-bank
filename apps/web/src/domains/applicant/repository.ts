@@ -127,7 +127,6 @@ export interface ApplicantProfile {
     minSalaryPkr: number | null;
     shifts: Shift[];
     jobTypes: JobType[];
-    willingRadiusM: number | null;
     availableFrom: string | null;
   } | null;
   /** Current documents (newest first); replaced and unconfirmed uploads are left out. */
@@ -497,7 +496,6 @@ export async function buildProfile(
           minSalaryPkr: preferences.minSalaryPkr,
           shifts: preferences.shifts as Shift[],
           jobTypes: preferences.jobTypes as JobType[],
-          willingRadiusM: preferences.willingRadiusM,
           availableFrom: preferences.availableFrom,
         }
       : null,

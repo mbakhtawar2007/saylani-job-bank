@@ -6,7 +6,6 @@ import {
   IDENTITY_OUTCOMES,
   IDENTITY_STATUSES,
   LANGUAGE_PROFICIENCIES,
-  RADIUS_LIMITS,
   SKILL_LEVELS,
 } from '@jobbank/shared';
 import { sql } from 'drizzle-orm';
@@ -239,18 +238,10 @@ export const applicantPreferences = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
-    /** null = as far as the matching radius policy allows. Never above 10 km. */
-    willingRadiusM: integer(),
     availableFrom: date({ mode: 'string' }),
     ...timestamps,
   },
-  (t) => [
-    check('applicant_preferences_salary', sql`${t.minSalaryPkr} is null or ${t.minSalaryPkr} >= 0`),
-    check(
-      'applicant_preferences_radius',
-      sql`${t.willingRadiusM} is null or ${t.willingRadiusM} between ${sql.raw(String(RADIUS_LIMITS.minM))} and ${sql.raw(String(RADIUS_LIMITS.maxM))}`,
-    ),
-  ],
+  (t) => [check('applicant_preferences_salary', sql`${t.minSalaryPkr} is null or ${t.minSalaryPkr} >= 0`)],
 );
 
 /**

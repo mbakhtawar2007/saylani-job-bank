@@ -149,10 +149,8 @@ describe('section rules', () => {
     ).toBe(false);
   });
 
-  it('caps the willing radius at 10 km and rejects duplicate categories', () => {
+  it('rejects duplicate categories in preferences', () => {
     const base = { categoryCodes: ['DRIVING'], shifts: [], jobTypes: [] };
-    expect(preferencesSchema.safeParse({ ...base, willingRadiusM: 10_000 }).success).toBe(true);
-    expect(preferencesSchema.safeParse({ ...base, willingRadiusM: 10_500 }).success).toBe(false);
     expect(
       preferencesSchema.safeParse({ ...base, categoryCodes: ['DRIVING', 'DRIVING'] }).success,
     ).toBe(false);

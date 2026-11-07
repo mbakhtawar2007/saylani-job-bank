@@ -149,7 +149,7 @@ export function ProfileWizard({
         {step.id === 'education' && <EducationStep {...stepProps} />}
         {step.id === 'experience' && <ExperienceStep {...stepProps} />}
         {step.id === 'skills' && <SkillsStep {...stepProps} />}
-        {step.id === 'preferences' && <PreferencesStep {...stepProps} maxRadiusM={maxRadiusM} />}
+        {step.id === 'preferences' && <PreferencesStep {...stepProps} />}
         {step.id === 'documents' && profile && (
           <DocumentsManager
             profile={profile}

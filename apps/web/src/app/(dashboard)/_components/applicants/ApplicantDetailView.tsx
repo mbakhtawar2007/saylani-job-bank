@@ -44,7 +44,6 @@ import type { ApplicationView } from '@/domains/placement';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import { formatCnic } from '@/lib/format/cnic';
 import { formatDate } from '@/lib/format/date';
-import { formatDistance } from '@/lib/format/distance';
 import { formatPkMobileDisplay } from '@/lib/format/phone';
 import { errorMessage, toFieldErrors, type FieldErrors } from './form';
 import { DOCUMENT_STATUS_PILL, IDENTITY_PILL } from './labels';
@@ -1064,12 +1063,6 @@ export function ApplicantDetailView({
                     .join(', '),
                 },
                 { label: 'Branch', value: applicant.branch?.name },
-                {
-                  label: 'Will travel',
-                  value: pref?.willingRadiusM
-                    ? `Up to ${formatDistance(pref.willingRadiusM)}`
-                    : 'As far as allowed',
-                },
               ]}
             />
             <MapPinPicker

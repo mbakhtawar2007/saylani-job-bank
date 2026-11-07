@@ -426,18 +426,6 @@ export function saveMyPreferences(ctx: SignedIn, input: PreferencesInput) {
       input.categoryCodes,
       (i) => `categoryCodes.${i}`,
     );
-    if (input.willingRadiusM !== null) {
-      // Never wider than the radius the branch matches within (PRD rule 4).
-      const { maxM } = await resolveMatchRadius({ branchId: row.branchId });
-      if (input.willingRadiusM > maxM) {
-        throw new ValidationError([
-          {
-            path: 'willingRadiusM',
-            message: `Your branch matches jobs within ${maxM / 1000} km at most`,
-          },
-        ]);
-      }
-    }
     const values = { ...input };
     await tx
       .insert(pref)

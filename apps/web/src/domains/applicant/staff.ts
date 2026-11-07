@@ -454,17 +454,6 @@ export async function staffRegisterApplicant(
           input.preferences.categoryCodes,
           (index) => `preferences.categoryCodes.${index}`,
         );
-        if (input.preferences.willingRadiusM !== null) {
-          const { maxM } = await resolveMatchRadius({ branchId: input.branchId });
-          if (input.preferences.willingRadiusM > maxM) {
-            throw new ValidationError([
-              {
-                path: 'preferences.willingRadiusM',
-                message: `This branch matches jobs within ${maxM / 1000} km at most`,
-              },
-            ]);
-          }
-        }
         await tx.insert(pref).values({
           applicantId: row!.id,
           ...input.preferences,

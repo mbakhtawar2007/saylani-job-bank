@@ -233,10 +233,6 @@ export function RegistrationFormPrint({
               value={preferences?.jobTypes.map((type) => JOB_TYPE_LABELS[type]).join(', ')}
             />
             <Field label="Available from" value={preferences?.availableFrom} />
-            <Field
-              label="Travel distance"
-              value={preferences?.willingRadiusM ? `${preferences.willingRadiusM / 1000} km` : ''}
-            />
             <Field label="Minimum salary (PKR)" value={preferences?.minSalaryPkr} />
             <Field label="Other suitable timings" />
           </div>

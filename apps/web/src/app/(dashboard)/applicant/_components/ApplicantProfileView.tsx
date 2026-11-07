@@ -654,14 +654,6 @@ export function ApplicantProfileView({
               </div>
             </div>
 
-            {profile.preferences?.willingRadiusM && (
-              <div className="sm:col-span-2">
-                <p className="text-fg-muted text-xs font-medium">Willing Travel Radius</p>
-                <p className="text-fg mt-0.5 text-sm font-semibold">
-                  Up to {profile.preferences.willingRadiusM / 1000} km from home
-                </p>
-              </div>
-            )}
           </div>
         </section>
 

@@ -139,7 +139,6 @@ export const applicantProfileSchema = z.object({
       minSalaryPkr: z.number().nullable(),
       shifts: z.array(z.enum(SHIFTS)),
       jobTypes: z.array(z.enum(JOB_TYPES)),
-      willingRadiusM: z.number().nullable(),
       availableFrom: z.string().nullable(),
     })
     .nullable(),

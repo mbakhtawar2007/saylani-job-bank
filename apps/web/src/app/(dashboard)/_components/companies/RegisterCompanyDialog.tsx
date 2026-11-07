@@ -45,6 +45,31 @@ interface Props {
   placement?: 'default' | 'sidebar';
 }
 
+function ReviewChart() {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const values = [8, 12, 17, 15, 22, 19, 28, 25, 31, 24, 29, 34];
+
+  return (
+    <div className="w-full max-w-[32rem] rounded-2xl border border-[#1f413a] bg-[#081d18] p-4 shadow-[0_12px_28px_rgba(0,0,0,0.18)]">
+      <div className="flex items-center justify-between border-b border-[#1f413a] pb-3 text-xs uppercase tracking-[0.2em] text-[#8ca8a1]">
+        <span>24</span>
+        <span>Monthly</span>
+      </div>
+      <div className="mt-4 flex items-end justify-between gap-2">
+        {values.map((value, index) => (
+          <div key={months[index]} className="flex flex-1 flex-col items-center gap-2">
+            <div
+              className="w-full rounded-t-md bg-[#1d6b52] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+              style={{ height: `${value * 3.2}px` }}
+            />
+            <span className="text-[10px] text-[#8ca8a1]">{months[index]}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const STRUCTURE_OPTIONS = LEGAL_STRUCTURES.map((v) => ({
   value: v,
   label: LEGAL_STRUCTURE_LABELS[v],
@@ -683,71 +708,95 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
       </Modal>
 
       {company && (
-        <section className="registration-review-screen bg-surface fixed inset-0 z-[100] overflow-y-auto p-4 sm:p-8">
-          <div className="mx-auto grid max-w-4xl gap-5">
-            <header className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
-              <div>
-                <h1 className="text-fg text-2xl font-bold">Review &amp; Print</h1>
-                <p className="text-fg-muted mt-1 text-sm">
-                  Review the saved draft with the company representative. Print the complete form,
-                  have it signed, then mark it verified and signed.
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => window.print()}
-                  disabled={!printLabelsReady || !industriesSettled}
+        <section className="registration-review-screen fixed inset-0 z-[100] overflow-y-auto bg-[#021b15] p-4 text-[#edf5f2] sm:p-8">
+          <div className="mx-auto max-w-5xl">
+            <div className="rounded-[28px] border border-[#1b352f] bg-[#071f1a]/95 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.25)] sm:p-7">
+              <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[#24453e] pb-4">
+                <div className="space-y-1">
+                  <h1 className="text-3xl font-black tracking-tight text-[#f2f8f5] sm:text-4xl">
+                    Review
+                  </h1>
+                  <p className="max-w-3xl text-sm text-[#a5beb5] sm:text-base">
+                    Review the saved draft with the company representative. Print the complete form,
+                    have it signed, then mark it verified and signed.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={() => window.print()}
+                    disabled={!printLabelsReady || !industriesSettled}
+                  >
+                    {printLabelsReady && industriesSettled ? 'Print form' : 'Preparing print…'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setCompany(null);
+                      setPrintLabelsReady(false);
+                      router.refresh();
+                    }}
+                  >
+                    Done
+                  </Button>
+                </div>
+              </header>
+              {alert && (
+                <p
+                  role="alert"
+                  className="bg-danger-soft text-danger-soft-fg mt-4 rounded-lg px-4 py-3 text-sm"
                 >
-                  {printLabelsReady && industriesSettled ? 'Print form' : 'Preparing print…'}
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setCompany(null);
-                    setPrintLabelsReady(false);
-                    router.refresh();
-                  }}
-                >
-                  Done
-                </Button>
-              </div>
-            </header>
-            {alert && (
-              <p
-                role="alert"
-                className="bg-danger-soft text-danger-soft-fg rounded-lg px-4 py-3 text-sm"
-              >
-                {alert}
-              </p>
-            )}
-            <div className="rounded-xl border p-4">
-              <h2 className="font-semibold">{company.details.legalName}</h2>
-              <p className="text-fg-muted text-sm">
-                {company.status.charAt(0) + company.status.slice(1).toLowerCase()} · Company
-                reference {company.id}
-              </p>
-            </div>
-            <div className="rounded-xl border p-4">
-              <h2 className="font-semibold">Registration form preview</h2>
-              <p className="text-fg-muted mt-1 text-sm">
-                The print version contains all sections, the outreach record, a QR code for the
-                company reference, and the representative and staff signature fields.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <Button
-                onClick={() => void markAsVerifiedSigned()}
-                loading={markingSigned}
-                disabled={verifiedSigned}
-              >
-                {verifiedSigned ? 'Verified & signed' : 'Mark as verified & signed'}
-              </Button>
-              {verifiedSigned && (
-                <p role="status" className="text-success text-sm">
-                  Verification and signature recorded. The company is now in the verifier queue
-                  (Submitted).
+                  {alert}
                 </p>
               )}
+              <div className="mt-5 space-y-4">
+                <div className="rounded-2xl border border-[#2d473f] bg-[#0b201c] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-2xl font-bold text-[#f6faf8]">
+                        {company.details.legalName}
+                      </h2>
+                      <p className="mt-1 text-sm text-[#a5beb5]">
+                        {company.status.charAt(0) + company.status.slice(1).toLowerCase()} · Company
+                        reference {company.id}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 text-[#d9e6e1]">
+                      <button
+                        type="button"
+                        aria-label="More actions"
+                        className="rounded-md border border-[#24453e] bg-[#0f2a25] p-2 text-lg leading-none"
+                      >
+                        …
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-[#2d473f] bg-[#0b201c] p-4">
+                  <h2 className="text-2xl font-bold text-[#f6faf8]">Registration form preview</h2>
+                  <p className="mt-2 text-sm text-[#a5beb5] sm:text-base">
+                    The print version contains all sections, the outreach record, a QR code for the
+                    company reference, and the representative and staff signature fields.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button
+                      onClick={() => void markAsVerifiedSigned()}
+                      loading={markingSigned}
+                      disabled={verifiedSigned}
+                    >
+                      {verifiedSigned ? 'Verified & signed' : 'Mark as verified & signed'}
+                    </Button>
+                    {verifiedSigned && (
+                      <p role="status" className="text-sm text-[#9fe4c0]">
+                        Verification and signature recorded. The company is now in the verifier queue
+                        (Submitted).
+                      </p>
+                    )}
+                  </div>
+                  <ReviewChart />
+                </div>
+              </div>
             </div>
           </div>
         </section>

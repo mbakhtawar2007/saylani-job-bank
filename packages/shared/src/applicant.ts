@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { DOCUMENT_MIME_TYPES, masterDataCodeSchema } from './master-data';
-import { RADIUS_LIMITS } from './settings';
 
 /**
  * Applicant domain contracts (M6), shared by the API and the UI.
@@ -373,14 +372,6 @@ export const preferencesSchema = z.object({
     .array(z.enum(JOB_TYPES))
     .max(JOB_TYPES.length)
     .refine(...unique((s: string) => s, 'Each job type only once')),
-  /** How far the applicant will travel; null = as far as the branch policy allows. */
-  willingRadiusM: z
-    .number()
-    .int()
-    .min(RADIUS_LIMITS.minM, `At least ${RADIUS_LIMITS.minM / 1000} km`)
-    .max(RADIUS_LIMITS.maxM, `At most ${RADIUS_LIMITS.maxM / 1000} km`)
-    .nullish()
-    .transform((v) => v ?? null),
   availableFrom: z.iso
     .date()
     .nullish()

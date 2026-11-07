@@ -438,19 +438,12 @@ describe('location, branch and profile sections', () => {
       .from(schema.masterData)
       .where(eq(schema.masterData.type, 'JOB_CATEGORY'))
       .limit(1);
-    const tooFar = await call(putPreferences, '/api/v1/applicants/me/preferences', {
-      method: 'PUT',
-      body: { categoryCodes: [category!.code], shifts: [], jobTypes: [], willingRadiusM: 12000 },
-      jar,
-    });
-    expect(tooFar.status).toBe(422);
     const prefs = await call(putPreferences, '/api/v1/applicants/me/preferences', {
       method: 'PUT',
       body: {
         categoryCodes: [category!.code],
         shifts: ['DAY'],
         jobTypes: ['FULL_TIME'],
-        willingRadiusM: 6000,
         minSalaryPkr: 40000,
       },
       jar,
