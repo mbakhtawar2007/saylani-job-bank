@@ -1,15 +1,26 @@
 'use client';
 
 import { APPLICANT_STATUSES, IDENTITY_STATUSES, type PaginationMeta } from '@jobbank/shared';
-import { Contact } from 'lucide-react';
+import { Contact, Funnel } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Select, StatusPill } from '@/components/atoms';
+import { useState } from 'react';
+import { Button, Input, Select, StatusPill } from '@/components/atoms';
 import { EmptyState, SearchBar } from '@/components/molecules';
 import { DataTable, type SortState } from '@/components/organisms';
 import type { SelectOption } from '@/components/atoms';
 import type { ApplicantListItem } from '@/domains/applicant';
 import { formatDate } from '@/lib/format/date';
 import { APPLICANT_STATUS_PILL, IDENTITY_PILL } from './labels';
+
+export interface CityOption extends SelectOption {
+  /** Master-data row id; areas link to their city through this. */
+  id: string;
+}
+
+export interface AreaOption extends SelectOption {
+  /** Master-data row id of the parent city. */
+  parentId: string | null;
+}
 
 interface Props {
   rows: ApplicantListItem[];
@@ -18,12 +29,28 @@ interface Props {
   /** Shown only when the viewer can see more than one branch. */
   branches: SelectOption[];
   skills: SelectOption[];
+  cities: CityOption[];
+  areas: AreaOption[];
 }
 
-export function ApplicantsTable({ rows, meta, sort, branches, skills }: Props) {
+const FILTER_KEYS = [
+  'status',
+  'identityStatus',
+  'skillCode',
+  'branchId',
+  'cityCode',
+  'areaCode',
+  'createdFrom',
+  'createdTo',
+] as const;
+
+export function ApplicantsTable({ rows, meta, sort, branches, skills, cities, areas }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
+
+  const activeFilters = FILTER_KEYS.filter((key) => params.get(key)).length;
+  const [filtersOpen, setFiltersOpen] = useState(activeFilters > 0);
 
   const update = (changes: Record<string, string | null>) => {
     const next = new URLSearchParams(params.toString());
@@ -34,6 +61,15 @@ export function ApplicantsTable({ rows, meta, sort, branches, skills }: Props) {
     if (!('page' in changes)) next.delete('page');
     router.push(`${pathname}?${next.toString()}`);
   };
+
+  const clearFilters = () => {
+    const changes: Record<string, string | null> = { q: null };
+    for (const key of FILTER_KEYS) changes[key] = null;
+    update(changes);
+  };
+
+  const selectedCity = cities.find((c) => c.value === params.get('cityCode'));
+  const areaOptions = selectedCity ? areas.filter((a) => a.parentId === selectedCity.id) : [];
 
   return (
     <DataTable<ApplicantListItem>
@@ -49,45 +85,129 @@ export function ApplicantsTable({ rows, meta, sort, branches, skills }: Props) {
             className="w-full sm:max-w-xs"
             defaultValue={params.get('q') ?? ''}
             onSearch={(q) => update({ q: q || null })}
-            placeholder="Name, CNIC or mobile…"
+            placeholder="Name, CNIC, mobile or area…"
             label="Search applicants"
           />
-          <Select
-            aria-label="Filter by status"
-            wrapperClassName="w-full sm:w-44"
-            value={params.get('status') ?? ''}
-            onChange={(e) => update({ status: e.target.value || null })}
-            placeholder="Any status"
-            options={APPLICANT_STATUSES.map((s) => ({
-              value: s,
-              label: APPLICANT_STATUS_PILL[s].label,
-            }))}
-          />
-          <Select
-            aria-label="Filter by identity check"
-            wrapperClassName="w-full sm:w-48"
-            value={params.get('identityStatus') ?? ''}
-            onChange={(e) => update({ identityStatus: e.target.value || null })}
-            placeholder="Any identity status"
-            options={IDENTITY_STATUSES.map((s) => ({ value: s, label: IDENTITY_PILL[s].label }))}
-          />
-          <Select
-            aria-label="Filter by skill"
-            wrapperClassName="w-full sm:w-56"
-            value={params.get('skillCode') ?? ''}
-            onChange={(e) => update({ skillCode: e.target.value || null })}
-            placeholder="Any skill"
-            options={skills}
-          />
-          {branches.length > 1 && (
-            <Select
-              aria-label="Filter by branch"
-              wrapperClassName="w-full sm:w-52"
-              value={params.get('branchId') ?? ''}
-              onChange={(e) => update({ branchId: e.target.value || null })}
-              placeholder="All branches"
-              options={branches}
-            />
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => setFiltersOpen((open) => !open)}
+            aria-expanded={filtersOpen}
+            aria-controls="applicant-filters"
+          >
+            <Funnel className="mr-1.5 size-4" aria-hidden="true" />
+            Filters
+            {activeFilters > 0 && (
+              <span className="bg-primary text-primary-fg ms-1.5 grid size-5 place-items-center rounded-full text-xs font-semibold">
+                {activeFilters}
+              </span>
+            )}
+          </Button>
+          {filtersOpen && (
+            <div
+              id="applicant-filters"
+              className="border-border bg-surface-muted/50 grid w-full gap-3 rounded-xl border p-4 sm:grid-cols-2 lg:grid-cols-4"
+            >
+              <label className="grid gap-1 text-xs font-medium">
+                Status
+                <Select
+                  aria-label="Filter by status"
+                  value={params.get('status') ?? ''}
+                  onChange={(e) => update({ status: e.target.value || null })}
+                  placeholder="Any status"
+                  options={APPLICANT_STATUSES.map((s) => ({
+                    value: s,
+                    label: APPLICANT_STATUS_PILL[s].label,
+                  }))}
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-medium">
+                Identity check
+                <Select
+                  aria-label="Filter by identity check"
+                  value={params.get('identityStatus') ?? ''}
+                  onChange={(e) => update({ identityStatus: e.target.value || null })}
+                  placeholder="Any identity status"
+                  options={IDENTITY_STATUSES.map((s) => ({
+                    value: s,
+                    label: IDENTITY_PILL[s].label,
+                  }))}
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-medium">
+                Skill
+                <Select
+                  aria-label="Filter by skill"
+                  value={params.get('skillCode') ?? ''}
+                  onChange={(e) => update({ skillCode: e.target.value || null })}
+                  placeholder="Any skill"
+                  options={skills}
+                />
+              </label>
+              {branches.length > 1 && (
+                <label className="grid gap-1 text-xs font-medium">
+                  Branch
+                  <Select
+                    aria-label="Filter by branch"
+                    value={params.get('branchId') ?? ''}
+                    onChange={(e) => update({ branchId: e.target.value || null })}
+                    placeholder="All branches"
+                    options={branches}
+                  />
+                </label>
+              )}
+              <label className="grid gap-1 text-xs font-medium">
+                City
+                <Select
+                  aria-label="Filter by city"
+                  value={params.get('cityCode') ?? ''}
+                  onChange={(e) => update({ cityCode: e.target.value || null, areaCode: null })}
+                  placeholder="Any city"
+                  options={cities}
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-medium">
+                Area
+                <Select
+                  aria-label="Filter by area"
+                  value={params.get('areaCode') ?? ''}
+                  onChange={(e) => update({ areaCode: e.target.value || null })}
+                  placeholder={selectedCity ? 'Any area' : 'Choose a city first'}
+                  options={areaOptions}
+                  disabled={!selectedCity}
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-medium">
+                Registered from
+                <Input
+                  type="date"
+                  aria-label="Registered from"
+                  value={params.get('createdFrom') ?? ''}
+                  onChange={(e) => update({ createdFrom: e.target.value || null })}
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-medium">
+                Registered to
+                <Input
+                  type="date"
+                  aria-label="Registered to"
+                  value={params.get('createdTo') ?? ''}
+                  onChange={(e) => update({ createdTo: e.target.value || null })}
+                />
+              </label>
+              <div className="flex items-end">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={clearFilters}
+                  disabled={activeFilters === 0 && !params.get('q')}
+                >
+                  Clear all filters
+                </Button>
+              </div>
+            </div>
           )}
         </>
       }

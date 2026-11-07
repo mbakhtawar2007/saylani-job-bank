@@ -15,7 +15,21 @@ import {
   type StaffRegisterApplicantInput,
   type UpdatePersonalInput,
 } from '@jobbank/shared';
-import { and, asc, count, desc, eq, exists, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  exists,
+  gte,
+  ilike,
+  inArray,
+  lt,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import { z } from 'zod';
 import { isPlaceholderEmail, placeholderEmailFor } from '@/domains/auth';
 import { getBranchContact, type BranchContact } from '@/domains/branch';
@@ -92,6 +106,12 @@ async function assertCityArea(
 
 export const APPLICANT_SORTABLE = ['fullName', 'createdAt', 'profileCompleteness'] as const;
 
+/** YYYY-MM-DD; validated by parseListQuery, range checked in listApplicants. */
+const dateOnlySchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-11-07')
+  .optional();
+
 export const applicantFilters = {
   status: z.enum(APPLICANT_STATUSES).optional(),
   identityStatus: z.enum(IDENTITY_STATUSES).optional(),
@@ -99,6 +119,9 @@ export const applicantFilters = {
   cityCode: masterDataCodeSchema.optional(),
   areaCode: masterDataCodeSchema.optional(),
   skillCode: masterDataCodeSchema.optional(),
+  /** Registration date range (inclusive, UTC day boundaries). */
+  createdFrom: dateOnlySchema,
+  createdTo: dateOnlySchema,
 };
 
 export interface ApplicantListItem {
@@ -127,11 +150,18 @@ export async function listApplicants(
       cityCode?: string;
       areaCode?: string;
       skillCode?: string;
+      createdFrom?: string;
+      createdTo?: string;
     }
   >,
 ) {
   assertPermission(actor, 'applicant:read');
   const f = query.filters;
+  if (f.createdFrom && f.createdTo && f.createdFrom > f.createdTo) {
+    throw new ValidationError([
+      { path: 'createdFrom', message: 'Registered from must be on or before Registered to' },
+    ]);
+  }
   if (f.branchId && !isSuperAdmin(actor) && !actor.branchIds.includes(f.branchId)) {
     throw new ScopeViolationError(undefined, {
       entityType: 'branch',
@@ -164,6 +194,11 @@ export async function listApplicants(
     f.branchId ? eq(a.branchId, f.branchId) : undefined,
     f.cityCode ? eq(addr.cityCode, f.cityCode) : undefined,
     f.areaCode ? eq(addr.areaCode, f.areaCode) : undefined,
+    // Registration date range: from is the start of that day, to is the end (exclusive next day).
+    f.createdFrom ? gte(a.createdAt, new Date(`${f.createdFrom}T00:00:00.000Z`)) : undefined,
+    f.createdTo
+      ? lt(a.createdAt, new Date(new Date(`${f.createdTo}T00:00:00.000Z`).getTime() + 86_400_000))
+      : undefined,
     f.skillCode
       ? exists(
           db
@@ -174,7 +209,8 @@ export async function listApplicants(
       : undefined,
   ];
   if (query.q) {
-    // Names by substring; CNIC and phone by their digits (staff often have only one of them).
+    // Names by substring; CNIC and phone by their digits (staff often have only one of them);
+    // city/area by the label staff see ("Gulshan" finds Gulshan-e-Iqbal).
     const digits = query.q.replace(/\D/g, '');
     const phone = digits.length >= 10 ? normalizePkMobile(digits) : null;
     conditions.push(
@@ -182,6 +218,21 @@ export async function listApplicants(
         ilike(a.fullName, `%${query.q}%`),
         digits.length >= 5 ? sql`${a.cnic} like ${`${digits}%`}` : undefined,
         phone ? eq(schema.users.phoneNumber, phone) : undefined,
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(schema.masterData)
+            .where(
+              and(
+                inArray(schema.masterData.type, ['CITY', 'AREA']),
+                ilike(schema.masterData.label, `%${query.q}%`),
+                or(
+                  eq(schema.masterData.code, addr.cityCode),
+                  eq(schema.masterData.code, addr.areaCode),
+                ),
+              ),
+            ),
+        ),
       ),
     );
   }

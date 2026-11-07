@@ -1,5 +1,5 @@
 import { schema } from '@jobbank/db';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { GET as getApplicant, PATCH as staffPatch } from '@/app/api/v1/applicants/[id]/route';
 import { POST as markVerifiedSigned } from '@/app/api/v1/applicants/[id]/registration-form/verified-signed/route';
@@ -610,6 +610,61 @@ describe('staff access', () => {
         })
       ).status,
     ).toBe(403);
+  });
+
+  it('filters the staff list by city, area, area name and registration date', async () => {
+    const staff = await signIn('staff.khi@jobbank.local');
+    // Staff registration (no document upload, so this runs without the S3 dev stack);
+    // the address row is inserted directly for the same reason.
+    const created = await call(staffRegister, '/api/v1/applicants', {
+      method: 'POST',
+      body: { ...personal(), phone: randomPhone(), branchId: khi },
+      jar: staff,
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const id = created.body.data.id as string;
+    await db.insert(schema.applicantAddresses).values({
+      applicantId: id,
+      addressLine: 'House 12, Block 13-D',
+      cityCode: 'KARACHI',
+      areaCode: 'KARACHI_GULSHAN_E_IQBAL',
+      location: sql`ST_SetSRID(ST_MakePoint(67.0899, 24.9256), 4326)::geography`,
+    });
+    const find = async (qs: string) =>
+      (await call(listApplicants, `/api/v1/applicants?${qs}`, { jar: staff })).body.data as {
+        id: string;
+      }[];
+    const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
+
+    // City and area filters (the funnel panel exposes these; the API already accepted them).
+    expect(ids(await find('cityCode=KARACHI'))).toContain(id);
+    expect(ids(await find('cityCode=LAHORE'))).not.toContain(id);
+    expect(ids(await find('areaCode=KARACHI_GULSHAN_E_IQBAL'))).toContain(id);
+    expect(ids(await find('areaCode=LAHORE_JOHAR_TOWN'))).not.toContain(id);
+
+    // Free text matches the area label staff see, not just the code.
+    expect(ids(await find(`q=${encodeURIComponent('Gulshan')}`))).toContain(id);
+
+    // Registration date: created today (UTC) matches; from tomorrow does not.
+    const today = new Date().toISOString().slice(0, 10);
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    expect(ids(await find(`createdFrom=${today}&createdTo=${today}`))).toContain(id);
+    expect(ids(await find(`createdFrom=${tomorrow}`))).not.toContain(id);
+
+    // Bad dates and a reversed range fail loudly instead of silently returning everything.
+    expect(
+      (await call(listApplicants, '/api/v1/applicants?createdFrom=not-a-date', { jar: staff }))
+        .status,
+    ).toBe(422);
+    expect(
+      (
+        await call(
+          listApplicants,
+          `/api/v1/applicants?createdFrom=${tomorrow}&createdTo=${today}`,
+          { jar: staff },
+        )
+      ).status,
+    ).toBe(422);
   });
 
   it('verifies identity from the CNIC images, audits document views and locks identity fields', async () => {

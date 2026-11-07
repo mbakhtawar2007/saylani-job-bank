@@ -52,10 +52,12 @@ export async function ApplicantListPage({
     if (!(error instanceof ValidationError)) throw error;
     query = parseListQuery(new URLSearchParams(), listOptions);
   }
-  const [{ data, meta }, branches, skills] = await Promise.all([
+  const [{ data, meta }, branches, skills, cities, areas] = await Promise.all([
     loadForPage(actor, () => listApplicants(actor, query)),
     listBranches(actor),
     listMasterData(actor, { type: 'SKILL' }),
+    listMasterData(actor, { type: 'CITY' }),
+    listMasterData(actor, { type: 'AREA' }),
   ]);
 
   return (
@@ -74,6 +76,8 @@ export async function ApplicantListPage({
         sort={{ id: query.sort.field, direction: query.sort.direction }}
         branches={branches.map((b) => ({ value: b.id, label: b.name }))}
         skills={skills.map((s) => ({ value: s.code, label: s.label }))}
+        cities={cities.map((c) => ({ value: c.code, label: c.label, id: c.id }))}
+        areas={areas.map((a) => ({ value: a.code, label: a.label, parentId: a.parentId }))}
       />
     </div>
   );

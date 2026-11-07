@@ -1,6 +1,15 @@
 import 'server-only';
-import { JOB_STATUSES, type CreateJobInput, type JobStatus } from '@jobbank/shared';
-import { and, asc, count, desc, eq, ilike, or, type SQL } from 'drizzle-orm';
+import {
+  JOB_STATUSES,
+  JOB_TYPES,
+  SHIFT_TYPES,
+  masterDataCodeSchema,
+  type CreateJobInput,
+  type JobStatus,
+  type JobType,
+  type ShiftType,
+} from '@jobbank/shared';
+import { and, asc, count, desc, eq, exists, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
 import { ForbiddenError, NotFoundError } from '@/domains/shared/errors';
@@ -14,6 +23,7 @@ import {
 } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
 import type { RequestContext } from '@/domains/shared/audit';
+import { masterDataLabels } from '@/domains/settings';
 import { schema } from '@jobbank/db';
 import { buildJobView, j, loadJob, type JobView } from './repository';
 import { jobMachine } from './machine';
@@ -28,11 +38,17 @@ export const jobFilters = {
   status: z.enum(JOB_STATUSES).optional(),
   companyId: z.uuid().optional(),
   branchId: z.uuid().optional(),
+  jobType: z.enum(JOB_TYPES).optional(),
+  categoryCode: masterDataCodeSchema.optional(),
+  /** City of any of the job's locations. */
+  cityCode: masterDataCodeSchema.optional(),
+  shift: z.enum(SHIFT_TYPES).optional(),
 };
 
 export interface JobListItem {
   id: string;
   companyId: string;
+  companyName: string | null;
   branchId: string;
   title: string;
   categoryCode: string;
@@ -40,6 +56,8 @@ export interface JobListItem {
   vacancies: number;
   vacanciesFilled: number;
   status: JobStatus;
+  /** Label of the first location's city, if the job has a location. */
+  cityLabel: string | null;
   publishedAt: string | null;
   createdAt: string;
 }
@@ -48,7 +66,15 @@ export async function listJobs(
   actor: Actor,
   query: ListQuery<
     (typeof JOB_SORTABLE)[number],
-    { status?: JobStatus; companyId?: string; branchId?: string }
+    {
+      status?: JobStatus;
+      companyId?: string;
+      branchId?: string;
+      jobType?: JobType;
+      categoryCode?: string;
+      cityCode?: string;
+      shift?: ShiftType;
+    }
   >,
 ) {
   assertPermission(actor, 'job:read');
@@ -63,9 +89,46 @@ export async function listJobs(
   if (f.status) conditions.push(eq(j.status, f.status));
   if (f.companyId) conditions.push(eq(j.companyId, f.companyId));
   if (f.branchId) conditions.push(eq(j.branchId, f.branchId));
+  if (f.jobType) conditions.push(eq(j.jobType, f.jobType));
+  if (f.categoryCode) conditions.push(eq(j.categoryCode, f.categoryCode));
+  if (f.shift) conditions.push(eq(j.shift, f.shift));
+  if (f.cityCode) {
+    conditions.push(
+      exists(
+        db
+          .select({ one: sql`1` })
+          .from(schema.jobLocations)
+          .where(
+            and(eq(schema.jobLocations.jobId, j.id), eq(schema.jobLocations.cityCode, f.cityCode)),
+          ),
+      ),
+    );
+  }
   if (query.q) {
     const like = `%${query.q}%`;
-    conditions.push(or(ilike(j.title, like), ilike(j.categoryCode, like))!);
+    conditions.push(
+      or(
+        ilike(j.title, like),
+        ilike(j.description, like),
+        ilike(j.categoryCode, like),
+        // Company name lives on the companies table; an EXISTS keeps the
+        // count query (which has no companies join) working too.
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(schema.companies)
+            .where(
+              and(
+                eq(schema.companies.id, j.companyId),
+                or(
+                  ilike(schema.companies.legalName, like),
+                  ilike(schema.companies.tradeName, like),
+                ),
+              ),
+            ),
+        ),
+      )!,
+    );
   }
 
   const where = conditions.length ? and(...conditions) : undefined;
@@ -84,6 +147,8 @@ export async function listJobs(
       .select({
         id: j.id,
         companyId: j.companyId,
+        companyLegalName: schema.companies.legalName,
+        companyTradeName: schema.companies.tradeName,
         branchId: j.branchId,
         title: j.title,
         categoryCode: j.categoryCode,
@@ -95,15 +160,40 @@ export async function listJobs(
         createdAt: j.createdAt,
       })
       .from(j)
+      .leftJoin(schema.companies, eq(schema.companies.id, j.companyId))
       .where(where)
       .orderBy(orderBy)
       .limit(query.limit)
       .offset(query.offset),
   ]);
 
-  const items: JobListItem[] = rows.map((r) => ({
+  // First location city per job on this page, for the list rows.
+  const ids = rows.map((r) => r.id);
+  const [locations, labels] =
+    ids.length > 0
+      ? await Promise.all([
+          db
+            .select({
+              jobId: schema.jobLocations.jobId,
+              cityCode: schema.jobLocations.cityCode,
+            })
+            .from(schema.jobLocations)
+            .where(inArray(schema.jobLocations.jobId, ids)),
+          masterDataLabels(['CITY']),
+        ])
+      : [[], { CITY: {} as Record<string, string> }];
+  const cityByJob = new Map<string, string>();
+  for (const loc of locations) {
+    if (!cityByJob.has(loc.jobId)) {
+      cityByJob.set(loc.jobId, labels.CITY?.[loc.cityCode] ?? loc.cityCode);
+    }
+  }
+
+  const items: JobListItem[] = rows.map(({ companyLegalName, companyTradeName, ...r }) => ({
     ...r,
+    companyName: companyTradeName ?? companyLegalName,
     status: r.status as JobStatus,
+    cityLabel: cityByJob.get(r.id) ?? null,
     publishedAt: r.publishedAt?.toISOString() ?? null,
     createdAt: r.createdAt.toISOString(),
   }));
