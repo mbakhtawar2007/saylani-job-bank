@@ -100,12 +100,25 @@ interface Props {
 }
 
 function ReviewChart() {
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
   const values = [8, 12, 17, 15, 22, 19, 28, 25, 31, 24, 29, 34];
 
   return (
     <div className="w-full max-w-[32rem] rounded-2xl border border-[#1f413a] bg-[#081d18] p-4 shadow-[0_12px_28px_rgba(0,0,0,0.18)]">
-      <div className="flex items-center justify-between border-b border-[#1f413a] pb-3 text-xs uppercase tracking-[0.2em] text-[#8ca8a1]">
+      <div className="flex items-center justify-between border-b border-[#1f413a] pb-3 text-xs tracking-[0.2em] text-[#8ca8a1] uppercase">
         <span>24</span>
         <span>Monthly</span>
       </div>
@@ -210,6 +223,7 @@ function applicantFieldLabel(key: string): string {
 export function RegisterApplicantDialog({ branches, placement = 'default' }: Props) {
   const router = useRouter();
   const pathname = usePathname();
+  const previousPathname = useRef(pathname);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingOptions, setLoadingOptions] = useState(false);
@@ -274,6 +288,23 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
   useEffect(() => {
     setPrintReady(true);
   }, []);
+
+  useEffect(() => {
+    if (previousPathname.current === pathname) return;
+    previousPathname.current = pathname;
+    setApplicant(null);
+    setPrintLabelsReady(false);
+  }, [pathname]);
+
+  const applicantId = applicant?.id;
+  useEffect(() => {
+    if (applicantId === undefined) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [applicantId]);
 
   useEffect(() => {
     if (!open || cities.length > 0) return;
@@ -1333,95 +1364,99 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
         </form>
       </Modal>
 
-      {applicant && (
-        <section className="registration-review-screen fixed inset-0 z-[100] overflow-y-auto bg-[#021b15] p-4 text-[#edf5f2] sm:p-8">
-          <div className="mx-auto max-w-5xl">
-            <div className="rounded-[28px] border border-[#1b352f] bg-[#071f1a]/95 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.25)] sm:p-7">
-              <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[#24453e] pb-4">
-                <div className="space-y-1">
-                  <h1 className="text-3xl font-black tracking-tight text-[#f2f8f5] sm:text-4xl">
-                    Review
-                  </h1>
-                  <p className="max-w-3xl text-sm text-[#a5beb5] sm:text-base">
-                    Review the saved draft with the applicant. Print the complete form, have it
-                    signed, then mark it verified and signed.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button onClick={() => window.print()} disabled={!printLabelsReady}>
-                    {printLabelsReady ? 'Print form' : 'Preparing print…'}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setApplicant(null);
-                      setPrintLabelsReady(false);
-                      router.refresh();
-                    }}
-                  >
-                    Done
-                  </Button>
-                </div>
-              </header>
-              {alert && (
-                <p
-                  role="alert"
-                  className="bg-danger-soft text-danger-soft-fg mt-4 rounded-lg px-4 py-3 text-sm"
-                >
-                  {alert}
-                </p>
-              )}
-              <div className="mt-5 space-y-4">
-                <div className="rounded-2xl border border-[#2d473f] bg-[#0b201c] p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h2 className="text-2xl font-bold text-[#f6faf8]">
-                        {applicant.personal.fullName}
-                      </h2>
-                      <p className="mt-1 text-sm text-[#a5beb5]">
-                        Draft · Applicant reference {applicant.id}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 text-[#d9e6e1]">
-                      <button
-                        type="button"
-                        aria-label="More actions"
-                        className="rounded-md border border-[#24453e] bg-[#0f2a25] p-2 text-lg leading-none"
-                      >
-                        …
-                      </button>
-                    </div>
+      {applicant &&
+        printReady &&
+        createPortal(
+          <section className="registration-review-screen pointer-events-auto fixed inset-0 z-[100] overflow-y-auto bg-[#021b15] p-4 text-[#edf5f2] sm:p-8">
+            <div className="mx-auto max-w-5xl">
+              <div className="rounded-[28px] border border-[#1b352f] bg-[#071f1a]/95 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.25)] sm:p-7">
+                <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[#24453e] pb-4">
+                  <div className="space-y-1">
+                    <h1 className="text-3xl font-black tracking-tight text-[#f2f8f5] sm:text-4xl">
+                      Review
+                    </h1>
+                    <p className="max-w-3xl text-sm text-[#a5beb5] sm:text-base">
+                      Review the saved draft with the applicant. Print the complete form, have it
+                      signed, then mark it verified and signed.
+                    </p>
                   </div>
-                </div>
-                <div className="rounded-2xl border border-[#2d473f] bg-[#0b201c] p-4">
-                  <h2 className="text-2xl font-bold text-[#f6faf8]">Registration form preview</h2>
-                  <p className="mt-2 text-sm text-[#a5beb5] sm:text-base">
-                    The print version contains all six sections, a QR code for the applicant
-                    reference, and the applicant and staff signature fields.
-                  </p>
-                </div>
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Button
-                      onClick={() => void markAsVerifiedSigned()}
-                      loading={markingSigned}
-                      disabled={verifiedSigned}
-                    >
-                      {verifiedSigned ? 'Verified & signed' : 'Mark as verified & signed'}
+                  <div className="flex items-center gap-2">
+                    <Button onClick={() => window.print()} disabled={!printLabelsReady}>
+                      {printLabelsReady ? 'Print form' : 'Preparing print…'}
                     </Button>
-                    {verifiedSigned && (
-                      <p role="status" className="text-sm text-[#9fe4c0]">
-                        Verification and signature recorded. The applicant remains in DRAFT status.
-                      </p>
-                    )}
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setApplicant(null);
+                        setPrintLabelsReady(false);
+                        router.refresh();
+                      }}
+                    >
+                      Done
+                    </Button>
                   </div>
-                  <ReviewChart />
+                </header>
+                {alert && (
+                  <p
+                    role="alert"
+                    className="bg-danger-soft text-danger-soft-fg mt-4 rounded-lg px-4 py-3 text-sm"
+                  >
+                    {alert}
+                  </p>
+                )}
+                <div className="mt-5 space-y-4">
+                  <div className="rounded-2xl border border-[#2d473f] bg-[#0b201c] p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-2xl font-bold text-[#f6faf8]">
+                          {applicant.personal.fullName}
+                        </h2>
+                        <p className="mt-1 text-sm text-[#a5beb5]">
+                          Draft · Applicant reference {applicant.id}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 text-[#d9e6e1]">
+                        <button
+                          type="button"
+                          aria-label="More actions"
+                          className="rounded-md border border-[#24453e] bg-[#0f2a25] p-2 text-lg leading-none"
+                        >
+                          …
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-[#2d473f] bg-[#0b201c] p-4">
+                    <h2 className="text-2xl font-bold text-[#f6faf8]">Registration form preview</h2>
+                    <p className="mt-2 text-sm text-[#a5beb5] sm:text-base">
+                      The print version contains all six sections, a QR code for the applicant
+                      reference, and the applicant and staff signature fields.
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button
+                        onClick={() => void markAsVerifiedSigned()}
+                        loading={markingSigned}
+                        disabled={verifiedSigned}
+                      >
+                        {verifiedSigned ? 'Verified & signed' : 'Mark as verified & signed'}
+                      </Button>
+                      {verifiedSigned && (
+                        <p role="status" className="text-sm text-[#9fe4c0]">
+                          Verification and signature recorded. The applicant remains in DRAFT
+                          status.
+                        </p>
+                      )}
+                    </div>
+                    <ReviewChart />
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </section>
-      )}
+          </section>,
+          document.body,
+        )}
       {printForm}
     </>
   );
