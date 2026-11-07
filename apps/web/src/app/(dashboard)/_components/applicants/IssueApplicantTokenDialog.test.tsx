@@ -42,6 +42,12 @@ async function open() {
 }
 
 describe('IssueApplicantTokenDialog', () => {
+  it('renders a wide dialog so the form fits without a cramped scrollbar', async () => {
+    const dialog = await open();
+    expect(dialog).toHaveClass('max-w-lg');
+    expect(dialog).not.toHaveClass('max-w-sm');
+  });
+
   it('collects CNIC, name and phone, then shows only a Print button', async () => {
     fetchMock.mockResolvedValue(json(201, { data: token }));
     await open();

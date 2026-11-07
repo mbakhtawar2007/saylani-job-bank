@@ -81,10 +81,10 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
     <>
       <Modal
         title="Issue token"
-        description="Take the applicant's CNIC number, name and phone number, issue the next token for today, and print it."
+        description="Take the applicant's CNIC, name and phone number, issue today's next token, and print it."
         open={open}
         onOpenChange={setDialogOpen}
-        size="sm"
+        size="md"
         trigger={
           <Button
             fullWidth={placement === 'sidebar'}
@@ -95,7 +95,7 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
         }
       >
         {token ? (
-          <div className="grid gap-5">
+          <div className="grid gap-4">
             <ApplicantTokenSlip token={token} />
             <Button
               fullWidth
@@ -109,7 +109,7 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
             </p>
           </div>
         ) : (
-          <form className="grid gap-6" onSubmit={submit} noValidate>
+          <form className="grid gap-5" onSubmit={submit} noValidate>
             {alert && (
               <p
                 role="alert"
@@ -163,7 +163,7 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
                 onChange={(value) => setPhone(value.e164 ?? value.national)}
               />
             </FormField>
-            <div className="grid gap-3">
+            <div className="grid gap-2">
               <Button
                 type="submit"
                 fullWidth
