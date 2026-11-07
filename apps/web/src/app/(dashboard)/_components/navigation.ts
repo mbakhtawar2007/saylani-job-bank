@@ -65,7 +65,6 @@ export function navigationFor(role: Role): { title?: string; items: NavItemConfi
           items: [
             overview,
             { href: '/branch-admin/applicants', label: 'Applicants', icon: Contact },
-            { href: '/branch-admin/companies', label: 'Companies', icon: Building2 },
             { href: '/branch-admin/jobs', label: 'Jobs', icon: Briefcase },
             { href: '/branch-admin/staff', label: 'Staff', icon: Users },
             { href: '/branch-admin/settings', label: 'Branch settings', icon: SlidersHorizontal },
@@ -87,7 +86,6 @@ export function navigationFor(role: Role): { title?: string; items: NavItemConfi
           items: [
             overview,
             { href: '/staff/applicants', label: 'Applicants', icon: Contact },
-            { href: '/staff/companies', label: 'Companies', icon: Building2 },
           ],
         },
       ];

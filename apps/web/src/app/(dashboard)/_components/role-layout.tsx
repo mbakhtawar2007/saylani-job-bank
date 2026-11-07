@@ -35,8 +35,10 @@ async function Shell({
       : role === 'STAFF' || role === 'BRANCH_ADMIN'
         ? branchOptions?.map((branch) => ({ value: branch.id, label: branch.name }))
         : undefined;
+  // Sidebar "Company Registration" button: Super Admin only.
+  // Staff and Branch Admin no longer register companies from the sidebar.
   const companyRegistrationBranches =
-    role === 'STAFF' || role === 'BRANCH_ADMIN' || role === 'SUPER_ADMIN'
+    role === 'SUPER_ADMIN'
       ? branchOptions
           ?.filter((branch) => branch.isActive)
           .map((branch) => ({ value: branch.id, label: branch.name }))
