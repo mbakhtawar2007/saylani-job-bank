@@ -86,6 +86,7 @@ export function navigationFor(role: Role): { title?: string; items: NavItemConfi
           items: [
             overview,
             { href: '/staff/applicants', label: 'Applicants', icon: Contact },
+            { href: '/staff/jobs', label: 'Jobs', icon: Briefcase },
           ],
         },
       ];
