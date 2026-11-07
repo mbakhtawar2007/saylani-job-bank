@@ -1,11 +1,11 @@
 'use client';
 
 import { issueApplicantTokenSchema, type ApplicantTokenView } from '@jobbank/shared';
-import { Ticket } from 'lucide-react';
+import { Printer, Ticket, User } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useState, type FormEvent } from 'react';
 import { Button, Input, Select, type SelectOption } from '@/components/atoms';
-import { CNICInput, FormField, Modal } from '@/components/molecules';
+import { CNICInput, FormField, Modal, PhoneInput } from '@/components/molecules';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import { errorMessage, toFieldErrors, zodFieldErrors, type FieldErrors } from './form';
 import { ApplicantTokenSlip } from './ApplicantTokenSlip';
@@ -16,10 +16,10 @@ interface Props {
 }
 
 /**
- * Token-only first counter (2026-11-07 reversal): collect a CNIC + name,
- * issue the day's next token number for the branch, and print the slip.
- * The full registration happens at a later step — this dialog deliberately
- * collects nothing else.
+ * Token-only first counter (2026-11-07 reversal): collect a CNIC, name and
+ * phone number, issue the day's next token number for the branch, and print
+ * the slip. The full registration happens at a later step — this dialog
+ * deliberately collects nothing else.
  */
 export function IssueApplicantTokenDialog({ branches, placement = 'default' }: Props) {
   const [open, setOpen] = useState(false);
@@ -29,6 +29,7 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
   const [branchId, setBranchId] = useState(branches.length === 1 ? branches[0]!.value : '');
   const [cnic, setCnic] = useState('');
   const [applicantName, setApplicantName] = useState('');
+  const [phone, setPhone] = useState('');
   const [token, setToken] = useState<ApplicantTokenView | null>(null);
 
   const resetForm = () => {
@@ -37,6 +38,7 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
     setBranchId(branches.length === 1 ? branches[0]!.value : '');
     setCnic('');
     setApplicantName('');
+    setPhone('');
   };
 
   const setDialogOpen = (next: boolean) => {
@@ -50,7 +52,7 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setAlert(null);
-    const parsed = issueApplicantTokenSchema.safeParse({ branchId, cnic, applicantName });
+    const parsed = issueApplicantTokenSchema.safeParse({ branchId, cnic, applicantName, phone });
     if (!parsed.success) {
       setErrors(zodFieldErrors(parsed.error));
       return;
@@ -79,7 +81,7 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
     <>
       <Modal
         title="Issue token"
-        description="Take the applicant's CNIC number and name, issue the next token for today, and print it."
+        description="Take the applicant's CNIC number, name and phone number, issue the next token for today, and print it."
         open={open}
         onOpenChange={setDialogOpen}
         size="sm"
@@ -95,24 +97,19 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
         {token ? (
           <div className="grid gap-5">
             <ApplicantTokenSlip token={token} />
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={() => window.print()}>Print token</Button>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setToken(null);
-                  resetForm();
-                }}
-              >
-                Issue another token
-              </Button>
-              <Button variant="ghost" onClick={() => setDialogOpen(false)}>
-                Done
-              </Button>
-            </div>
+            <Button
+              fullWidth
+              leftIcon={<Printer aria-hidden="true" />}
+              onClick={() => window.print()}
+            >
+              Print token
+            </Button>
+            <p className="text-fg-muted text-center text-sm">
+              Close this window to issue the next token.
+            </p>
           </div>
         ) : (
-          <form className="grid gap-5" onSubmit={submit} noValidate>
+          <form className="grid gap-6" onSubmit={submit} noValidate>
             {alert && (
               <p
                 role="alert"
@@ -131,14 +128,19 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
                 />
               </FormField>
             )}
-            <FormField label="CNIC number" required error={errors.cnic}>
-              <CNICInput value={cnic} onChange={(change) => setCnic(change.digits)} />
+            <FormField
+              label="CNIC number"
+              required
+              error={errors.cnic}
+              hint="13 digits, as on the CNIC"
+            >
+              <CNICInput autoFocus value={cnic} onChange={(change) => setCnic(change.digits)} />
             </FormField>
             <FormField
               label="Applicant name"
               required
               error={errors.applicantName}
-              hint="As on the CNIC"
+              hint="Full name, as on the CNIC"
             >
               <Input
                 value={applicantName}
@@ -146,11 +148,34 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
                 placeholder="Full name"
                 autoComplete="off"
                 maxLength={120}
+                startAdornment={<User aria-hidden="true" />}
               />
             </FormField>
-            <Button type="submit" disabled={loading}>
-              {loading ? 'Issuing token…' : 'Generate token'}
-            </Button>
+            <FormField
+              label="Phone number"
+              required
+              error={errors.phone}
+              hint="Mobile number the applicant can be reached on"
+            >
+              <PhoneInput
+                aria-label="Phone number"
+                value={phone}
+                onChange={(value) => setPhone(value.e164 ?? value.national)}
+              />
+            </FormField>
+            <div className="grid gap-3">
+              <Button
+                type="submit"
+                fullWidth
+                leftIcon={<Ticket aria-hidden="true" />}
+                disabled={loading}
+              >
+                {loading ? 'Issuing token…' : 'Generate token'}
+              </Button>
+              <p className="text-fg-muted text-center text-sm">
+                The token prints with these details. The applicant is called by token number.
+              </p>
+            </div>
           </form>
         )}
       </Modal>

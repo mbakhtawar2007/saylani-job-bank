@@ -12,6 +12,7 @@ const token: ApplicantTokenView = {
   branchName: 'Karachi — Gulshan-e-Iqbal',
   cnic: '4240127739744',
   applicantName: 'Test Applicant',
+  phone: '+923001234567',
   // 19:39:20 PKT on 2026-11-07.
   issuedAt: '2026-11-07T14:39:20.000Z',
   status: 'ISSUED',
@@ -19,7 +20,7 @@ const token: ApplicantTokenView = {
 };
 
 describe('ApplicantTokenSlip', () => {
-  it('renders the demo slip: badge, padded number, date, time, raw NIC, name', () => {
+  it('renders the demo slip: badge, padded number, date, time, raw NIC, name, phone', () => {
     render(<ApplicantTokenSlip token={token} />);
 
     expect(screen.getByText('TOKEN SLIP')).toBeInTheDocument();
@@ -31,6 +32,7 @@ describe('ApplicantTokenSlip', () => {
     expect(screen.getByText('07:39:20 PM')).toBeInTheDocument();
     expect(screen.getByText('4240127739744')).toBeInTheDocument();
     expect(screen.getByText('Test Applicant')).toBeInTheDocument();
+    expect(screen.getByText('+92 300 1234567')).toBeInTheDocument();
     expect(screen.getByText('Please keep this token and wait to be called.')).toBeInTheDocument();
     expect(screen.getByText('SAYLANI JOB BANK')).toBeInTheDocument();
     expect(screen.getByAltText('Saylani')).toHaveAttribute('src', '/saylani-logo.png');

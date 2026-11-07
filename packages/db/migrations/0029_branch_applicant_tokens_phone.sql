@@ -1,0 +1,1 @@
+ALTER TABLE "branch_applicant_tokens" ADD COLUMN "phone" text DEFAULT '' NOT NULL;

@@ -31,7 +31,7 @@ beforeEach(() => resetMemoryRateLimits());
 async function issue(branchId: string, cnic: string, jar = staffJar) {
   return call(issueToken, '/api/v1/applicants/tokens', {
     method: 'POST',
-    body: { branchId, cnic, applicantName: 'Ahmed Raza' },
+    body: { branchId, cnic, applicantName: 'Ahmed Raza', phone: randomPhone() },
     jar,
   });
 }
@@ -47,6 +47,7 @@ describe('first-counter applicant tokens', () => {
       status: 'ISSUED',
       applicantId: null,
     });
+    expect(first.body.data.phone).toMatch(/^\+92345\d{7}$/);
     expect(first.body.data.issuedAt).toEqual(expect.any(String));
 
     const second = await issue(khi, randomCnic());

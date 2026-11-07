@@ -340,6 +340,9 @@ export const branchApplicantTokens = pgTable(
     /** 13 digits, no dashes. */
     cnic: text().notNull(),
     applicantName: text().notNull(),
+    /** E.164 mobile, e.g. +923001234567. No format CHECK: rows issued before
+        this column existed carry '' — validation lives in the shared schema. */
+    phone: text().notNull().default(''),
     status: text({ enum: APPLICANT_TOKEN_STATUSES }).notNull().default('ISSUED'),
     /** Linked once the full registration is completed for this token. */
     applicantId: uuid().references(() => applicants.id, { onDelete: 'set null' }),

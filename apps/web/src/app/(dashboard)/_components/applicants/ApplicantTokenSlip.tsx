@@ -1,6 +1,7 @@
 'use client';
 
 import type { ApplicantTokenView } from '@jobbank/shared';
+import { formatPkMobileDisplay } from '@/lib/format/phone';
 
 /**
  * Token slip styled exactly like the approved demo: Saylani logo top-left,
@@ -79,6 +80,10 @@ export function ApplicantTokenSlip({ token }: { token: ApplicantTokenView }) {
           <div className="token-slip__row">
             <dt className="token-slip__key">Name</dt>
             <dd className="token-slip__value">{token.applicantName}</dd>
+          </div>
+          <div className="token-slip__row">
+            <dt className="token-slip__key">Phone</dt>
+            <dd className="token-slip__value">{formatPkMobileDisplay(token.phone)}</dd>
           </div>
         </dl>
         <footer className="token-slip__footer">

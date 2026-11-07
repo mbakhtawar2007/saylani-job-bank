@@ -7,5 +7,6 @@ export * from './job';
 export * from './health';
 export * from './master-data';
 export * from './permissions';
+export * from './phone';
 export * from './roles';
 export * from './settings';

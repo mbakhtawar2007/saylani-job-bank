@@ -18,10 +18,11 @@ import { cnicOwner, type SignedIn } from './repository';
 const tokens = schema.branchApplicantTokens;
 
 /**
- * First-counter token (2026-11-07 reversal): the first counter collects only
- * a CNIC + name and issues a numbered token for the day. The number is a
- * daily sequence per branch, starting at 1. The full registration happens at
- * a later step and links back through `applicantId` on the token row.
+ * First-counter token (2026-11-07 reversal): the first counter collects a
+ * CNIC + name + phone number and issues a numbered token for the day. The
+ * number is a daily sequence per branch, starting at 1. The full
+ * registration happens at a later step and links back through `applicantId`
+ * on the token row.
  */
 
 export type { ApplicantTokenView };
@@ -39,6 +40,7 @@ function toView(
     branchName: branch.name,
     cnic: row.cnic,
     applicantName: row.applicantName,
+    phone: row.phone,
     issuedAt: row.issuedAt.toISOString(),
     status: row.status,
     applicantId: row.applicantId,
@@ -106,6 +108,7 @@ export async function issueApplicantToken(
             tokenNumber,
             cnic: input.cnic,
             applicantName: input.applicantName,
+            phone: input.phone,
             issuedBy: ctx.actor.userId,
           })
           .returning();
@@ -120,6 +123,7 @@ export async function issueApplicantToken(
             tokenCode: tokenCodeFor(branch.code, tokenNumber),
             cnic: input.cnic,
             applicantName: input.applicantName,
+            phone: input.phone,
           },
           metadata: { issuedBy: ctx.actor.userId },
         });

@@ -20,26 +20,54 @@ describe('karachiDay', () => {
 describe('issueApplicantTokenSchema', () => {
   const branchId = '123e4567-e89b-12d3-a456-426614174000';
 
-  it('accepts a CNIC with dashes and a name', () => {
+  it('accepts a CNIC with dashes, a name and a phone number', () => {
     const parsed = issueApplicantTokenSchema.safeParse({
       branchId,
       cnic: '42101-1234567-1',
       applicantName: 'Ahmed Raza',
+      phone: '0300 1234567',
     });
     expect(parsed.success).toBe(true);
-    if (parsed.success) expect(parsed.data.cnic).toBe('4210112345671');
+    if (parsed.success) {
+      expect(parsed.data.cnic).toBe('4210112345671');
+      expect(parsed.data.phone).toBe('+923001234567');
+    }
   });
 
   it('rejects a short CNIC and a short name', () => {
     expect(
-      issueApplicantTokenSchema.safeParse({ branchId, cnic: '42101', applicantName: 'Ahmed' })
-        .success,
+      issueApplicantTokenSchema.safeParse({
+        branchId,
+        cnic: '42101',
+        applicantName: 'Ahmed',
+        phone: '03001234567',
+      }).success,
     ).toBe(false);
     expect(
       issueApplicantTokenSchema.safeParse({
         branchId,
         cnic: '4210112345671',
         applicantName: 'Al',
+        phone: '03001234567',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a missing or invalid phone number', () => {
+    expect(
+      issueApplicantTokenSchema.safeParse({
+        branchId,
+        cnic: '4210112345671',
+        applicantName: 'Ahmed Raza',
+        phone: '',
+      }).success,
+    ).toBe(false);
+    expect(
+      issueApplicantTokenSchema.safeParse({
+        branchId,
+        cnic: '4210112345671',
+        applicantName: 'Ahmed Raza',
+        phone: '12345',
       }).success,
     ).toBe(false);
   });

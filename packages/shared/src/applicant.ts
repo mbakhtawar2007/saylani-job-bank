@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DOCUMENT_MIME_TYPES, masterDataCodeSchema } from './master-data';
+import { pkPhoneSchema } from './phone';
 
 /**
  * Applicant domain contracts (M6), shared by the API and the UI.
@@ -417,6 +418,7 @@ export const issueApplicantTokenSchema = z.object({
   branchId: z.uuid('Choose a branch'),
   cnic: cnicSchema,
   applicantName: personName('the applicant name'),
+  phone: pkPhoneSchema,
 });
 export type IssueApplicantTokenInput = z.infer<typeof issueApplicantTokenSchema>;
 
@@ -445,6 +447,7 @@ export const applicantTokenSchema = z.object({
   branchName: z.string(),
   cnic: z.string(),
   applicantName: z.string(),
+  phone: z.string(),
   issuedAt: z.string(),
   status: z.enum(APPLICANT_TOKEN_STATUSES),
   applicantId: z.string().nullable(),
