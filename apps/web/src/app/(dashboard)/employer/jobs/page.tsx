@@ -1,6 +1,6 @@
 import { requireRole } from '@/domains/auth';
 import { getMyCompany } from '@/domains/company';
-import { listMyJobs } from '@/domains/job';
+import { listJobsForEmployer } from '@/domains/job';
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, type JobType } from '@jobbank/shared';
 import { Badge, Button, Link } from '@/components/atoms';
 import { EmptyState } from '@/components/molecules';
@@ -89,7 +89,8 @@ export default async function EmployerJobsPage() {
     );
   }
 
-  const jobs = await listMyJobs(actor);
+  const jobs = await listJobsForEmployer(actor);
+  const referredCount = jobs.filter((job) => job.source === 'REFERRED').length;
 
   return (
     <div className="grid w-full gap-6">
@@ -98,6 +99,7 @@ export default async function EmployerJobsPage() {
           <h1 className="text-fg text-2xl font-semibold">My jobs</h1>
           <p className="text-fg-muted mt-1 text-sm">
             {jobs.length} posting{jobs.length !== 1 ? 's' : ''}
+            {referredCount > 0 && ` · ${referredCount} referred to you by Saylani Job Bank`}
           </p>
         </div>
         <Link href="/employer/jobs/new">
@@ -112,7 +114,7 @@ export default async function EmployerJobsPage() {
         <EmptyState
           icon={Briefcase}
           title="No jobs yet"
-          description="Post your first job to start receiving applicants."
+          description="Post your first job, or wait for Saylani Job Bank to refer one to you."
         />
       ) : (
         <div className="grid gap-3">
@@ -130,10 +132,14 @@ export default async function EmployerJobsPage() {
                     <p className="text-fg font-medium">{job.title}</p>
                     <p className="text-fg-muted text-sm">
                       {JOB_TYPE_LABELS[job.jobType as JobType]} · {job.vacancies} vacancies
+                      {job.source === 'REFERRED' && ' · Referred by Saylani'}
                     </p>
                   </div>
                 </div>
-                <Badge tone={pill.tone}>{JOB_STATUS_LABELS[job.status]}</Badge>
+                <div className="flex shrink-0 items-center gap-2">
+                  {job.source === 'REFERRED' && <Badge tone="info">Referred</Badge>}
+                  <Badge tone={pill.tone}>{JOB_STATUS_LABELS[job.status]}</Badge>
+                </div>
               </Link>
             );
           })}

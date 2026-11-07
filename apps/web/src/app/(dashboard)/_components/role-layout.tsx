@@ -2,6 +2,7 @@ import { ROLE_PRIORITY, type Role } from '@jobbank/shared';
 import type { ReactNode } from 'react';
 import { describeMe, requireRole, requireSignedIn } from '@/domains/auth';
 import { listBranches } from '@/domains/branch';
+import { hasVisibleEmployerJobs } from '@/domains/job';
 import { RoleShell } from './RoleShell';
 
 async function Shell({
@@ -43,6 +44,9 @@ async function Shell({
           ?.filter((branch) => branch.isActive)
           .map((branch) => ({ value: branch.id, label: branch.name }))
       : undefined;
+  // Employer Jobs nav: only when the employer can actually see a job
+  // (their own posting or a staff referral). No company / no jobs → hidden.
+  const hideEmployerJobs = role === 'EMPLOYER' ? !(await hasVisibleEmployerJobs(actor)) : false;
   return (
     <RoleShell
       role={role}
@@ -53,6 +57,7 @@ async function Shell({
       switchableBranches={switchable}
       activeBranchId={actor.activeBranchId}
       showSecurity={!actor.roles.every((r) => r === 'APPLICANT')}
+      hideEmployerJobs={hideEmployerJobs}
     >
       {children}
     </RoleShell>

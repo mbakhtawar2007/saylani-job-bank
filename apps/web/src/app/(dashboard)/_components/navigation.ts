@@ -27,7 +27,10 @@ export interface NavItemConfig {
  * Sidebar per role. Each module adds its pages here as they are delivered
  * (only routes that exist are listed — no dead links).
  */
-export function navigationFor(role: Role): { title?: string; items: NavItemConfig[] }[] {
+export function navigationFor(
+  role: Role,
+  opts: { hideEmployerJobs?: boolean } = {},
+): { title?: string; items: NavItemConfig[] }[] {
   const overview: NavItemConfig = {
     href: ROLE_HOME[role],
     label: 'Overview',
@@ -110,7 +113,10 @@ export function navigationFor(role: Role): { title?: string; items: NavItemConfi
           items: [
             overview,
             { href: '/employer/company', label: 'Company', icon: Building2 },
-            { href: '/employer/jobs', label: 'Jobs', icon: Briefcase },
+            // No visible jobs (own postings or referrals) → no Jobs section.
+            ...(opts.hideEmployerJobs
+              ? []
+              : [{ href: '/employer/jobs', label: 'Jobs', icon: Briefcase }]),
             { href: '/employer/referrals', label: 'Referrals', icon: Users },
           ],
         },

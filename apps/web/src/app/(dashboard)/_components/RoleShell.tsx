@@ -29,6 +29,8 @@ export interface RoleShellProps {
   activeBranchId?: string | null;
   /** Applicants have no password/2FA settings. */
   showSecurity?: boolean;
+  /** Employer with no visible jobs (own or referred): hide the Jobs nav item. */
+  hideEmployerJobs?: boolean;
   children: ReactNode;
 }
 
@@ -41,6 +43,7 @@ export function RoleShell({
   companyRegistrationBranches,
   activeBranchId,
   showSecurity = true,
+  hideEmployerJobs = false,
   children,
 }: RoleShellProps) {
   const router = useRouter();
@@ -60,7 +63,7 @@ export function RoleShell({
 
   return (
     <DashboardLayout
-      navigation={navigationFor(role)}
+      navigation={navigationFor(role, { hideEmployerJobs })}
       sidebarAction={
         registrationBranches || companyRegistrationBranches ? (
           <div className="grid gap-2">

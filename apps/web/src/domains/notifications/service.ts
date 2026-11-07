@@ -17,7 +17,8 @@ export type NotificationType =
   | 'INTERVIEW_POSTPONED'
   | 'INTERVIEW_CANCELLED'
   | 'INTERVIEW_RESCHEDULED'
-  | 'APPLICANT_REFERRED';
+  | 'APPLICANT_REFERRED'
+  | 'JOB_REFERRED';
 
 export interface NotificationView {
   id: string;

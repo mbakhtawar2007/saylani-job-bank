@@ -31,6 +31,8 @@ export const PERMISSIONS = {
   'job:read': 'View jobs',
   'job:manage': 'Post and manage jobs for branch companies',
   'job:manage_own': "Post and manage own company's jobs",
+  /** Staff shares a job (vacancy) with a specific employer company. */
+  'job:refer': 'Refer jobs to employers',
 
   'match_case:read': 'View match cases',
   'match_case:manage': 'Create, review and progress match cases',
@@ -93,6 +95,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'applicant:transfer',
     'job:read',
     'job:manage',
+    'job:refer',
     'match_case:read',
     'match_case:manage',
     'match_case:refer',
@@ -118,6 +121,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'applicant:verify_identity',
     'applicant:manage',
     'job:read',
+    'job:refer',
     'match_case:read',
     'match_case:manage',
     'match_case:refer',

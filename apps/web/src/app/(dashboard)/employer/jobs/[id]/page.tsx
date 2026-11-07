@@ -1,5 +1,5 @@
 import { requireRole } from '@/domains/auth';
-import { getMyJob } from '@/domains/job';
+import { getEmployerJob } from '@/domains/job';
 import { NotFoundError } from '@/domains/shared/errors';
 import { notFound } from 'next/navigation';
 import { JobDetailPanel } from '../_components/JobDetailPanel';
@@ -15,8 +15,8 @@ export default async function EmployerJobDetailPage({
   const { id } = await params;
 
   try {
-    const job = await getMyJob(actor, id);
-    return <JobDetailPanel job={job} />;
+    const job = await getEmployerJob(actor, id);
+    return <JobDetailPanel job={job} source={job.source} referralNote={job.referralNote} />;
   } catch (e) {
     if (e instanceof NotFoundError) return notFound();
     throw e;

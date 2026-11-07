@@ -12,6 +12,7 @@ import {
   FileText,
   GitBranch,
   MapPin,
+  Send,
   Settings,
   ShieldCheck,
   Star,
@@ -28,8 +29,12 @@ import { describeMe, requireRole } from '@/domains/auth';
 import { listBranches } from '@/domains/branch';
 import { listApplicants, getMyProfile } from '@/domains/applicant';
 import { listCompanies, listQueue } from '@/domains/company';
+import {
+  countEmployerCandidates,
+  getEmployerReferralStats,
+  listJobsForEmployer,
+} from '@/domains/job';
 import { listStaff } from '@/domains/user';
-import { listMyJobs } from '@/domains/job';
 
 /* ─── Chart shape (illustrative — real time-series coming later) ── */
 const ROLE_CHART: Record<Role, { values: number[]; peak: number; label: string }> = {
@@ -385,7 +390,13 @@ export async function WelcomePanel({ role }: { role: Role }) {
   let main: DashMain;
   let smallStats: DashSmallStat[];
   let pipeline: DashPipeline;
-  let jobs: { title: string; status: string; vacancies: number | null; createdAt: string }[] = [];
+  let jobs: {
+    title: string;
+    status: string;
+    vacancies: number | null;
+    createdAt: string;
+    source?: 'OWN' | 'REFERRED';
+  }[] = [];
 
   if (role === 'SUPER_ADMIN') {
     const [r_all, r_active, r_co_all, r_co_ver, r_staff] = await Promise.all([
@@ -675,8 +686,23 @@ export async function WelcomePanel({ role }: { role: Role }) {
       ],
     };
   } else if (role === 'EMPLOYER') {
+    // Referral analytics: real counts, no placeholders (see
+    // getEmployerReferralStats / countEmployerCandidates).
+    let referralStats = {
+      totalReferred: 0,
+      openReferred: 0,
+      referredLast30Days: 0,
+    };
+    let candidateCounts = { referred: 0, hired: 0 };
     try {
-      jobs = await listMyJobs(actor);
+      const [visibleJobs, stats, candidates] = await Promise.all([
+        listJobsForEmployer(actor),
+        getEmployerReferralStats(actor),
+        countEmployerCandidates(actor),
+      ]);
+      jobs = visibleJobs;
+      referralStats = stats;
+      candidateCounts = candidates;
     } catch {
       /* no company yet */
     }
@@ -693,23 +719,26 @@ export async function WelcomePanel({ role }: { role: Role }) {
       icon: Building2,
       label: 'Active Job Postings',
       value: String(activeJobs.length),
-      trend: { dir: 'up', text: `${jobs.length} total jobs posted` },
+      trend: {
+        dir: 'up',
+        text: `${jobs.length} visible jobs · ${referralStats.totalReferred} referred to you`,
+      },
       subTitle: 'By Position',
       subItems: jobItems,
     };
     smallStats = [
       {
-        icon: Users,
-        label: 'Total Jobs Posted',
-        value: String(jobs.length),
-        sub: 'all time',
+        icon: Send,
+        label: 'Jobs Referred to You',
+        value: String(referralStats.totalReferred),
+        sub: `${referralStats.referredLast30Days} in the last 30 days`,
         color: '#1a5fac',
       },
       {
         icon: Briefcase,
-        label: 'Open Positions',
-        value: String(activeJobs.length),
-        sub: 'accepting referrals',
+        label: 'Open Referred Jobs',
+        value: String(referralStats.openReferred),
+        sub: 'referred and open now',
         color: '#0f766e',
       },
     ];
@@ -726,14 +755,14 @@ export async function WelcomePanel({ role }: { role: Role }) {
         {
           icon: Users,
           label: 'Candidates Referred',
-          current: 0,
+          current: candidateCounts.referred,
           total: Math.max(activeJobs.length, 1),
           color: '#1a5fac',
         },
         {
           icon: CheckCircle2,
           label: 'Positions Filled',
-          current: 0,
+          current: candidateCounts.hired,
           total: Math.max(activeJobs.length, 1),
           color: '#b45309',
         },
@@ -833,11 +862,13 @@ export async function WelcomePanel({ role }: { role: Role }) {
     activity = jobs.slice(0, 5).map((j) => ({
       icon: Briefcase,
       action:
-        j.status === 'FILLED'
-          ? 'Position Filled'
-          : j.status === 'OPEN'
-            ? 'Job Posted'
-            : 'Job Updated',
+        j.source === 'REFERRED'
+          ? 'Job Referred'
+          : j.status === 'FILLED'
+            ? 'Position Filled'
+            : j.status === 'OPEN'
+              ? 'Job Posted'
+              : 'Job Updated',
       detail: j.title,
       when: relativeDate(j.createdAt),
       price: j.vacancies != null ? `${j.vacancies} slot${j.vacancies !== 1 ? 's' : ''}` : 'Open',
