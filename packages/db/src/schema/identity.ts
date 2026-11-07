@@ -43,8 +43,10 @@ export const users = pgTable(
   },
   (t) => [
     // Trigram indexes for the staff `ILIKE '%q%'` name/email search (user/user.ts).
-    index('users_name_trgm_idx').using('gin', t.name),
-    index('users_email_trgm_idx').using('gin', t.email),
+    // GIN has no default opclass for text — `gin_trgm_ops` must be named
+    // explicitly or CREATE INDEX fails with 42704 (migration 0027).
+    index('users_name_trgm_idx').using('gin', sql`${t.name} gin_trgm_ops`),
+    index('users_email_trgm_idx').using('gin', sql`${t.email} gin_trgm_ops`),
   ],
 );
 

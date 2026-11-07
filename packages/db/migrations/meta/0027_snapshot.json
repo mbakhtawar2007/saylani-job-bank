@@ -856,8 +856,8 @@
           "name": "users_name_trgm_idx",
           "columns": [
             {
-              "expression": "name",
-              "isExpression": false,
+              "expression": "\"name\" gin_trgm_ops",
+              "isExpression": true,
               "asc": true,
               "nulls": "last"
             }
@@ -871,8 +871,8 @@
           "name": "users_email_trgm_idx",
           "columns": [
             {
-              "expression": "email",
-              "isExpression": false,
+              "expression": "\"email\" gin_trgm_ops",
+              "isExpression": true,
               "asc": true,
               "nulls": "last"
             }
@@ -3069,8 +3069,8 @@
           "name": "applicants_full_name_trgm_idx",
           "columns": [
             {
-              "expression": "full_name",
-              "isExpression": false,
+              "expression": "\"full_name\" gin_trgm_ops",
+              "isExpression": true,
               "asc": true,
               "nulls": "last"
             }
@@ -3476,8 +3476,8 @@
           "name": "companies_legal_name_trgm_idx",
           "columns": [
             {
-              "expression": "legal_name",
-              "isExpression": false,
+              "expression": "\"legal_name\" gin_trgm_ops",
+              "isExpression": true,
               "asc": true,
               "nulls": "last"
             }
@@ -3491,8 +3491,8 @@
           "name": "companies_trade_name_trgm_idx",
           "columns": [
             {
-              "expression": "trade_name",
-              "isExpression": false,
+              "expression": "\"trade_name\" gin_trgm_ops",
+              "isExpression": true,
               "asc": true,
               "nulls": "last"
             }
@@ -5224,8 +5224,8 @@
           "name": "jobs_title_trgm_idx",
           "columns": [
             {
-              "expression": "title",
-              "isExpression": false,
+              "expression": "\"title\" gin_trgm_ops",
+              "isExpression": true,
               "asc": true,
               "nulls": "last"
             }

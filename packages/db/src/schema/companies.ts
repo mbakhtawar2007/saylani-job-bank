@@ -75,9 +75,10 @@ export const companies = pgTable(
   (t) => [
     index('companies_branch_status_idx').on(t.branchId, t.status),
     // Trigram indexes for the staff `ILIKE '%q%'` name search (company/staff.ts).
-    // See applicants.ts: plain USING gin uses pg_trgm's default opclass for text.
-    index('companies_legal_name_trgm_idx').using('gin', t.legalName),
-    index('companies_trade_name_trgm_idx').using('gin', t.tradeName),
+    // GIN has no default opclass for text — `gin_trgm_ops` must be named
+    // explicitly or CREATE INDEX fails with 42704 (migration 0027).
+    index('companies_legal_name_trgm_idx').using('gin', sql`${t.legalName} gin_trgm_ops`),
+    index('companies_trade_name_trgm_idx').using('gin', sql`${t.tradeName} gin_trgm_ops`),
     // Owner decision 4: one live company per NTN. Drafts don't count (no squatting), and a
     // rejected company may be re-registered properly by its real owner.
     uniqueIndex('companies_ntn_active_uq')

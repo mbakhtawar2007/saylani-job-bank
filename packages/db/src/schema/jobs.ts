@@ -71,7 +71,9 @@ export const jobs = pgTable(
     // Trigram index for the staff `ILIKE '%q%'` title search (job/staff.ts).
     // categoryCode is searched too but already has a btree index and is a
     // short code, not free text — no trigram index there.
-    index('jobs_title_trgm_idx').using('gin', t.title),
+    // GIN has no default opclass for text — `gin_trgm_ops` must be named
+    // explicitly or CREATE INDEX fails with 42704 (migration 0027).
+    index('jobs_title_trgm_idx').using('gin', sql`${t.title} gin_trgm_ops`),
     check(
       'jobs_salary_order',
       sql`salary_min IS NULL OR salary_max IS NULL OR salary_min <= salary_max`,
