@@ -10,6 +10,165 @@
   display: none;
 }
 
+/* Token slip — styled exactly like the approved demo (Saylani logo top-left,
+   TOKEN SLIP badge, big two-digit number, detail rows, Job Bank logo
+   watermark). Sizes are the demo's proportions scaled to a 3.4in slip.
+   The same markup renders on screen and on paper; the @media print rules
+   below only size and isolate it. */
+.token-slip {
+  position: relative;
+  width: 100%;
+  max-width: 3.4in;
+  margin: 0 auto;
+  overflow: hidden;
+  border: 2px solid #0f3557;
+  border-radius: 13px;
+  background: #fff;
+  padding: 20px 22px 16px;
+  font-family: Arial, Helvetica, sans-serif;
+  color: #102a43;
+  box-shadow: 0 8px 24px rgb(15 53 87 / 0.12);
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+.token-slip__watermark {
+  position: absolute;
+  left: 50%;
+  top: 54%;
+  width: 82%;
+  transform: translate(-50%, -50%);
+  opacity: 0.1;
+  pointer-events: none;
+}
+
+.token-slip__content {
+  position: relative;
+  z-index: 1;
+}
+
+.token-slip__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.token-slip__logo {
+  display: block;
+  height: 42px;
+  width: auto;
+}
+
+.token-slip__badge {
+  margin-top: 6px;
+  border-radius: 999px;
+  background: #0f3557;
+  padding: 5px 9px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+
+.token-slip__title {
+  margin-top: 9px;
+  text-align: center;
+}
+
+.token-slip__title h1 {
+  color: #0f3557;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.token-slip__title p {
+  margin-top: 3px;
+  color: #5a6b7a;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+
+.token-slip__divider {
+  height: 2px;
+  margin: 12px 0 11px;
+  border: 0;
+  background: #dbe4ea;
+}
+
+.token-slip__number {
+  text-align: center;
+}
+
+.token-slip__number-label {
+  color: #7a8a99;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+
+.token-slip__number-value {
+  color: #0f3557;
+  font-size: 53px;
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+.token-slip__rows {
+  margin-top: 9px;
+}
+
+.token-slip__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 7px 2px;
+  border-bottom: 1px solid #e6edf1;
+}
+
+.token-slip__row:last-child {
+  border-bottom: 0;
+}
+
+.token-slip__key {
+  color: #6b7d8d;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.token-slip__value {
+  overflow-wrap: anywhere;
+  color: #102a43;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: right;
+}
+
+.token-slip__footer {
+  margin-top: 11px;
+  border-top: 2px dashed #c3d2dc;
+  padding-top: 9px;
+  text-align: center;
+}
+
+.token-slip__footer p {
+  color: #43566a;
+  font-size: 9px;
+  font-style: italic;
+}
+
+.token-slip__footer small {
+  display: block;
+  margin-top: 5px;
+  color: #8ba0b0;
+  font-size: 7px;
+  font-style: normal;
+  letter-spacing: 2px;
+}
+
 /* Map semantic CSS variables → Tailwind colour utilities (bg-surface, text-fg-muted, …). */
 @theme inline {
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -146,49 +305,14 @@
       background: white !important;
     }
 
-    /* Token slip: a small centred slip that must fit on one page. */
-    .applicant-token-print-slip {
+    /* Token slip: the demo-styled slip, centred, on one page. */
+    .token-slip {
       width: 3.4in !important;
+      max-width: 3.4in !important;
       margin: 0 auto !important;
-      padding: 0.2in !important;
-      border: 2px solid #111 !important;
-      color: #111 !important;
-      font-size: 11pt !important;
-      text-align: center !important;
+      box-shadow: none !important;
       break-inside: avoid !important;
       page-break-inside: avoid !important;
-    }
-
-    .applicant-token-print-slip header p:first-child {
-      font-size: 13pt !important;
-      font-weight: 700 !important;
-    }
-
-    .applicant-token-print-number {
-      margin: 0.12in 0 !important;
-      font-size: 28pt !important;
-      font-weight: 800 !important;
-      letter-spacing: 0.02em !important;
-    }
-
-    .applicant-token-print-slip dl {
-      text-align: left !important;
-    }
-
-    .applicant-token-print-slip dl > div {
-      display: flex !important;
-      justify-content: space-between !important;
-      gap: 0.15in !important;
-      padding: 0.03in 0 !important;
-    }
-
-    .applicant-token-print-slip dl dt {
-      color: #444 !important;
-    }
-
-    .applicant-token-print-slip dl dd {
-      font-weight: 600 !important;
-      text-align: right !important;
     }
 
     .registration-form-print-sheet {

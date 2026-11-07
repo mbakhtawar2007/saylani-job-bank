@@ -7,9 +7,8 @@ import { useState, type FormEvent } from 'react';
 import { Button, Input, Select, type SelectOption } from '@/components/atoms';
 import { CNICInput, FormField, Modal } from '@/components/molecules';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
-import { formatCnic } from '@/lib/format/cnic';
 import { errorMessage, toFieldErrors, zodFieldErrors, type FieldErrors } from './form';
-import { ApplicantTokenPrint } from './ApplicantTokenPrint';
+import { ApplicantTokenSlip } from './ApplicantTokenSlip';
 
 interface Props {
   branches: SelectOption[];
@@ -76,14 +75,6 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
     }
   };
 
-  const issued = token
-    ? new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Asia/Karachi',
-        dateStyle: 'medium',
-        timeStyle: 'short',
-      }).format(new Date(token.issuedAt))
-    : '';
-
   return (
     <>
       <Modal
@@ -103,28 +94,7 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
       >
         {token ? (
           <div className="grid gap-5">
-            <div className="border-border rounded-xl border p-4 text-center">
-              <p className="text-fg-muted text-sm">Token number</p>
-              <p className="text-4xl font-bold tracking-wide">{token.tokenCode}</p>
-              <dl className="mt-4 grid gap-1 text-left text-sm">
-                <div className="flex justify-between gap-4">
-                  <dt className="text-fg-muted">Date and time</dt>
-                  <dd>{issued}</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-fg-muted">CNIC number</dt>
-                  <dd className="font-mono">{formatCnic(token.cnic)}</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-fg-muted">Applicant name</dt>
-                  <dd>{token.applicantName}</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-fg-muted">Branch</dt>
-                  <dd>{token.branchName}</dd>
-                </div>
-              </dl>
-            </div>
+            <ApplicantTokenSlip token={token} />
             <div className="flex flex-wrap gap-2">
               <Button onClick={() => window.print()}>Print token</Button>
               <Button
@@ -184,7 +154,14 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
           </form>
         )}
       </Modal>
-      {token ? createPortal(<ApplicantTokenPrint token={token} />, document.body) : null}
+      {token
+        ? createPortal(
+            <div className="applicant-token-print-root">
+              <ApplicantTokenSlip token={token} />
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }
