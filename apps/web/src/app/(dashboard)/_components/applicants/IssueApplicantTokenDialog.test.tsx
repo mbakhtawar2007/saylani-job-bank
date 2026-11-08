@@ -42,10 +42,12 @@ async function open() {
 }
 
 describe('IssueApplicantTokenDialog', () => {
-  it('renders a wide dialog so the form fits without a cramped scrollbar', async () => {
+  it('renders a wide dialog with CNIC and phone side by side', async () => {
     const dialog = await open();
-    expect(dialog).toHaveClass('max-w-lg');
-    expect(dialog).not.toHaveClass('max-w-sm');
+    expect(dialog).toHaveClass('max-w-2xl');
+    expect(dialog).not.toHaveClass('max-w-lg');
+    // CNIC + Phone share one two-column row; Name sits full-width below.
+    expect(dialog.querySelector('[class*="grid-cols-2"]')).not.toBeNull();
   });
 
   it('collects CNIC, name and phone, then shows only a Print button', async () => {

@@ -84,7 +84,7 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
         description="Take the applicant's CNIC, name and phone number, issue today's next token, and print it."
         open={open}
         onOpenChange={setDialogOpen}
-        size="md"
+        size="lg"
         trigger={
           <Button
             fullWidth={placement === 'sidebar'}
@@ -128,14 +128,28 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
                 />
               </FormField>
             )}
-            <FormField
-              label="CNIC number"
-              required
-              error={errors.cnic}
-              hint="13 digits, as on the CNIC"
-            >
-              <CNICInput autoFocus value={cnic} onChange={(change) => setCnic(change.digits)} />
-            </FormField>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <FormField
+                label="CNIC number"
+                required
+                error={errors.cnic}
+                hint="13 digits, as on the CNIC"
+              >
+                <CNICInput autoFocus value={cnic} onChange={(change) => setCnic(change.digits)} />
+              </FormField>
+              <FormField
+                label="Phone number"
+                required
+                error={errors.phone}
+                hint="Mobile number the applicant can be reached on"
+              >
+                <PhoneInput
+                  aria-label="Phone number"
+                  value={phone}
+                  onChange={(value) => setPhone(value.e164 ?? value.national)}
+                />
+              </FormField>
+            </div>
             <FormField
               label="Applicant name"
               required
@@ -149,18 +163,6 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
                 autoComplete="off"
                 maxLength={120}
                 startAdornment={<User aria-hidden="true" />}
-              />
-            </FormField>
-            <FormField
-              label="Phone number"
-              required
-              error={errors.phone}
-              hint="Mobile number the applicant can be reached on"
-            >
-              <PhoneInput
-                aria-label="Phone number"
-                value={phone}
-                onChange={(value) => setPhone(value.e164 ?? value.national)}
               />
             </FormField>
             <div className="grid gap-2">

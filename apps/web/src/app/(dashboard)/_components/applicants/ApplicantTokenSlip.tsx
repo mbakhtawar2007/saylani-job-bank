@@ -20,13 +20,12 @@ export function ApplicantTokenSlip({ token }: { token: ApplicantTokenView }) {
     timeZone: 'Asia/Karachi',
     day: '2-digit',
     month: '2-digit',
-    year: 'numeric',
+    year: '2-digit',
   }).format(new Date(token.issuedAt));
   const time = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Karachi',
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
     hour12: true,
   }).format(new Date(token.issuedAt));
 
@@ -66,12 +65,10 @@ export function ApplicantTokenSlip({ token }: { token: ApplicantTokenView }) {
             <dd className="token-slip__value">{token.tokenCode}</dd>
           </div>
           <div className="token-slip__row">
-            <dt className="token-slip__key">Date</dt>
-            <dd className="token-slip__value">{date}</dd>
-          </div>
-          <div className="token-slip__row">
-            <dt className="token-slip__key">Time</dt>
-            <dd className="token-slip__value">{time}</dd>
+            <dt className="token-slip__key">Date &amp; Time</dt>
+            <dd className="token-slip__value">
+              {date} • {time}
+            </dd>
           </div>
           <div className="token-slip__row">
             <dt className="token-slip__key">NIC</dt>
