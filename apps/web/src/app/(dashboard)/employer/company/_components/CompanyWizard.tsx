@@ -5,6 +5,8 @@ import {
   LEGAL_STRUCTURE_LABELS,
   COMPANY_SIZE_BANDS,
   COMPANY_SIZE_LABELS,
+  RESUBMIT_NOTE_MIN_LENGTH,
+  isResubmitNoteSufficient,
   type CompanyStatus,
 } from '@jobbank/shared';
 import { ArrowLeft, ArrowRight, CheckCircle2, Send } from 'lucide-react';
@@ -798,10 +800,20 @@ function SubmitStep({
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState('');
   const pill = STATUS_PILL[company.status];
 
   const canSubmit = company.status === 'DRAFT' || company.status === 'REJECTED';
   const canResubmit = company.status === 'INFO_REQUESTED';
+
+  // M18: sending back needs a note saying what changed, or a document uploaded
+  // after the verifier's request — otherwise an unchanged company would bounce
+  // back and burn a fresh SLA.
+  const infoRequestedAt = company.verification?.infoRequestedAt ?? null;
+  const hasNewDocument =
+    !!infoRequestedAt &&
+    company.documents.some((d) => !!d.uploadedAt && d.uploadedAt > infoRequestedAt);
+  const canSendBack = isResubmitNoteSufficient(note) || hasNewDocument;
 
   async function submit() {
     setPending(true);
@@ -825,7 +837,7 @@ function SubmitStep({
     try {
       const { data: saved } = await apiFetch<CompanyView>('/api/v1/companies/me/resubmit', {
         method: 'POST',
-        body: { note: null },
+        body: { note: note.trim() || null },
       });
       onSubmitted(saved);
     } catch (err) {
@@ -879,6 +891,24 @@ function SubmitStep({
         </div>
       )}
 
+      {canResubmit && (
+        <FormField
+          label="What did you change or send?"
+          hint={
+            hasNewDocument
+              ? 'A document you uploaded after the request is attached — you can send it back now, or add a note as well.'
+              : `Write at least ${RESUBMIT_NOTE_MIN_LENGTH} characters so the verifier knows what changed.`
+          }
+        >
+          <Textarea
+            rows={3}
+            placeholder="e.g. Uploaded the renewed NTN certificate and corrected the head office address."
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+        </FormField>
+      )}
+
       {error && <p className="text-danger text-sm">{error}</p>}
 
       {canSubmit && (
@@ -893,7 +923,13 @@ function SubmitStep({
         </Button>
       )}
       {canResubmit && (
-        <Button fullWidth loading={pending} leftIcon={<Send />} onClick={() => void resubmit()}>
+        <Button
+          fullWidth
+          loading={pending}
+          disabled={!canSendBack}
+          leftIcon={<Send />}
+          onClick={() => void resubmit()}
+        >
           Send back to verifier
         </Button>
       )}

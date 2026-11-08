@@ -3,34 +3,10 @@ import NextLink from 'next/link';
 import { Button } from '@/components/atoms';
 import { getMyProfile } from '@/domains/applicant';
 import { requireRole } from '@/domains/auth';
-import { listMatchedJobs, type MatchedJob, type MatchStrength } from '@/domains/matching';
-import { JOB_TYPE_LABELS, SHIFT_TYPE_LABELS } from '@jobbank/shared';
+import { listReferredJobsForApplicant, type ReferredJobView } from '@/domains/job';
+import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, SHIFT_TYPE_LABELS } from '@jobbank/shared';
 
-export const metadata = { title: 'Job Matches — Saylani Job Bank' };
-
-const STRENGTH_CONFIG: Record<
-  MatchStrength,
-  { label: string; bg: string; fg: string; border: string }
-> = {
-  GREAT: {
-    label: 'Great Match',
-    bg: 'var(--success-soft)',
-    fg: 'var(--success-soft-fg)',
-    border: 'rgba(21,128,61,0.2)',
-  },
-  GOOD: {
-    label: 'Good Match',
-    bg: 'var(--primary-soft)',
-    fg: 'var(--primary-soft-fg)',
-    border: 'rgba(26,95,172,0.2)',
-  },
-  POSSIBLE: {
-    label: 'Possible Match',
-    bg: 'var(--neutral-soft)',
-    fg: 'var(--fg-muted)',
-    border: 'var(--border)',
-  },
-};
+export const metadata = { title: 'Referred Jobs — Saylani Job Bank' };
 
 function formatSalary(min: number | null, max: number | null): string {
   if (!min && !max) return 'Salary not disclosed';
@@ -52,9 +28,7 @@ function timeAgo(iso: string | null): string {
   return `${Math.floor(days / 30)}mo ago`;
 }
 
-function JobCard({ job }: { job: MatchedJob }) {
-  const cfg = STRENGTH_CONFIG[job.strength];
-
+function JobCard({ job }: { job: ReferredJobView }) {
   return (
     <div
       className="group rounded-2xl border p-5 transition-all duration-150 hover:shadow-md"
@@ -63,42 +37,20 @@ function JobCard({ job }: { job: MatchedJob }) {
       {/* Header row */}
       <div className="mb-3 flex items-start justify-between gap-3">
         <h3 className="text-fg truncate text-base font-bold">{job.title}</h3>
-        <span
-          className="shrink-0 rounded-full px-3 py-1 text-xs font-semibold"
-          style={{ background: cfg.bg, color: cfg.fg, border: `1px solid ${cfg.border}` }}
-        >
-          {cfg.label}
-        </span>
+        {job.status !== 'OPEN' && (
+          <span
+            className="shrink-0 rounded-full px-3 py-1 text-xs font-semibold"
+            style={{ background: 'var(--neutral-soft)', color: 'var(--fg-muted)' }}
+          >
+            {JOB_STATUS_LABELS[job.status]}
+          </span>
+        )}
       </div>
 
-      {/* Score bar */}
-      <div className="mb-3">
-        <div
-          className="mb-1 flex items-center justify-between text-xs"
-          style={{ color: 'var(--fg-muted)' }}
-        >
-          <span>Match score</span>
-          <span className="font-semibold" style={{ color: 'var(--fg)' }}>
-            {job.score}%
-          </span>
-        </div>
-        <div
-          className="h-1.5 overflow-hidden rounded-full"
-          style={{ background: 'var(--surface-sunken)' }}
-        >
-          <div
-            className="h-full rounded-full transition-all duration-700"
-            style={{
-              width: `${job.score}%`,
-              background:
-                job.strength === 'GREAT'
-                  ? 'linear-gradient(90deg,#15803d,#34c76b)'
-                  : job.strength === 'GOOD'
-                    ? 'linear-gradient(90deg,var(--primary),#60a5fa)'
-                    : 'var(--fg-subtle)',
-            }}
-          />
-        </div>
+      {/* Referred line */}
+      <div className="mb-3 flex items-center gap-1.5 text-xs" style={{ color: 'var(--fg-muted)' }}>
+        <CheckCircle2 className="size-3.5 shrink-0" style={{ color: 'var(--primary)' }} />
+        <span>Referred to you {timeAgo(job.referredAt)}</span>
       </div>
 
       {/* Tags row */}
@@ -117,20 +69,9 @@ function JobCard({ job }: { job: MatchedJob }) {
         </span>
       </div>
 
-      {/* Match reasons */}
-      {job.matchReasons.length > 0 && (
-        <div className="mb-3 flex flex-col gap-1">
-          {job.matchReasons.slice(0, 3).map((r) => (
-            <div
-              key={r}
-              className="flex items-center gap-1.5 text-xs"
-              style={{ color: 'var(--success-soft-fg)' }}
-            >
-              <CheckCircle2 className="size-3 shrink-0" />
-              <span>{r}</span>
-            </div>
-          ))}
-        </div>
+      {/* Referral note */}
+      {job.referralNote && (
+        <p className="text-fg-muted mb-3 text-xs leading-relaxed">“{job.referralNote}”</p>
       )}
 
       {/* Footer */}
@@ -162,14 +103,14 @@ export default async function ApplicantJobsPage() {
     return (
       <div className="grid w-full gap-6">
         <header>
-          <h1 className="text-fg text-2xl font-bold">Job Matches</h1>
+          <h1 className="text-fg text-2xl font-bold">Referred Jobs</h1>
         </header>
         <div
           className="rounded-2xl border p-8 text-center"
           style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
         >
           <p className="text-fg-muted mb-4 text-sm">
-            Create your profile first to see jobs matched to your skills and location.
+            Create your profile first so staff can refer jobs to you.
           </p>
           <Button asChild>
             <NextLink href="/applicant/profile">Start my profile</NextLink>
@@ -184,7 +125,7 @@ export default async function ApplicantJobsPage() {
     return (
       <div className="grid w-full gap-6">
         <header>
-          <h1 className="text-fg text-2xl font-bold">Job Matches</h1>
+          <h1 className="text-fg text-2xl font-bold">Referred Jobs</h1>
         </header>
         <div
           className="rounded-2xl border p-8 text-center"
@@ -201,40 +142,23 @@ export default async function ApplicantJobsPage() {
     );
   }
 
-  const jobs = await listMatchedJobs(profile);
-
-  const greatCount = jobs.filter((j) => j.strength === 'GREAT').length;
-  const goodCount = jobs.filter((j) => j.strength === 'GOOD').length;
+  const jobs = await listReferredJobsForApplicant(actor);
 
   return (
     <div className="grid w-full gap-6">
       {/* ── Header ─────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="grid gap-1">
-          <h1 className="text-fg text-2xl font-bold sm:text-3xl">Job Matches</h1>
+          <h1 className="text-fg text-2xl font-bold sm:text-3xl">Referred Jobs</h1>
           <p className="text-fg-muted text-sm">
-            Open jobs in <strong>{profile.address.cityCode}</strong> matched to your profile
+            Jobs in <strong>{profile.address.cityCode}</strong> that Job Bank staff referred to you
           </p>
         </div>
         {jobs.length > 0 && (
           <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--fg-muted)' }}>
-            {greatCount > 0 && (
-              <span
-                className="rounded-full px-3 py-1 text-xs font-semibold"
-                style={{ background: 'var(--success-soft)', color: 'var(--success-soft-fg)' }}
-              >
-                {greatCount} great {greatCount === 1 ? 'match' : 'matches'}
-              </span>
-            )}
-            {goodCount > 0 && (
-              <span
-                className="rounded-full px-3 py-1 text-xs font-semibold"
-                style={{ background: 'var(--primary-soft)', color: 'var(--primary-soft-fg)' }}
-              >
-                {goodCount} good {goodCount === 1 ? 'match' : 'matches'}
-              </span>
-            )}
-            <span style={{ color: 'var(--fg-muted)' }}>{jobs.length} total</span>
+            <span style={{ color: 'var(--fg-muted)' }}>
+              {jobs.length} referred {jobs.length === 1 ? 'job' : 'jobs'}
+            </span>
           </div>
         )}
       </div>
@@ -245,8 +169,8 @@ export default async function ApplicantJobsPage() {
           className="rounded-xl px-4 py-3 text-sm"
           style={{ background: 'var(--warning-soft)', color: 'var(--warning-soft-fg)' }}
         >
-          Your profile is incomplete — complete it to get better matches and to appear in the Job
-          Bank staff queue.{' '}
+          Your profile is incomplete — complete it so staff can refer you to more jobs and so you
+          appear in the Job Bank staff queue.{' '}
           <NextLink
             href="/applicant/profile"
             className="font-semibold underline underline-offset-4"
@@ -268,10 +192,10 @@ export default async function ApplicantJobsPage() {
           >
             <Briefcase className="size-7" style={{ color: 'var(--primary)' }} />
           </div>
-          <h2 className="text-fg mb-2 text-lg font-bold">No open jobs in your city yet</h2>
+          <h2 className="text-fg mb-2 text-lg font-bold">No jobs referred to you yet</h2>
           <p className="text-fg-muted text-sm leading-relaxed">
-            We'll show jobs here as employers in <strong>{profile.address.cityCode}</strong> post
-            new openings. Check back soon!
+            We&apos;ll show jobs here when Job Bank staff in{' '}
+            <strong>{profile.address.cityCode}</strong> refer one to you. Check back soon!
           </p>
 
           <div className="mt-6 grid grid-cols-3 gap-3 text-left">
@@ -279,7 +203,7 @@ export default async function ApplicantJobsPage() {
               {
                 icon: Star,
                 label: 'Complete your profile',
-                desc: 'More details = better matches when jobs appear',
+                desc: 'More details = more referrals when jobs appear',
                 color: '#b45309',
               },
               {
@@ -316,7 +240,7 @@ export default async function ApplicantJobsPage() {
       {jobs.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {jobs.map((job) => (
-            <JobCard key={job.jobId} job={job} />
+            <JobCard key={job.id} job={job} />
           ))}
         </div>
       )}

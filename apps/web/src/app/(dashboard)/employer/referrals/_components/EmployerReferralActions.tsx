@@ -180,6 +180,7 @@ export function EmployerReferralActions({
               type="datetime-local"
               value={interviewAt}
               onChange={(e) => setInterviewAt(e.target.value)}
+              min={new Date(Date.now() - 5 * 60_000).toISOString().slice(0, 16)}
               required
             />
           </FormField>
@@ -226,6 +227,7 @@ export function EmployerReferralActions({
                   type="datetime-local"
                   value={interviewAt}
                   onChange={(e) => setInterviewAt(e.target.value)}
+                  min={new Date(Date.now() - 5 * 60_000).toISOString().slice(0, 16)}
                 />
               </FormField>
               <FormField label="Location">

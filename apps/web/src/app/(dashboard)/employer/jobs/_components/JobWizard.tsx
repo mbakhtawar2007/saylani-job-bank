@@ -70,11 +70,18 @@ interface SkillEntry {
 
 interface Props {
   initialJob?: JobView | null;
+  /**
+   * True when an employer edits a published (OPEN / PAUSED) job: the
+   * restricted fields (title, salary, location, skills, …) are visible but
+   * disabled — only staff can change them (referral workflow §3). DRAFT
+   * editing and creation stay fully editable.
+   */
+  restricted?: boolean;
 }
 
 // ─── Component ──────────────────────────────────────────────────────────
 
-export function JobWizard({ initialJob = null }: Props) {
+export function JobWizard({ initialJob = null, restricted = false }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -227,27 +234,42 @@ export function JobWizard({ initialJob = null }: Props) {
     startTransition(async () => {
       setError(null);
       try {
-        const basicBody = {
-          title: title.trim(),
-          categoryCode: categoryCode.trim(),
-          description: description.trim(),
-          jobType,
-          shift,
-          genderPreference,
-          vacancies: parseInt(vacancies, 10),
-          salaryMin: salaryMin ? parseInt(salaryMin, 10) : undefined,
-          salaryMax: salaryMax ? parseInt(salaryMax, 10) : undefined,
-          fuelAllowance,
-          flexibleHours,
-          annualLeaveDays: annualLeaveDays ? parseInt(annualLeaveDays, 10) : undefined,
-          medicalCoverage,
-          bonusTier,
-          workFromHome,
-          providentFund,
-          transportAllowance,
-          eobi,
-          lifeInsurance,
-        };
+        // A restricted (published-job) edit may only send the fields the
+        // employer is allowed to change — sending a restricted field would
+        // make the server reject the whole PATCH.
+        const basicBody = restricted
+          ? {
+              description: description.trim(),
+              fuelAllowance,
+              flexibleHours,
+              annualLeaveDays: annualLeaveDays ? parseInt(annualLeaveDays, 10) : undefined,
+              workFromHome,
+              providentFund,
+              transportAllowance,
+              eobi,
+              lifeInsurance,
+            }
+          : {
+              title: title.trim(),
+              categoryCode: categoryCode.trim(),
+              description: description.trim(),
+              jobType,
+              shift,
+              genderPreference,
+              vacancies: parseInt(vacancies, 10),
+              salaryMin: salaryMin ? parseInt(salaryMin, 10) : undefined,
+              salaryMax: salaryMax ? parseInt(salaryMax, 10) : undefined,
+              fuelAllowance,
+              flexibleHours,
+              annualLeaveDays: annualLeaveDays ? parseInt(annualLeaveDays, 10) : undefined,
+              medicalCoverage,
+              bonusTier,
+              workFromHome,
+              providentFund,
+              transportAllowance,
+              eobi,
+              lifeInsurance,
+            };
 
         let jobId: string;
         if (isNew) {
@@ -264,7 +286,9 @@ export function JobWizard({ initialJob = null }: Props) {
           jobId = updated.id;
         }
 
-        if (pin && addressLine.trim().length >= 3 && cityCode) {
+        // Location is staff-only once the job is published, so a restricted
+        // edit never sends a location update either.
+        if (!restricted && pin && addressLine.trim().length >= 3 && cityCode) {
           await apiFetch<JobView>(`/api/v1/jobs/me/${jobId}/location`, {
             method: 'PUT',
             body: {
@@ -293,6 +317,13 @@ export function JobWizard({ initialJob = null }: Props) {
           Fill in the details below. All sections except job title, category and description are
           optional.
         </p>
+        {restricted && (
+          <p className="text-fg border-border bg-surface-muted mt-3 rounded-lg border px-3 py-2 text-sm">
+            This job is already published, so the title, salary, location, skills and other core
+            details can only be changed by staff — ask them if something needs updating. You can
+            still edit the description, other requirements and benefits below.
+          </p>
+        )}
       </header>
 
       <div className="grid gap-6">
@@ -303,6 +334,7 @@ export function JobWizard({ initialJob = null }: Props) {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. Senior Accountant"
+              disabled={restricted}
             />
           </FormField>
 
@@ -313,12 +345,14 @@ export function JobWizard({ initialJob = null }: Props) {
                 onChange={(e) => setCategoryCode(e.target.value)}
                 options={categories}
                 placeholder="Select a job category"
+                disabled={restricted}
               />
             ) : (
               <Input
                 value={categoryCode}
                 onChange={(e) => setCategoryCode(e.target.value)}
                 placeholder="e.g. ACCOUNTING"
+                disabled={restricted}
               />
             )}
           </FormField>
@@ -338,6 +372,7 @@ export function JobWizard({ initialJob = null }: Props) {
                 options={JOB_TYPE_OPTIONS}
                 value={jobType}
                 onChange={(e) => setJobType(e.target.value as JobType)}
+                disabled={restricted}
               />
             </FormField>
             <FormField label="Shift" required>
@@ -345,6 +380,7 @@ export function JobWizard({ initialJob = null }: Props) {
                 options={SHIFT_OPTIONS}
                 value={shift}
                 onChange={(e) => setShift(e.target.value as ShiftType)}
+                disabled={restricted}
               />
             </FormField>
           </div>
@@ -355,6 +391,7 @@ export function JobWizard({ initialJob = null }: Props) {
                 options={GENDER_OPTIONS}
                 value={genderPreference}
                 onChange={(e) => setGenderPreference(e.target.value as GenderPreference)}
+                disabled={restricted}
               />
             </FormField>
             <FormField label="Vacancies" required>
@@ -363,6 +400,7 @@ export function JobWizard({ initialJob = null }: Props) {
                 min={1}
                 value={vacancies}
                 onChange={(e) => setVacancies(e.target.value)}
+                disabled={restricted}
               />
             </FormField>
           </div>
@@ -375,6 +413,7 @@ export function JobWizard({ initialJob = null }: Props) {
                 value={salaryMin}
                 onChange={(e) => setSalaryMin(e.target.value)}
                 placeholder="Optional"
+                disabled={restricted}
               />
             </FormField>
             <FormField label="Max salary (PKR/month)">
@@ -384,6 +423,7 @@ export function JobWizard({ initialJob = null }: Props) {
                 value={salaryMax}
                 onChange={(e) => setSalaryMax(e.target.value)}
                 placeholder="Optional"
+                disabled={restricted}
               />
             </FormField>
           </div>
@@ -404,6 +444,7 @@ export function JobWizard({ initialJob = null }: Props) {
                 onChange={(e) => setMinExperience(e.target.value)}
                 placeholder="0"
                 className="w-28"
+                disabled={restricted}
               />
               <span className="text-fg-muted text-sm">years</span>
             </div>
@@ -435,6 +476,7 @@ export function JobWizard({ initialJob = null }: Props) {
                 onChange={(e) => setPickLabel(e.target.value)}
                 onKeyDown={handleSkillKeyDown}
                 placeholder="e.g. MS Excel, AutoCAD, React…"
+                disabled={restricted}
               />
             </FormField>
 
@@ -443,6 +485,7 @@ export function JobWizard({ initialJob = null }: Props) {
                 value={pickLevel}
                 onChange={(e) => setPickLevel(e.target.value as SkillLevel)}
                 options={LEVEL_OPTIONS}
+                disabled={restricted}
               />
             </FormField>
 
@@ -450,7 +493,7 @@ export function JobWizard({ initialJob = null }: Props) {
               type="button"
               variant="secondary"
               onClick={addSkill}
-              disabled={!pickLabel.trim()}
+              disabled={!pickLabel.trim() || restricted}
               leftIcon={<Plus className="size-4" />}
             >
               Add skill
@@ -470,7 +513,8 @@ export function JobWizard({ initialJob = null }: Props) {
                   <select
                     value={s.minLevel}
                     onChange={(e) => updateSkillLevel(s.skillCode, e.target.value as SkillLevel)}
-                    className="text-fg-muted bg-transparent text-xs focus:outline-none"
+                    disabled={restricted}
+                    className="text-fg-muted bg-transparent text-xs focus:outline-none disabled:cursor-not-allowed"
                   >
                     {SKILL_LEVELS.map((l) => (
                       <option key={l} value={l}>
@@ -481,7 +525,8 @@ export function JobWizard({ initialJob = null }: Props) {
                   <button
                     type="button"
                     onClick={() => removeSkill(s.skillCode)}
-                    className="text-fg-subtle hover:text-danger ml-1 transition-colors"
+                    disabled={restricted}
+                    className="text-fg-subtle hover:text-danger ml-1 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                     aria-label={`Remove ${s.label}`}
                   >
                     <X className="size-3.5" />
@@ -500,6 +545,7 @@ export function JobWizard({ initialJob = null }: Props) {
                 options={MEDICAL_OPTIONS}
                 value={medicalCoverage}
                 onChange={(e) => setMedicalCoverage(e.target.value as MedicalCoverageType)}
+                disabled={restricted}
               />
             </FormField>
 
@@ -520,6 +566,7 @@ export function JobWizard({ initialJob = null }: Props) {
               options={BONUS_OPTIONS}
               value={bonusTier}
               onChange={(e) => setBonusTier(e.target.value as BonusTier)}
+              disabled={restricted}
             />
           </FormField>
 
@@ -557,7 +604,13 @@ export function JobWizard({ initialJob = null }: Props) {
             </p>
           </div>
 
-          <MapPinPicker value={pin} onChange={setPin} label="Job site location" height="18rem" />
+          <MapPinPicker
+            value={pin}
+            onChange={setPin}
+            label="Job site location"
+            height="18rem"
+            readOnly={restricted}
+          />
 
           <div className="grid gap-4 sm:grid-cols-2">
             <FormField
@@ -582,6 +635,7 @@ export function JobWizard({ initialJob = null }: Props) {
                   autoFilled.current = false;
                 }}
                 placeholder="House, street and block"
+                disabled={restricted}
               />
             </FormField>
 
@@ -594,6 +648,7 @@ export function JobWizard({ initialJob = null }: Props) {
                 value={cityCode}
                 onChange={(e) => setCityCode(e.target.value)}
                 options={cities}
+                disabled={restricted}
               />
             </FormField>
           </div>

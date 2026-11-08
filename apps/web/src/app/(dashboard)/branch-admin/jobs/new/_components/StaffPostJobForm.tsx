@@ -21,6 +21,16 @@ import { apiFetch, friendlyApiError } from '@/lib/api/client';
 interface Props {
   companies: { id: string; name: string }[];
   categories: { code: string; label: string }[];
+  /**
+   * Company to preselect (e.g. from ?companyId= on a company detail page).
+   * Only honoured when it is one of `companies` — the page lists VERIFIED
+   * companies in the actor's scope only, so anything else is not a valid
+   * posting target and the dropdown stays unselected. The server re-checks
+   * (VERIFIED + city scope) on submit.
+   */
+  initialCompanyId?: string;
+  /** Where to land after the draft is created. Defaults to the branch-admin list. */
+  successHref?: string;
 }
 
 const JOB_TYPE_OPTIONS = JOB_TYPES.map((v) => ({ value: v, label: JOB_TYPE_LABELS[v] }));
@@ -35,11 +45,18 @@ const MEDICAL_OPTIONS = MEDICAL_COVERAGE_TYPES.map((v) => ({
 }));
 const BONUS_OPTIONS = BONUS_TIERS.map((v) => ({ value: v, label: BONUS_TIER_LABELS[v] }));
 
-export function StaffPostJobForm({ companies, categories }: Props) {
+export function StaffPostJobForm({
+  companies,
+  categories,
+  initialCompanyId,
+  successHref = '/branch-admin/jobs',
+}: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
-  const [companyId, setCompanyId] = useState('');
+  const [companyId, setCompanyId] = useState(() =>
+    initialCompanyId && companies.some((c) => c.id === initialCompanyId) ? initialCompanyId : '',
+  );
   const [title, setTitle] = useState('');
   const [categoryCode, setCategoryCode] = useState('');
   const [description, setDescription] = useState('');
@@ -96,7 +113,7 @@ export function StaffPostJobForm({ companies, categories }: Props) {
           },
         });
         toast.success('Job created as draft');
-        router.push('/branch-admin/jobs');
+        router.push(successHref);
       } catch (e) {
         setError(friendlyApiError(e));
       }

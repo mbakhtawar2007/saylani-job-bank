@@ -1,11 +1,23 @@
 import { requireRole } from '@/domains/auth';
 import { listReferrals } from '@/domains/placement';
-import { Badge } from '@/components/atoms';
+import { ValidationError } from '@/domains/shared/errors';
+import { parseListQuery } from '@/domains/shared/pagination';
+import { Badge, Button } from '@/components/atoms';
 import { EmptyState } from '@/components/molecules';
 import { Calendar, Users } from 'lucide-react';
 import NextLink from 'next/link';
 
 export const metadata = { title: 'Referrals — Saylani Job Bank' };
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+// M32: referrals are paginated (20/page, newest first); the domain layer
+// already returns one page plus metadata, this wires the URL params
+// through to it.
+const listOptions = {
+  sortable: ['createdAt'] as const,
+  defaultSort: { field: 'createdAt' as const, direction: 'desc' as const },
+};
 
 const STATUS_BADGE: Record<
   string,
@@ -36,9 +48,25 @@ const STATUS_LABELS: Record<string, string> = {
   REJECTED: 'Rejected',
 };
 
-export default async function EmployerReferralsPage() {
+export default async function EmployerReferralsPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
   const { actor } = await requireRole('EMPLOYER');
-  const referrals = await listReferrals(actor);
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(await searchParams)) {
+    if (typeof value === 'string' && value) params.set(key, value);
+  }
+  let query;
+  try {
+    query = parseListQuery(params, listOptions);
+  } catch (error) {
+    // A hand-edited URL with bad params falls back to the default view.
+    if (!(error instanceof ValidationError)) throw error;
+    query = parseListQuery(new URLSearchParams(), listOptions);
+  }
+  const { items: referrals, pagination } = await listReferrals(actor, query);
 
   // Group by job
   const byJob = new Map<string, typeof referrals>();
@@ -141,6 +169,37 @@ export default async function EmployerReferralsPage() {
             );
           })}
         </div>
+      )}
+      {pagination.pageCount > 1 && (
+        <nav aria-label="Pagination" className="flex items-center justify-between gap-3 text-sm">
+          <p className="text-fg-muted numeric">
+            Showing {(pagination.page - 1) * pagination.pageSize + 1}–
+            {Math.min(pagination.page * pagination.pageSize, pagination.total)} of{' '}
+            {pagination.total.toLocaleString('en-PK')}
+          </p>
+          <div className="flex gap-2">
+            {pagination.page > 1 ? (
+              <Button asChild variant="secondary" size="sm">
+                <NextLink href={`/employer/referrals?page=${pagination.page - 1}`}>
+                  Previous
+                </NextLink>
+              </Button>
+            ) : (
+              <Button variant="secondary" size="sm" disabled>
+                Previous
+              </Button>
+            )}
+            {pagination.page < pagination.pageCount ? (
+              <Button asChild variant="secondary" size="sm">
+                <NextLink href={`/employer/referrals?page=${pagination.page + 1}`}>Next</NextLink>
+              </Button>
+            ) : (
+              <Button variant="secondary" size="sm" disabled>
+                Next
+              </Button>
+            )}
+          </div>
+        </nav>
       )}
     </div>
   );

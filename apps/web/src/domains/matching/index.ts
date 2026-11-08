@@ -16,6 +16,7 @@ export {
   listRejectionReasons,
   listRefusalReasons,
   requestJobMatchesRefresh,
+  requireReasonCode,
   respondToJobOffer,
   setJobMatchReviewStatus,
   MATCH_REVIEW_STATUSES,

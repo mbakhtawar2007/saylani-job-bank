@@ -12,7 +12,9 @@ export default async function EditJobPage({ params }: { params: Promise<{ id: st
 
   try {
     const job = await getMyJob(actor, id);
-    return <JobWizard initialJob={job} />;
+    // DRAFT stays fully editable; a published job (OPEN / PAUSED) is
+    // restricted — the wizard disables the staff-only fields (§3).
+    return <JobWizard initialJob={job} restricted={job.status !== 'DRAFT'} />;
   } catch (e) {
     if (e instanceof NotFoundError) return notFound();
     throw e;

@@ -9,14 +9,14 @@ import {
   type CompanyStatus,
   type LegalStructure,
 } from '@jobbank/shared';
-import { ArrowLeft, ExternalLink, Pause, Pencil, Play, Printer } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Pause, Pencil, Play, PlusCircle, Printer } from 'lucide-react';
 import NextLink from 'next/link';
 import { usePathname } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
-import { Badge, Button, Input, Select, StatusPill, Textarea } from '@/components/atoms';
+import { Badge, Button, Input, Link, Select, StatusPill, Textarea } from '@/components/atoms';
 import { FormField, KeyValue } from '@/components/molecules';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import { formatDate } from '@/lib/format/date';
 import { putWithProgress } from '@/lib/upload/put-with-progress';
 import type { CompanyOnboarding, CompanyView } from '@/domains/company';
@@ -70,12 +70,29 @@ export function StaffCompanyPanel({
     ? '/super-admin/companies'
     : pathname.includes('/verifier/')
       ? '/verifier/companies'
-      : '/branch-admin/companies';
+      : pathname.includes('/staff/')
+        ? '/staff/jobs'
+        : '/branch-admin/companies';
+  // "Post a job" goes to the current role's job-creation route with this
+  // company preselected. Super Admin has no job:manage and no jobs/new
+  // route, so no button there. Only VERIFIED companies can take jobs (C1).
+  const postJobHref =
+    company.status === 'VERIFIED'
+      ? pathname.includes('/verifier/')
+        ? `/verifier/jobs/new?companyId=${company.id}`
+        : pathname.includes('/staff/')
+          ? `/staff/jobs/new?companyId=${company.id}`
+          : pathname.includes('/branch-admin/')
+            ? `/branch-admin/jobs/new?companyId=${company.id}`
+            : null
+      : null;
   const [company_, setCompany_] = useState(company);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [suspendNote, setSuspendNote] = useState('');
   const [showSuspendForm, setShowSuspendForm] = useState(false);
+  const [resubmitNote, setResubmitNote] = useState('');
+  const [showResubmitForm, setShowResubmitForm] = useState(false);
   const [printReady, setPrintReady] = useState(false);
   // True once the print form's QR code and logo have settled. The Print
   // button stays disabled until then — and until the industry label fetch
@@ -159,7 +176,7 @@ export function StaffCompanyPanel({
       setShowSuspendForm(false);
       setSuspendNote('');
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Something went wrong.');
+      setError(friendlyApiError(err));
     } finally {
       setPending(null);
     }
@@ -200,7 +217,7 @@ export function StaffCompanyPanel({
       );
       setCompany_(saved);
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Upload failed. Please try again.');
+      setError(friendlyApiError(err));
     } finally {
       setUploadingDoc(null);
     }
@@ -218,7 +235,7 @@ export function StaffCompanyPanel({
       setCompany_(data.company);
       setVerifiedSigned(true);
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Something went wrong.');
+      setError(friendlyApiError(err));
     } finally {
       setPending(null);
     }
@@ -278,7 +295,7 @@ export function StaffCompanyPanel({
       setCompany_(saved);
       setShowHqForm(false);
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Something went wrong.');
+      setError(friendlyApiError(err));
     } finally {
       setPending(null);
     }
@@ -290,11 +307,13 @@ export function StaffCompanyPanel({
     try {
       const { data: saved } = await apiFetch<CompanyView>(
         `/api/v1/companies/${company_.id}/resubmit`,
-        { method: 'POST', body: { note: null } },
+        { method: 'POST', body: { note: resubmitNote.trim() || null } },
       );
       setCompany_(saved);
+      setShowResubmitForm(false);
+      setResubmitNote('');
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Something went wrong.');
+      setError(friendlyApiError(err));
     } finally {
       setPending(null);
     }
@@ -367,7 +386,7 @@ export function StaffCompanyPanel({
       setCompany_(saved);
       setShowCorrectForm(false);
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Something went wrong.');
+      setError(friendlyApiError(err));
     } finally {
       setPending(null);
     }
@@ -399,6 +418,14 @@ export function StaffCompanyPanel({
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            {postJobHref && (
+              <Link href={postJobHref}>
+                <Button size="sm">
+                  <PlusCircle className="mr-1.5 size-4" />
+                  Post a job
+                </Button>
+              </Link>
+            )}
             {onboarding && (
               <Button
                 variant="secondary"
@@ -419,11 +446,14 @@ export function StaffCompanyPanel({
                 Mark as verified &amp; signed
               </Button>
             )}
-            {canOnboard && onboarding && company_.status === 'INFO_REQUESTED' && (
-              <Button loading={pending === 'resubmit'} onClick={() => void resubmitOnboarded()}>
-                Send back to verifier
-              </Button>
-            )}
+            {canOnboard &&
+              onboarding &&
+              company_.status === 'INFO_REQUESTED' &&
+              !showResubmitForm && (
+                <Button loading={pending === 'resubmit'} onClick={() => setShowResubmitForm(true)}>
+                  Send back to verifier
+                </Button>
+              )}
             {canManage && !showCorrectForm && (
               <Button variant="secondary" leftIcon={<Pencil />} onClick={openCorrectForm}>
                 Correct details
@@ -594,6 +624,38 @@ export function StaffCompanyPanel({
               onClick={() => {
                 setShowSuspendForm(false);
                 setSuspendNote('');
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {showResubmitForm && (
+        <div className="border-border bg-surface grid gap-3 rounded-xl border p-5">
+          <h2 className="text-fg font-semibold">Send back to verifier</h2>
+          <p className="text-fg-muted text-sm">
+            The verifier asked for more information. If you already uploaded the document or edited
+            the details, you can send it back as-is — otherwise say what you changed or sent (at
+            least 10 characters).
+          </p>
+          <FormField label="Note for the verifier (optional — required when nothing changed)">
+            <Textarea
+              rows={2}
+              value={resubmitNote}
+              onChange={(e) => setResubmitNote(e.target.value)}
+            />
+          </FormField>
+          <div className="flex gap-2">
+            <Button loading={pending === 'resubmit'} onClick={() => void resubmitOnboarded()}>
+              Send back
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setShowResubmitForm(false);
+                setResubmitNote('');
               }}
             >
               Cancel

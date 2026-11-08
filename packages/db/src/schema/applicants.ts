@@ -358,6 +358,12 @@ export const branchApplicantTokens = pgTable(
       t.registrationDay,
       t.tokenNumber,
     ),
+    // Same-CNIC same-day guard (H22, migration 0031): two counters can never
+    // issue different tokens for the same person on the same day. Matches the
+    // migration SQL exactly so `db:generate` emits no diff.
+    uniqueIndex('branch_applicant_tokens_branch_day_cnic_issued_unique')
+      .on(t.branchId, t.registrationDay, t.cnic)
+      .where(sql`"status" = 'ISSUED'`),
     index('branch_applicant_tokens_cnic_idx').on(t.cnic),
     check('branch_applicant_tokens_number_positive', sql`${t.tokenNumber} > 0`),
     check('branch_applicant_tokens_cnic_format', sql`${t.cnic} ~ '^[1-9][0-9]{12}$'`),

@@ -178,6 +178,14 @@ export type CompanyMemberRole = (typeof COMPANY_MEMBER_ROLES)[number];
 /**
  * National Tax Number: "1234567-8" (7 digits + check digit), an older 7-digit NTN, or the
  * 13-digit CNIC-based NTN of an individual. Stored as "1234567-8", "1234567" or 13 digits.
+ *
+ * M17 (PARTIAL, 2026-11-08): only the format is validated. The 8th digit is a check
+ * digit, but the FBR check-digit algorithm could not be verified against any reliable
+ * in-repo source — the only NTN values in the repo are the placeholder "1234567-8"
+ * (seed data, tests, form placeholders), which is not a known-good NTN to validate
+ * an algorithm against. Do NOT guess or invent the algorithm: implementing an
+ * unverified check digit would reject valid NTNs. Confirm the algorithm (FBR
+ * documentation or a set of known-valid NTNs) before adding check-digit validation.
  */
 export const ntnSchema = z
   .string('Enter the NTN')
@@ -372,13 +380,11 @@ const addressFields = {
     .trim()
     .min(5, 'Enter the address (building, street, area)')
     .max(300),
-  cityCode: z.string('Enter the city').trim().min(2, 'Enter the city name').max(100),
-  areaCode: z
-    .string()
-    .trim()
-    .max(100)
-    .nullish()
-    .transform((v) => v || null),
+  // H12: a master-data code, not free text. The domain layer asserts it is an
+  // active CITY (and that areaCode belongs to it) via assertCityArea.
+  cityCode: masterDataCodeSchema,
+  // Same as the applicant side: normalised so the AREA lookup matches master data.
+  areaCode: masterDataCodeSchema.nullish().transform((v) => v ?? null),
 };
 
 /** Head office pin + the branch the company registers with (nearest suggested). */
@@ -414,6 +420,20 @@ export const companyPresignSchema = z.object({
 export type CompanyPresignInput = z.infer<typeof companyPresignSchema>;
 
 // ─── Verification actions ──────────────────────────────────────────────
+
+/**
+ * M18: resubmitting after INFO_REQUESTED needs a note of at least this many
+ * characters OR proof something changed (a new/accepted document, an edited
+ * field). The schema alone cannot see the database, so the note stays optional
+ * here and the OR is enforced by the resubmit guard in
+ * `apps/web/src/domains/company/profile.ts` (resubmitMyCompany).
+ */
+export const RESUBMIT_NOTE_MIN_LENGTH = 10;
+
+/** A resubmit note counts only when it actually says something (M18). */
+export function isResubmitNoteSufficient(note: string | null | undefined): boolean {
+  return (note?.trim().length ?? 0) >= RESUBMIT_NOTE_MIN_LENGTH;
+}
 
 export const resubmitSchema = z.object({
   note: optionalText(2000),

@@ -82,22 +82,10 @@ async function loadJobForActor(actor: Actor, jobId: string) {
   if (!job) throw new NotFoundError('Job', jobId);
 
   if (actor.roles.includes('EMPLOYER')) {
+    // Employers see only their own company's jobs — a job referred to
+    // another company (or to no company) is a 404 for them.
     if (actor.companyId !== job.companyId) {
-      // M28: a job staff referred to this employer's company is as open to
-      // them as their own posting — otherwise a referred employer 404s on
-      // the job's matches. Anything else stays a 404.
-      if (!actor.companyId) throw new NotFoundError('Job', jobId);
-      const [referral] = await db
-        .select({ id: schema.jobReferrals.id })
-        .from(schema.jobReferrals)
-        .where(
-          and(
-            eq(schema.jobReferrals.jobId, jobId),
-            eq(schema.jobReferrals.companyId, actor.companyId),
-          ),
-        )
-        .limit(1);
-      if (!referral) throw new NotFoundError('Job', jobId);
+      throw new NotFoundError('Job', jobId);
     }
   } else {
     assertBranchAccess(actor, job.branchId, { entityType: 'job', entityId: job.id });
@@ -106,7 +94,7 @@ async function loadJobForActor(actor: Actor, jobId: string) {
 }
 
 /** REJECTION_REASON / REFUSAL_REASON code check against active master data. */
-async function requireReasonCode(
+export async function requireReasonCode(
   type: 'REJECTION_REASON' | 'REFUSAL_REASON',
   code: string | undefined,
   note: string | undefined,

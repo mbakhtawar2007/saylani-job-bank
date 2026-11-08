@@ -292,6 +292,13 @@ export const companyVerifications = pgTable(
     /** Last (re)submission: the SLA counts from here. */
     clockStartedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     slaDueOn: date({ mode: 'string' }).notNull(),
+    /**
+     * Working days left on the SLA when info was requested (M23): the clock
+     * pauses while the employer replies, and resubmit resumes from here
+     * instead of granting a full fresh SLA. Null until the first info
+     * request; written by requestInfo in verifier.ts.
+     */
+    slaRemainingDays: integer(),
     /** The employer's latest message when resubmitting. */
     employerNote: text(),
     /** The verifier's latest request for information, and when it was sent (SLA paused). */

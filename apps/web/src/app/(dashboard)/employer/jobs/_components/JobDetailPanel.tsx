@@ -16,13 +16,10 @@ import { Badge, Button, Link } from '@/components/atoms';
 // eslint-disable-next-line no-restricted-imports
 import { allowedTransitions } from '@/domains/job/rules';
 import { useRouter } from 'next/navigation';
-import { Pencil, Trash2, Users } from 'lucide-react';
+import { ArrowLeft, Pencil, Trash2, Users } from 'lucide-react';
 
 interface Props {
   job: JobView;
-  /** Referred jobs are view-only: the employer did not post them. */
-  source?: 'OWN' | 'REFERRED';
-  referralNote?: string | null;
 }
 
 const STATUS_BADGE: Record<
@@ -62,13 +59,12 @@ function KV({ label, value }: { label: string; value: string | number | null | u
   );
 }
 
-export function JobDetailPanel({ job, source = 'OWN', referralNote }: Props) {
+export function JobDetailPanel({ job }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  const isReferred = source === 'REFERRED';
-  const transitions = isReferred ? [] : allowedTransitions(job.status);
+  const transitions = allowedTransitions(job.status);
   const pill = STATUS_BADGE[job.status] ?? { tone: 'neutral' as const };
 
   function handleTransition(transition: string) {
@@ -100,63 +96,45 @@ export function JobDetailPanel({ job, source = 'OWN', referralNote }: Props) {
 
   return (
     <div className="grid w-full gap-6">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-fg text-2xl font-semibold">{job.title}</h1>
-          <p className="text-fg-muted mt-1 text-sm">{job.categoryCode}</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Badge tone={pill.tone}>{JOB_STATUS_LABELS[job.status]}</Badge>
-          {isReferred && <Badge tone="info">Referred by Saylani</Badge>}
-          {!isReferred && (
-            <>
-              <Link href={`/employer/jobs/${job.id}/matches`}>
-                <Button size="sm" variant="secondary">
-                  <Users className="mr-1.5 size-4" />
-                  Shortlist
-                </Button>
-              </Link>
-              {job.status === 'DRAFT' && (
-                <>
-                  <Link href={`/employer/jobs/${job.id}/edit`}>
-                    <Button size="sm" variant="secondary">
-                      <Pencil className="mr-1.5 size-4" />
-                      Edit
-                    </Button>
-                  </Link>
-                  <Button size="sm" variant="secondary" onClick={handleDelete} disabled={pending}>
-                    <Trash2 className="text-danger mr-1.5 size-4" />
-                    Delete
+      <div>
+        <Link
+          href="/employer/jobs"
+          variant="unstyled"
+          className="text-fg-muted mb-3 flex items-center gap-1 text-sm hover:underline"
+        >
+          <ArrowLeft className="size-4" />
+          Back to Jobs
+        </Link>
+        <header className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-fg text-2xl font-semibold">{job.title}</h1>
+            <p className="text-fg-muted mt-1 text-sm">{job.categoryCode}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Badge tone={pill.tone}>{JOB_STATUS_LABELS[job.status]}</Badge>
+            <Link href={`/employer/jobs/${job.id}/matches`}>
+              <Button size="sm" variant="secondary">
+                <Users className="mr-1.5 size-4" />
+                Shortlist
+              </Button>
+            </Link>
+            {job.status === 'DRAFT' && (
+              <>
+                <Link href={`/employer/jobs/${job.id}/edit`}>
+                  <Button size="sm" variant="secondary">
+                    <Pencil className="mr-1.5 size-4" />
+                    Edit
                   </Button>
-                </>
-              )}
-              {job.status === 'DRAFT' && (
+                </Link>
                 <Button size="sm" variant="secondary" onClick={handleDelete} disabled={pending}>
                   <Trash2 className="text-danger mr-1.5 size-4" />
                   Delete
                 </Button>
-              )}
-            </>
-          )}
-        </div>
-      </header>
-
-      {isReferred && (
-        <div
-          className="rounded-xl border p-4 text-sm"
-          style={{ borderColor: 'var(--border)', background: 'var(--primary-soft)' }}
-        >
-          <p className="text-fg font-medium">Referred to you by Saylani Job Bank</p>
-          {referralNote ? (
-            <p className="text-fg-muted mt-1">“{referralNote}”</p>
-          ) : (
-            <p className="text-fg-muted mt-1">
-              This job was shared with your company by Job Bank staff. It is view-only — to change
-              it, contact your branch.
-            </p>
-          )}
-        </div>
-      )}
+              </>
+            )}
+          </div>
+        </header>
+      </div>
 
       <div className="border-border bg-surface grid gap-4 rounded-xl border p-5">
         <h2 className="text-fg font-medium">Job details</h2>

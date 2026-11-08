@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { JOB_TYPES, SKILL_LEVELS } from './applicant';
+import { JOB_TYPES, SKILL_LEVELS, pakistanPointSchema } from './applicant';
 
 // ─── Job status ─────────────────────────────────────────────────────────
 
@@ -74,8 +74,12 @@ const jobFieldSchema = {
   shift: z.enum(SHIFT_TYPES),
   genderPreference: z.enum(GENDER_PREFERENCES),
   vacancies: z.number().int().min(1).max(9999),
-  salaryMin: z.number().int().min(0).optional(),
-  salaryMax: z.number().int().min(0).optional(),
+  // M16: same 10,000,000 cap as applicant minSalaryPkr — a larger value
+  // would overflow the Postgres integer column. The cross-field
+  // salaryMin <= salaryMax check lives on the create schema below and, for
+  // PATCH, on the merged (stored + incoming) values in updateJob.
+  salaryMin: z.number().int().min(0).max(10_000_000).optional(),
+  salaryMax: z.number().int().min(0).max(10_000_000).optional(),
   closesAt: z.string().datetime().optional(),
   // Benefits & Perks
   fuelAllowance: z.boolean(),
@@ -90,19 +94,38 @@ const jobFieldSchema = {
   lifeInsurance: z.boolean(),
 };
 
-export const createJobSchema = z.object({
-  ...jobFieldSchema,
-  genderPreference: z.enum(GENDER_PREFERENCES).default('ANY'),
-  fuelAllowance: z.boolean().default(false),
-  flexibleHours: z.boolean().default(false),
-  medicalCoverage: z.enum(MEDICAL_COVERAGE_TYPES).default('NONE'),
-  bonusTier: z.enum(BONUS_TIERS).default('NONE'),
-  workFromHome: z.boolean().default(false),
-  providentFund: z.boolean().default(false),
-  transportAllowance: z.boolean().default(false),
-  eobi: z.boolean().default(false),
-  lifeInsurance: z.boolean().default(false),
-});
+export const createJobSchema = z
+  .object({
+    ...jobFieldSchema,
+    genderPreference: z.enum(GENDER_PREFERENCES).default('ANY'),
+    fuelAllowance: z.boolean().default(false),
+    flexibleHours: z.boolean().default(false),
+    medicalCoverage: z.enum(MEDICAL_COVERAGE_TYPES).default('NONE'),
+    bonusTier: z.enum(BONUS_TIERS).default('NONE'),
+    workFromHome: z.boolean().default(false),
+    providentFund: z.boolean().default(false),
+    transportAllowance: z.boolean().default(false),
+    eobi: z.boolean().default(false),
+    lifeInsurance: z.boolean().default(false),
+  })
+  // C4: a job must not be created with an inverted salary range or a
+  // closing date that is already past.
+  .superRefine((v, ctx) => {
+    if (v.salaryMin !== undefined && v.salaryMax !== undefined && v.salaryMin > v.salaryMax) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['salaryMin'],
+        message: 'Minimum salary must not be more than maximum salary',
+      });
+    }
+    if (v.closesAt !== undefined && new Date(v.closesAt).getTime() <= Date.now()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['closesAt'],
+        message: 'Closing date must be in the future',
+      });
+    }
+  });
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
 
@@ -115,12 +138,29 @@ export const jobStatusSchema = z.object({
 });
 export type JobStatusInput = z.infer<typeof jobStatusSchema>;
 
-export const jobLocationSchema = z.object({
-  companyLocationId: z.uuid().optional(),
-  location: z.object({ lat: z.number(), lng: z.number() }).optional(),
-  addressLine: z.string().trim().min(3).max(300).optional(),
-  cityCode: z.string().trim().min(1).max(50).optional(),
-});
+/**
+ * C5: a location update must carry something to save — either a saved company
+ * location, or a full ad-hoc address (address + city + pin). An empty body
+ * used to delete the job's only location with a 200. The pin reuses
+ * pakistanPointSchema (same bounds as applicant locations) instead of
+ * defaulting to a Karachi-centre point the employer never chose.
+ */
+export const jobLocationSchema = z
+  .object({
+    companyLocationId: z.uuid().optional(),
+    location: pakistanPointSchema.optional(),
+    addressLine: z.string().trim().min(3).max(300).optional(),
+    cityCode: z.string().trim().min(1).max(50).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.companyLocationId) return;
+    if (v.addressLine && v.cityCode && v.location) return;
+    ctx.addIssue({
+      code: 'custom',
+      path: ['companyLocationId'],
+      message: 'Choose a saved company location, or enter an address, city and map pin',
+    });
+  });
 export type JobLocationInput = z.infer<typeof jobLocationSchema>;
 
 export const jobRequirementsSchema = z.object({
@@ -137,7 +177,13 @@ export const jobSkillSchema = z.object({
   minLevel: z.enum(SKILL_LEVELS).default('BEGINNER'),
 });
 export const jobSkillsSchema = z.object({
-  skills: z.array(jobSkillSchema).max(20),
+  // L15: same duplicate-skillCode refine as applicant skillsSchema.
+  skills: z
+    .array(jobSkillSchema)
+    .max(20)
+    .refine((skills) => new Set(skills.map((s) => s.skillCode)).size === skills.length, {
+      message: 'Each skill only once',
+    }),
 });
 export type JobSkillInput = z.infer<typeof jobSkillSchema>;
 export type JobSkillsInput = z.infer<typeof jobSkillsSchema>;

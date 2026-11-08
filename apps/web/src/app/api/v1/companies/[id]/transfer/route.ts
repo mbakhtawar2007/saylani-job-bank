@@ -3,9 +3,11 @@ import { transferCompany } from '@/domains/company';
 import { apiHandler, ok } from '@/domains/shared/http';
 import { z } from 'zod';
 
-/** POST /api/v1/companies/{id}/transfer — Super Admin moves a company to another branch. */
+/** POST /api/v1/companies/{id}/transfer — Super Admin moves a company to another branch.
+ * Idempotent: callers must send an Idempotency-Key header (no UI caller exists yet). */
 export const POST = apiHandler({
   permission: 'company:manage',
+  idempotent: true,
   params: z.object({ id: z.uuid() }),
   body: transferCompanySchema,
   handler: async ({ ctx, actor, params, body }) =>

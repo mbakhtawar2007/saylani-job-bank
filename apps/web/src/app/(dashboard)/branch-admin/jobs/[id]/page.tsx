@@ -1,6 +1,5 @@
 import { requireRole } from '@/domains/auth';
-import { getJobDetail, listJobReferrals, listReferralTargets } from '@/domains/job';
-import { ReferJobPanel } from '../../../_components/jobs/ReferJobPanel';
+import { getJobDetail } from '@/domains/job';
 import { masterDataLabels } from '@/domains/settings';
 import { NotFoundError } from '@/domains/shared/errors';
 import { Badge } from '@/components/atoms';
@@ -150,11 +149,7 @@ export default async function BranchAdminJobDetailPage({
   const { id } = await params;
 
   try {
-    const [job, referrals, targets] = await Promise.all([
-      getJobDetail(actor, id),
-      listJobReferrals(actor, id),
-      listReferralTargets(actor),
-    ]);
+    const job = await getJobDetail(actor, id);
     const pill = STATUS_BADGE[job.status];
 
     // Fetch human-readable labels from master data
@@ -206,12 +201,6 @@ export default async function BranchAdminJobDetailPage({
             </p>
           </div>
         </header>
-
-        <ReferJobPanel
-          jobId={job.id}
-          targets={targets.map((t) => ({ value: t.id, label: t.name }))}
-          initialReferrals={referrals}
-        />
 
         {/* ── Core details ───────────────────────────────────────── */}
         <Section title="Job Details" icon={Briefcase}>

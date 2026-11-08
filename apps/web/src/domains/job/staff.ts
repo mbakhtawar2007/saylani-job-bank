@@ -1,5 +1,6 @@
 import 'server-only';
 import {
+  INTERNAL_ROLES,
   JOB_STATUSES,
   JOB_TYPES,
   SHIFT_TYPES,
@@ -17,18 +18,30 @@ import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
 import {
   assertCityAccess,
   assertPermission,
+  assertRole,
   cityScope,
-  hasPermission,
+  hasRole,
   type Actor,
 } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
 import type { RequestContext } from '@/domains/shared/audit';
-import { masterDataLabels } from '@/domains/settings';
+import { assertActiveMasterData, masterDataLabels } from '@/domains/settings';
 import { schema } from '@jobbank/db';
 import { buildJobView, j, loadJob, type JobView } from './repository';
 import { jobMachine } from './machine';
 
 type SignedIn = RequestContext & { actor: Actor };
+
+/**
+ * M12: the own-company exemption is role-based, not permission-based. A
+ * multi-role EMPLOYER + internal-role account used to escape the forcing
+ * through the permission union (job:manage / job:refer) and see every job
+ * in the city. Only a pure-employer actor — EMPLOYER role and no internal
+ * role — is forced to their own company here.
+ */
+function isPureEmployer(actor: Actor): boolean {
+  return hasRole(actor, 'EMPLOYER') && !INTERNAL_ROLES.some((role) => actor.roles.includes(role));
+}
 
 // ─── Listing ─────────────────────────────────────────────────────────────
 
@@ -110,12 +123,8 @@ export async function listJobs(
   // Employers see only their own company's listings through this staff
   // endpoint. Without this, an employer with a branch assignment would see
   // every job in the city. (Their own UI uses listJobsForEmployer instead;
-  // a pure-employer actor has a company but neither job:manage nor job:refer.)
-  if (
-    actor.companyId &&
-    !hasPermission(actor, 'job:manage') &&
-    !hasPermission(actor, 'job:refer')
-  ) {
+  // the forcing applies to pure-employer actors only — see isPureEmployer.)
+  if (actor.companyId && isPureEmployer(actor)) {
     conditions.push(eq(j.companyId, actor.companyId));
   }
 
@@ -253,12 +262,7 @@ export async function getJobDetail(actor: Actor, jobId: string): Promise<JobView
   const row = await loadJob(db, jobId);
   // Same own-company rule as listJobs: a pure-employer actor sees only
   // their own company's jobs here.
-  if (
-    actor.companyId &&
-    !hasPermission(actor, 'job:manage') &&
-    !hasPermission(actor, 'job:refer') &&
-    row.companyId !== actor.companyId
-  ) {
+  if (actor.companyId && isPureEmployer(actor) && row.companyId !== actor.companyId) {
     throw new NotFoundError('Job', jobId);
   }
   await assertCityAccess(actor, row.branchId, { entityType: 'job', entityId: row.id });
@@ -292,6 +296,8 @@ export async function staffCreateJob(
   });
 
   return runCommand(ctx, async ({ tx, audit }) => {
+    // C4/H13: the category must be a real, active master-data code.
+    await assertActiveMasterData(tx, 'JOB_CATEGORY', [input.categoryCode], () => 'categoryCode');
     const [row] = await tx
       .insert(j)
       .values({
@@ -333,14 +339,20 @@ export async function staffCreateJob(
 
 // ─── Staff status override ────────────────────────────────────────────────
 
+/** Branch Admin, Super Admin, or Verifier force-closes a job from the staff side. */
 export async function forceCloseJob(ctx: SignedIn, jobId: string, note?: string): Promise<JobView> {
-  if (!hasPermission(ctx.actor, 'company:manage') && !hasPermission(ctx.actor, 'company:read')) {
-    throw new ForbiddenError('Only branch staff can force-close jobs');
-  }
+  // H16: the old gate (company:manage OR company:read) let any STAFF in,
+  // then the machine's EMPLOYER-only CLOSE always threw ForbiddenError —
+  // the function could never succeed. The gate is now exactly the three
+  // staff roles the FORCE_CLOSE transition allows, plus city scope on the
+  // job's branch (checked below, before the transition runs).
+  assertRole(ctx.actor, 'BRANCH_ADMIN', 'SUPER_ADMIN', 'VERIFIER');
+  const row = await loadJob(db, jobId);
+  await assertCityAccess(ctx.actor, row.branchId, { entityType: 'job', entityId: row.id });
 
   return runCommand(ctx, async ({ tx, audit }) => {
-    const row = await loadJob(tx, jobId, { forUpdate: true });
-    const check = jobMachine.check(row.status, 'CLOSE', {}, ctx.actor.roles);
+    const locked = await loadJob(tx, jobId, { forUpdate: true });
+    const check = jobMachine.check(locked.status, 'FORCE_CLOSE', {}, ctx.actor.roles);
     if (!check.ok) throw new ForbiddenError(check.message);
 
     const [updated] = await tx
@@ -353,7 +365,7 @@ export async function forceCloseJob(ctx: SignedIn, jobId: string, note?: string)
       action: 'job.staff_close',
       entityType: 'job',
       entityId: jobId,
-      before: { status: row.status },
+      before: { status: locked.status },
       after: { status: 'CLOSED' },
       reason: note ?? null,
     });

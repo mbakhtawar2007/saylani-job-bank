@@ -5,8 +5,12 @@ import { StaffPostJobForm } from './_components/StaffPostJobForm';
 
 export const metadata = { title: 'Post a job' };
 
-export default async function BranchAdminPostJobPage() {
-  const { actor } = await requireRole('BRANCH_ADMIN');
+export default async function BranchAdminPostJobPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ companyId?: string }>;
+}) {
+  const [{ actor }, { companyId }] = await Promise.all([requireRole('BRANCH_ADMIN'), searchParams]);
   const [{ items: companies }, categories] = await Promise.all([
     listCompanies(actor, {
       page: 1,
@@ -31,6 +35,7 @@ export default async function BranchAdminPostJobPage() {
       <StaffPostJobForm
         companies={companies.map((c) => ({ id: c.id, name: c.legalName }))}
         categories={categories.map((c) => ({ code: c.code, label: c.label }))}
+        initialCompanyId={companyId}
       />
     </div>
   );

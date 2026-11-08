@@ -11,7 +11,6 @@ import {
   FileText,
   GitBranch,
   MapPin,
-  Send,
   Settings,
   ShieldCheck,
   Star,
@@ -27,12 +26,7 @@ import { describeMe, requireRole } from '@/domains/auth';
 import { listBranches } from '@/domains/branch';
 import { listApplicants, getMyProfile, monthlyApplicantCounts } from '@/domains/applicant';
 import { countVerificationsDoneByMonth, listCompanies, listQueue } from '@/domains/company';
-import {
-  countEmployerCandidates,
-  countHiresByMonth,
-  getEmployerReferralStats,
-  listJobsForEmployer,
-} from '@/domains/job';
+import { countEmployerCandidates, countHiresByMonth, listJobsForEmployer } from '@/domains/job';
 import { listMyNotifications } from '@/domains/notifications';
 import { listMyApplications } from '@/domains/placement';
 import { listStaff } from '@/domains/user';
@@ -238,7 +232,6 @@ export async function WelcomePanel({ role }: { role: Role }) {
     status: string;
     vacancies: number | null;
     createdAt: string;
-    source?: 'OWN' | 'REFERRED';
   }[] = [];
 
   if (role === 'SUPER_ADMIN') {
@@ -321,8 +314,10 @@ export async function WelcomePanel({ role }: { role: Role }) {
     };
     const [recentApplicants, recentCompanies] = await Promise.all([
       listApplicants(actor, { ...minQ('createdAt'), pageSize: 5, limit: 5 }),
+      // M3: the 5 most recently VERIFIED companies — ordered by verifiedAt,
+      // not by creation date (a company verified today must show up).
       listCompanies(actor, {
-        ...minQ('createdAt'),
+        ...minQ('verifiedAt'),
         pageSize: 5,
         limit: 5,
         filters: { status: 'VERIFIED' },
@@ -410,8 +405,10 @@ export async function WelcomePanel({ role }: { role: Role }) {
     };
     const [recentApplicants, recentCompanies] = await Promise.all([
       listApplicants(actor, { ...minQ('createdAt'), pageSize: 5, limit: 5 }),
+      // M3: the 5 most recently VERIFIED companies — ordered by verifiedAt,
+      // not by creation date (a company verified today must show up).
       listCompanies(actor, {
-        ...minQ('createdAt'),
+        ...minQ('verifiedAt'),
         pageSize: 5,
         limit: 5,
         filters: { status: 'VERIFIED' },
@@ -524,10 +521,9 @@ export async function WelcomePanel({ role }: { role: Role }) {
         };
       });
     chartValues = await countVerificationsDoneByMonth(actor, year);
-    // Branch total, not the signed-in verifier's own work: per-person
-    // attribution is impossible until verify/reject record decidedBy, so
-    // the chart says what it counts instead of reading as personal output.
-    chartLabel = 'Verifications Done (branch)';
+    // Personal again: verify/reject record decidedBy (H8), so this counts
+    // the signed-in verifier's own decisions, not the branch total.
+    chartLabel = 'Verifications Done';
   } else if (role === 'STAFF') {
     const [r_all, r_active, r_draft, r_id_ver] = await Promise.all([
       listApplicants(actor, minQ('createdAt')),
@@ -604,13 +600,8 @@ export async function WelcomePanel({ role }: { role: Role }) {
     chartValues = await monthlyApplicantCounts(actor, year);
     chartLabel = 'Applicants Registered';
   } else if (role === 'EMPLOYER') {
-    // Referral analytics: real counts, no placeholders (see
-    // getEmployerReferralStats / countEmployerCandidates).
-    let referralStats = {
-      totalReferred: 0,
-      openReferred: 0,
-      referredLast30Days: 0,
-    };
+    // Employer dashboard: real counts over the employer's OWN postings
+    // only (see countEmployerCandidates / countHiresByMonth).
     let candidateCounts = { referred: 0, hired: 0 };
     if (!actor.companyId) {
       // No company linked yet — an empty dashboard, not an error. Every
@@ -619,21 +610,22 @@ export async function WelcomePanel({ role }: { role: Role }) {
     } else {
       // No try/catch here on purpose: a real failure (DB down, bad query)
       // must surface as an error, not silently render as zeros.
-      const [visibleJobs, stats, candidates, hiresByMonth] = await Promise.all([
-        listJobsForEmployer(actor),
-        getEmployerReferralStats(actor),
-        countEmployerCandidates(actor),
-        countHiresByMonth(actor, year),
+      // M2 hoist: fetch the own jobs once, then pass their ids into the
+      // count helpers instead of letting each re-query the same job list.
+      const visibleJobs = await listJobsForEmployer(actor);
+      const visibleJobIds = visibleJobs.map((j) => j.id);
+      const [candidates, hiresByMonth] = await Promise.all([
+        countEmployerCandidates(actor, visibleJobIds),
+        countHiresByMonth(actor, year, visibleJobIds),
       ]);
       jobs = visibleJobs;
-      referralStats = stats;
       candidateCounts = candidates;
       chartValues = hiresByMonth;
     }
     chartLabel = 'Hires Made';
     const activeJobs = jobs.filter((j) => j.status === 'OPEN');
     // Real pipeline denominator: every vacancy slot across the employer's
-    // visible jobs (own + referred).
+    // own postings.
     const totalVacancies = jobs.reduce((sum, j) => sum + (j.vacancies ?? 0), 0);
     const jobItems: DashMain['subItems'] = activeJobs.slice(0, 4).map((j) => ({
       icon: Briefcase as LucideIcon,
@@ -649,25 +641,25 @@ export async function WelcomePanel({ role }: { role: Role }) {
       value: String(activeJobs.length),
       trend: {
         dir: 'up',
-        text: `${jobs.length} visible jobs · ${referralStats.totalReferred} referred to you`,
+        text: `${jobs.length} job posting${jobs.length !== 1 ? 's' : ''}`,
       },
       subTitle: 'By Position',
       subItems: jobItems,
     };
     smallStats = [
       {
-        icon: Send,
-        label: 'Jobs Referred to You',
-        value: String(referralStats.totalReferred),
-        sub: `${referralStats.referredLast30Days} in the last 30 days`,
-        color: '#1a5fac',
+        icon: Briefcase,
+        label: 'Open Jobs',
+        value: String(activeJobs.length),
+        sub: 'open now',
+        color: '#0f766e',
       },
       {
-        icon: Briefcase,
-        label: 'Open Referred Jobs',
-        value: String(referralStats.openReferred),
-        sub: 'referred and open now',
-        color: '#0f766e',
+        icon: Building2,
+        label: 'Total Postings',
+        value: String(jobs.length),
+        sub: `${totalVacancies} vacancy slot${totalVacancies !== 1 ? 's' : ''}`,
+        color: '#1a5fac',
       },
     ];
     pipeline = {
@@ -818,13 +810,11 @@ export async function WelcomePanel({ role }: { role: Role }) {
     activity = jobs.slice(0, 5).map((j) => ({
       icon: Briefcase,
       action:
-        j.source === 'REFERRED'
-          ? 'Job Referred'
-          : j.status === 'FILLED'
-            ? 'Position Filled'
-            : j.status === 'OPEN'
-              ? 'Job Posted'
-              : 'Job Updated',
+        j.status === 'FILLED'
+          ? 'Position Filled'
+          : j.status === 'OPEN'
+            ? 'Job Posted'
+            : 'Job Updated',
       detail: j.title,
       when: relativeDate(j.createdAt),
       price: j.vacancies != null ? `${j.vacancies} slot${j.vacancies !== 1 ? 's' : ''}` : 'Open',

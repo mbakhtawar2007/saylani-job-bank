@@ -41,9 +41,10 @@ export const companyMachine = defineMachine<
       to: 'SUBMITTED',
       // Staff submit on behalf of a company they onboarded (verified & signed first);
       // employers submit their own company. Verifiers submit companies they
-      // onboarded the same way — a different verifier then reviews them, so the
-      // creator can never approve their own onboarding (see claimCompany /
-      // verifyCompany in verifier.ts). The submission guard still applies.
+      // onboarded the same way (verifiers may verify companies they created
+      // themselves — owner decision 2026-11-08; only the email/phone
+      // contact-conflict check still bars a verifier). The submission guard
+      // still applies.
       actors: ['EMPLOYER', 'STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN', 'VERIFIER'],
       guard: submissionGuard,
     },
@@ -101,12 +102,27 @@ export const companyMachine = defineMachine<
             : `Complete the submission first (${submissionMissing.join(', ')})`,
     },
     {
-      from: ['UNDER_VERIFICATION', 'RESUBMITTED', 'INFO_REQUESTED'],
+      // M24: REJECT is not allowed from INFO_REQUESTED — the verifier is
+      // waiting for the employer's reply; they request info or wait, they
+      // do not reject mid-wait. (VERIFY is blocked there for the same reason.)
+      from: ['UNDER_VERIFICATION', 'RESUBMITTED'],
       event: 'REJECT',
       to: 'REJECTED',
       actors: ['VERIFIER'],
     },
-    { from: 'VERIFIED', event: 'SUSPEND', to: 'SUSPENDED', actors: ['BRANCH_ADMIN'] },
-    { from: 'SUSPENDED', event: 'REINSTATE', to: 'VERIFIED', actors: ['BRANCH_ADMIN'] },
+    // H20: Super Admin can suspend/reinstate too (company:suspend is on
+    // SUPER_ADMIN permissions since round 1); previously BRANCH_ADMIN only.
+    {
+      from: 'VERIFIED',
+      event: 'SUSPEND',
+      to: 'SUSPENDED',
+      actors: ['BRANCH_ADMIN', 'SUPER_ADMIN'],
+    },
+    {
+      from: 'SUSPENDED',
+      event: 'REINSTATE',
+      to: 'VERIFIED',
+      actors: ['BRANCH_ADMIN', 'SUPER_ADMIN'],
+    },
   ],
 });

@@ -30,7 +30,7 @@ describe('permission matrix encodes the PRD rules', () => {
 
   it('verifiers manage companies and post jobs for them', () => {
     expect(holders('company:manage')).toEqual(['SUPER_ADMIN', 'BRANCH_ADMIN', 'VERIFIER']);
-    expect(holders('job:manage')).toEqual(['BRANCH_ADMIN', 'VERIFIER']);
+    expect(holders('job:manage')).toEqual(['BRANCH_ADMIN', 'VERIFIER', 'STAFF']);
     expect(ROLE_PERMISSIONS.VERIFIER).toContain('job:read');
     // A verifier creates companies and jobs, but never refers candidates or
     // suspends companies — those stay with staff and branch admins.

@@ -12,7 +12,7 @@ import {
   type MasterDataMeta,
   type VerificationState,
 } from '@jobbank/shared';
-import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import { getBranchContact, type BranchContact } from '@/domains/branch';
 import {
   assertActiveMasterData,
@@ -138,6 +138,52 @@ export async function loadCompany(
   const [row] = options.forUpdate ? await query.for('update') : await query;
   if (!row) throw new NotFoundError('Company', companyId);
   return row;
+}
+
+/**
+ * M18 "proof something changed": anything the employer edited or uploaded after
+ * the verifier's info request. `updated_at` is kept honest by a DB trigger
+ * (migration 0012) on companies, company_locations and company_documents, so
+ * an edit bumps it; contacts carry only createdAt and are deleted +
+ * re-inserted on every save, so a fresh row proves a change.
+ */
+export async function changedSinceInfoRequest(
+  executor: DbExecutor,
+  companyId: string,
+  infoRequestedAt: Date | null,
+): Promise<boolean> {
+  if (!infoRequestedAt) return false;
+  const [company, location, document, contact] = await Promise.all([
+    executor
+      .select({ id: c.id })
+      .from(c)
+      .where(and(eq(c.id, companyId), gt(c.updatedAt, infoRequestedAt)))
+      .limit(1),
+    executor
+      .select({ id: locs.id })
+      .from(locs)
+      .where(and(eq(locs.companyId, companyId), gt(locs.updatedAt, infoRequestedAt)))
+      .limit(1),
+    executor
+      .select({ id: docs.id })
+      .from(docs)
+      .where(
+        and(
+          eq(docs.companyId, companyId),
+          or(
+            gt(docs.uploadedAt, infoRequestedAt),
+            and(eq(docs.reviewStatus, 'ACCEPTED'), gt(docs.reviewedAt, infoRequestedAt)),
+          ),
+        ),
+      )
+      .limit(1),
+    executor
+      .select({ id: contacts.id })
+      .from(contacts)
+      .where(and(eq(contacts.companyId, companyId), gt(contacts.createdAt, infoRequestedAt)))
+      .limit(1),
+  ]);
+  return company.length > 0 || location.length > 0 || document.length > 0 || contact.length > 0;
 }
 
 export async function findCompanyForUser(

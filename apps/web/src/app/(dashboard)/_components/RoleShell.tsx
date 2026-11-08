@@ -29,7 +29,7 @@ export interface RoleShellProps {
   activeBranchId?: string | null;
   /** Applicants have no password/2FA settings. */
   showSecurity?: boolean;
-  /** Employer with no visible jobs (own or referred): hide the Jobs nav item. */
+  /** Employer with no own job postings: hide the Jobs nav item. */
   hideEmployerJobs?: boolean;
   children: ReactNode;
 }

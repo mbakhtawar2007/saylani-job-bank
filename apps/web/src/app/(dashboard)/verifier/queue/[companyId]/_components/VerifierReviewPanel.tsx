@@ -15,7 +15,7 @@ import NextLink from 'next/link';
 import { useRef, useState } from 'react';
 import { Badge, Button, Select, StatusPill, Textarea } from '@/components/atoms';
 import { FormField, KeyValue } from '@/components/molecules';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import type { CompanyView } from '@/domains/company';
 
 const STATUS_PILL: Record<
@@ -94,7 +94,7 @@ export function VerifierReviewPanel({
         // refresh to show changes
       }
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Something went wrong.');
+      setError(friendlyApiError(err));
     } finally {
       setPending(null);
     }
@@ -127,7 +127,7 @@ export function VerifierReviewPanel({
       setCompany_(saved);
       return true;
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Something went wrong.');
+      setError(friendlyApiError(err));
       return false;
     } finally {
       setPending(null);

@@ -16,7 +16,7 @@ export default async function EmployerJobDetailPage({
 
   try {
     const job = await getEmployerJob(actor, id);
-    return <JobDetailPanel job={job} source={job.source} referralNote={job.referralNote} />;
+    return <JobDetailPanel job={job} />;
   } catch (e) {
     if (e instanceof NotFoundError) return notFound();
     throw e;

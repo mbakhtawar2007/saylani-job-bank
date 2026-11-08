@@ -1,10 +1,12 @@
 import 'server-only';
 import { schema } from '@jobbank/db';
 import {
+  COMPANY_LEGAL_FIELDS,
   COMPANY_STATUSES,
   PUBLIC_COMPANY_STATUSES,
   ROLE_LABELS,
   ROLE_PRIORITY,
+  isResubmitNoteSufficient,
   type CompanyStatus,
   type OnboardedCompanyHeadOfficeInput,
   type RegisterCompanyInput,
@@ -34,6 +36,7 @@ import { assertActiveMasterData, masterDataLabels } from '@/domains/settings';
 import { runCommand } from '@/domains/shared/audit';
 import {
   ConflictError,
+  ForbiddenError,
   isUniqueViolation,
   NotFoundError,
   ValidationError,
@@ -45,6 +48,7 @@ import {
   assertRole,
   branchScope,
   hasPermission,
+  hasRole,
   isSuperAdmin,
   type Actor,
 } from '@/domains/shared/scope';
@@ -53,6 +57,7 @@ import { companyMachine, READY } from './machine';
 import {
   buildCompanyView,
   c,
+  changedSinceInfoRequest,
   contacts,
   loadCompany,
   locs,
@@ -68,7 +73,7 @@ import { assertAssignableVerifier } from './verifier';
 
 // ─── Company listing ───────────────────────────────────────────────────
 
-export const COMPANY_SORTABLE = ['legalName', 'createdAt', 'status'] as const;
+export const COMPANY_SORTABLE = ['legalName', 'createdAt', 'status', 'verifiedAt'] as const;
 
 const ACTIVE_NTN_CONSTRAINT = 'companies_ntn_active_uq';
 
@@ -175,6 +180,7 @@ export async function listCompanies(
     legalName: c.legalName,
     createdAt: c.createdAt,
     status: c.status,
+    verifiedAt: c.verifiedAt,
   }[query.sort.field];
 
   const base = () =>
@@ -230,9 +236,12 @@ export async function getCompanyDetail(actor: Actor, companyId: string): Promise
   if (!canManage) assertPermission(actor, 'company:read');
   const row = await loadCompany(db, companyId);
   assertBranchAccess(actor, row.branchId, { entityType: 'company', entityId: row.id });
-  // if (!canManage && !(PUBLIC_COMPANY_STATUSES as readonly string[]).includes(row.status)) {
-  //   throw new ForbiddenError('This company is not yet verified');
-  // }
+  // H4: the list endpoint deliberately restricts non-managers to
+  // VERIFIED/SUSPENDED; the detail endpoint must match — a DRAFT company's
+  // contacts, NTN and notes are not public to company:read holders.
+  if (!canManage && !(PUBLIC_COMPANY_STATUSES as readonly string[]).includes(row.status)) {
+    throw new ForbiddenError('This company is not yet verified');
+  }
   return buildCompanyView(db, row);
 }
 
@@ -244,7 +253,7 @@ export async function suspendCompany(
   input: { reason: string },
 ): Promise<CompanyView> {
   assertPermission(ctx.actor, 'company:suspend');
-  await runCommand(ctx, async ({ tx, audit, emit }) => {
+  await runCommand(ctx, async ({ tx, audit }) => {
     const row = await loadCompany(tx, companyId, { forUpdate: true });
     assertBranchAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
     const to = companyMachine.transition(row.status, 'SUSPEND', READY, ctx.actor.roles);
@@ -259,7 +268,6 @@ export async function suspendCompany(
       after: { status: to },
       metadata: { reason: input.reason },
     });
-    emit('company.suspended', { companyId: row.id, branchId: row.branchId! });
   });
   return getCompanyDetail(ctx.actor, companyId);
 }
@@ -270,7 +278,7 @@ export async function reinstateCompany(
   input: { reason: string },
 ): Promise<CompanyView> {
   assertPermission(ctx.actor, 'company:suspend');
-  await runCommand(ctx, async ({ tx, audit, emit }) => {
+  await runCommand(ctx, async ({ tx, audit }) => {
     const row = await loadCompany(tx, companyId, { forUpdate: true });
     assertBranchAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
     const to = companyMachine.transition(row.status, 'REINSTATE', READY, ctx.actor.roles);
@@ -284,8 +292,6 @@ export async function reinstateCompany(
       after: { status: to },
       metadata: { reason: input.reason },
     });
-    // Reinstate emits company.verified — the company is visible again.
-    emit('company.verified', { companyId: row.id, branchId: row.branchId! });
   });
   return getCompanyDetail(ctx.actor, companyId);
 }
@@ -300,8 +306,9 @@ export async function assignVerifier(
 ): Promise<CompanyView> {
   assertPermission(ctx.actor, 'company:manage');
   // Validate the target before anything is written: the user must exist,
-  // hold the VERIFIER role, work in the company's city, and pass the
-  // segregation checks (not the onboarder, no shared contact details).
+  // be ACTIVE, hold the VERIFIER role, work in the company's city, and pass
+  // the contact-conflict check (no shared email/phone with the company's
+  // contacts). See assertAssignableVerifier.
   const company = await loadCompany(db, companyId);
   await assertAssignableVerifier(input.verifierId, company);
   await runCommand(ctx, async ({ tx, audit }) => {
@@ -343,7 +350,8 @@ export async function assignVerifier(
   return getCompanyDetail(ctx.actor, companyId);
 }
 
-/** Super Admin or Branch Admin changes the company's branch without re-verification. */
+/** Super Admin or Branch Admin changes the company's branch without re-verification.
+ * Blocked while a verification round is open (see below). */
 export async function transferCompany(
   ctx: SignedIn,
   companyId: string,
@@ -359,16 +367,23 @@ export async function transferCompany(
     // the actor's own branch can be transferred out of it.
     assertBranchAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
     if (row.branchId === input.branchId) return;
+    // H3: block while a verification round is open. Moving the round would
+    // strand its assigned verifier in the old city (they fail scope on the
+    // new branch on every action) and reset the SLA context; clearing or
+    // reassigning the verifier mid-review would be worse. Transfer once
+    // the round closes.
+    if (await openVerification(tx, row.id, { forUpdate: true })) {
+      throw new ConflictError(
+        'This company has an open verification round. Transfer it after the round closes.',
+      );
+    }
     const branch = await getBranchContact(input.branchId, tx);
     if (!branch?.isActive) {
       throw new ValidationError([{ path: 'branchId', message: 'Choose an active branch' }]);
     }
-    // Move the company and any open verification round.
+    // Move the company. No open round can exist here (blocked above), so
+    // there is no assigned verifier to strand.
     await tx.update(c).set({ branchId: input.branchId }).where(eq(c.id, row.id));
-    const round = await openVerification(tx, row.id, { forUpdate: true });
-    if (round) {
-      await tx.update(ver).set({ branchId: input.branchId }).where(eq(ver.id, round.id));
-    }
     audit({
       action: 'company.transfer',
       entityType: 'company',
@@ -395,6 +410,9 @@ export async function staffRegisterCompany(
   if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, input.branchId);
 
   const { branchId, ...companyInput } = input;
+  // H10: the employer and onboard paths both require an active INDUSTRY
+  // code; the staff path must not accept a dead or invented one either.
+  await assertActiveMasterData(db, 'INDUSTRY', [companyInput.industryCode], () => 'industryCode');
   const [existing] = await db
     .select({ id: c.id })
     .from(c)
@@ -620,8 +638,8 @@ export async function staffOnboardCompany(
  * sends the DRAFT company to the verifier queue in the same step. Staff submission needs
  * only what the field visit guarantees — a main contact and a branch. The head office and
  * documents are checked by the verifier, who can request them if they are missing.
- * Verifiers onboard and submit companies the same way; a different verifier reviews
- * them (claimCompany / verifyCompany refuse the creator).
+ * Verifiers onboard and submit companies the same way; the marker must be
+ * someone other than the onboarder (M9 — no self-attestation).
  */
 export async function markCompanyRegistrationVerifiedSigned(
   ctx: SignedIn,
@@ -644,6 +662,15 @@ export async function markCompanyRegistrationVerifiedSigned(
     throw new ConflictError(
       'Only a company registered by staff after a field visit can be marked verified and signed.',
       { reason: 'NOT_ONBOARDED' },
+    );
+  }
+  // M9: no self-attestation — the staff member who onboarded the company
+  // must not be the one marking its paper form verified & signed. A
+  // colleague in the branch records it instead.
+  if (company.createdBy === ctx.actor.userId) {
+    throw new ConflictError(
+      'You cannot mark a registration form verified and signed for a company you onboarded. Ask another staff member in your branch.',
+      { reason: 'SELF_ATTESTATION' },
     );
   }
   const now = new Date();
@@ -786,6 +813,21 @@ export async function resubmitOnboardedCompany(
     );
     const round = await openVerification(tx, row.id, { forUpdate: true });
     if (!round) throw new ConflictError('There is no open verification to send back');
+    // M18 (staff mirror of resubmitMyCompany): an unchanged company cannot be
+    // bounced back and burn a fresh SLA — a real note, or proof something
+    // changed since the verifier asked for more.
+    if (
+      !isResubmitNoteSufficient(input.note) &&
+      !(await changedSinceInfoRequest(tx, row.id, round.infoRequestedAt))
+    ) {
+      throw new ValidationError([
+        {
+          path: 'note',
+          message:
+            'Tell the verifier what you changed or sent (at least 10 characters), or upload the document they asked for first.',
+        },
+      ]);
+    }
     await tx
       .update(ver)
       .set({ state: 'RESUBMITTED', employerNote: input.note, clockStartedAt: now, slaDueOn: dueOn })
@@ -873,6 +915,8 @@ export async function setOnboardedCompanyHeadOffice(
   return getCompanyDetail(ctx.actor, companyId);
 }
 
+const LEGAL_FIELDS = new Set<string>(COMPANY_LEGAL_FIELDS);
+
 /** Super Admin corrects locked fields (legal name, NTN, etc.) on a verified company. */
 export async function correctCompanyDetails(
   ctx: SignedIn,
@@ -880,8 +924,8 @@ export async function correctCompanyDetails(
   input: UpdateCompanyInput & { reason: string },
 ): Promise<CompanyView> {
   assertPermission(ctx.actor, 'company:manage');
-  const { reason, ...changes } = input;
-  if (Object.keys(changes).length === 0) {
+  const { reason, ...requested } = input;
+  if (Object.keys(requested).length === 0) {
     throw new ValidationError([{ path: 'root', message: 'Change at least one field' }]);
   }
   try {
@@ -891,13 +935,107 @@ export async function correctCompanyDetails(
       // branch too, but only after this transaction commits — without this
       // line a cross-branch correction would silently land.
       assertBranchAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
+      // L16: only genuinely changed fields count — a "" that optionalText
+      // mapped to null on an already-null field (tradeName, website, …) is
+      // no change, not a correction. (Same diff as updateMyCompany.)
+      const changes = Object.fromEntries(
+        Object.entries(requested).filter(
+          ([key, value]) => value !== undefined && value !== row[key as keyof typeof row],
+        ),
+      ) as UpdateCompanyInput;
+      if (Object.keys(changes).length === 0) {
+        throw new ValidationError([{ path: 'root', message: 'Change at least one field' }]);
+      }
+      // H1: while a verifier is reviewing, only the assigned verifier (or a
+      // Branch/Super Admin) may correct details — another verifier must not
+      // rewrite the company under review.
+      if (row.status === 'UNDER_VERIFICATION' || row.status === 'RESUBMITTED') {
+        if (!isSuperAdmin(ctx.actor) && !hasRole(ctx.actor, 'BRANCH_ADMIN')) {
+          const round = await openVerification(tx, row.id);
+          if (!round || round.assignedVerifierId !== ctx.actor.userId) {
+            throw new ForbiddenError(
+              'This company is under verification. Only the assigned verifier, a Branch Admin or a Super Admin can correct its details while it is being reviewed.',
+            );
+          }
+        }
+      }
+      const touchesLegal = Object.keys(changes).some((key) => LEGAL_FIELDS.has(key));
+      // A suspended company keeps its suspension: legal details change only
+      // after reinstatement, when the new verification round can open.
+      if (touchesLegal && row.status === 'SUSPENDED') {
+        throw new ConflictError(
+          'Reinstate the company first — changing its legal details needs a new verification round.',
+        );
+      }
       // A corrected NTN must not collide with another live company (see
       // assertNtnFree). Previously there was no check here at all: the update
       // hit the partial index and failed with a raw 500 instead of a 409.
       if (changes.ntn) await assertNtnFree(tx, changes.ntn, row.id);
+      // H1: a changed industry must be an active master-data code, like the
+      // employer and onboard paths already require.
+      if (changes.industryCode) {
+        await assertActiveMasterData(tx, 'INDUSTRY', [changes.industryCode], () => 'industryCode');
+      }
       const before = Object.fromEntries(
         Object.keys(changes).map((k) => [k, row[k as keyof typeof row]]),
       );
+      // H1: a VERIFIED badge must mean the verified details. Changing a legal
+      // field (name, structure, NTN, registration no.) re-opens verification:
+      // a fresh round is opened, the status returns to SUBMITTED and
+      // verifiedAt is cleared. Non-legal changes keep the badge. There is no
+      // VERIFIED → SUBMITTED machine transition, so the round opens directly
+      // (same shape as markCompanyRegistrationVerifiedSigned).
+      if (touchesLegal && row.status === 'VERIFIED') {
+        const now = new Date();
+        const dueOn = await verificationDueOn(now);
+        const [{ last } = { last: 0 }] = await tx
+          .select({ last: max(ver.round) })
+          .from(ver)
+          .where(eq(ver.companyId, row.id));
+        const [round] = await tx
+          .insert(ver)
+          .values({
+            companyId: row.id,
+            branchId: row.branchId!,
+            round: (last ?? 0) + 1,
+            submittedAt: now,
+            clockStartedAt: now,
+            slaDueOn: dueOn,
+          })
+          .returning();
+        await tx
+          .update(c)
+          .set({ ...changes, status: 'SUBMITTED', verifiedAt: null })
+          .where(eq(c.id, row.id));
+        await recordTransition(tx, {
+          verificationId: round!.id,
+          companyId: row.id,
+          event: 'SUBMIT',
+          fromStatus: row.status,
+          toStatus: 'SUBMITTED',
+          actorId: ctx.actor.userId,
+          metadata: {
+            reVerification: true,
+            legalFields: Object.keys(changes).filter((k) => LEGAL_FIELDS.has(k)),
+            reason,
+            slaDueOn: dueOn,
+          },
+        });
+        audit({
+          action: 'company.correct',
+          entityType: 'company',
+          entityId: row.id,
+          branchId: row.branchId,
+          before: {
+            ...before,
+            status: row.status,
+            verifiedAt: row.verifiedAt?.toISOString() ?? null,
+          },
+          after: { ...changes, status: 'SUBMITTED', verifiedAt: null },
+          metadata: { reason, reVerification: true },
+        });
+        return;
+      }
       await tx.update(c).set(changes).where(eq(c.id, row.id));
       audit({
         action: 'company.correct',

@@ -5,8 +5,12 @@ import { StaffPostJobForm } from '../../../branch-admin/jobs/new/_components/Sta
 
 export const metadata = { title: 'Post a job' };
 
-export default async function VerifierPostJobPage() {
-  const { actor } = await requireRole('VERIFIER');
+export default async function VerifierPostJobPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ companyId?: string }>;
+}) {
+  const [{ actor }, { companyId }] = await Promise.all([requireRole('VERIFIER'), searchParams]);
   const [{ items: companies }, categories] = await Promise.all([
     listCompanies(actor, {
       page: 1,
@@ -31,6 +35,8 @@ export default async function VerifierPostJobPage() {
       <StaffPostJobForm
         companies={companies.map((c) => ({ id: c.id, name: c.legalName }))}
         categories={categories.map((c) => ({ code: c.code, label: c.label }))}
+        initialCompanyId={companyId}
+        successHref="/verifier/jobs"
       />
     </div>
   );

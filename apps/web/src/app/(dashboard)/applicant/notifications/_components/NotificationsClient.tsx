@@ -244,6 +244,10 @@ export function NotificationsClient({ items, unread, offers, refusalReasons }: P
                             INTERVIEW_CANCELLED: { label: 'Cancelled', tone: 'neutral' as const },
                             INTERVIEW_RESCHEDULED: { label: 'Rescheduled', tone: 'info' as const },
                             APPLICANT_REFERRED: { label: 'Referred', tone: 'success' as const },
+                            JOB_REFERRED_TO_APPLICANT: {
+                              label: 'Job referred',
+                              tone: 'info' as const,
+                            },
                           }[item.type] ?? { label: item.type, tone: 'neutral' as const })}
                         />
                       </span>

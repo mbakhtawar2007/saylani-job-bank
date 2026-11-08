@@ -6,8 +6,8 @@ import {
   COMPANY_SIZE_LABELS,
   type CompanyStatus,
 } from '@jobbank/shared';
-import { CheckCircle2, XCircle, AlertCircle, Clock } from 'lucide-react';
-import { StatusPill } from '@/components/atoms';
+import { CheckCircle2, XCircle, AlertCircle, Clock, PlusCircle } from 'lucide-react';
+import { Button, Link, StatusPill } from '@/components/atoms';
 import { KeyValue } from '@/components/molecules';
 import type { CompanyView } from '@/domains/company';
 
@@ -39,6 +39,14 @@ export function CompanyStatusPanel({ company }: { company: CompanyView }) {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {company.status === 'VERIFIED' && (
+            <Link href="/employer/jobs/new">
+              <Button size="sm">
+                <PlusCircle className="mr-1.5 size-4" />
+                Post a job
+              </Button>
+            </Link>
+          )}
           <StatusPill
             label={
               company.status === 'VERIFIED' && company.verifiedAt

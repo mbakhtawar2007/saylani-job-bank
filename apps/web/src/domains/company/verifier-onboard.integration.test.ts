@@ -24,10 +24,13 @@ const branchId = async (code: string) =>
 
 let khi: string;
 let verifierJar: Jar;
+/** A second in-branch actor: M9 forbids the onboarder marking their own form. */
+let colleagueJar: Jar;
 
 beforeAll(async () => {
   khi = await branchId('KHI-GULSHAN');
   verifierJar = await signIn('verifier.khi@jobbank.local');
+  colleagueJar = await signIn('branchadmin.khi@jobbank.local');
 });
 beforeEach(() => resetMemoryRateLimits());
 
@@ -78,22 +81,24 @@ describe('verifier creates companies', () => {
 
   it('marks it verified & signed and it reaches the queue as SUBMITTED', async () => {
     const company = await onboardedCompany();
+    // M9: the onboarder cannot mark their own paper form — a colleague in
+    // the branch records it.
     const res = await call(
       markVerifiedSigned,
       `/api/v1/companies/${company.id}/registration-form/verified-signed`,
-      { method: 'POST', jar: verifierJar, params: { id: company.id } },
+      { method: 'POST', jar: colleagueJar, params: { id: company.id } },
     );
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body.data.verifiedSigned).toBe(true);
     expect(res.body.data.status).toBe('SUBMITTED');
   });
 
-  it('cannot claim — and so cannot verify — a company they onboarded', async () => {
+  it('can claim — and so can verify — a company they onboarded', async () => {
     const company = await onboardedCompany();
     const signed = await call(
       markVerifiedSigned,
       `/api/v1/companies/${company.id}/registration-form/verified-signed`,
-      { method: 'POST', jar: verifierJar, params: { id: company.id } },
+      { method: 'POST', jar: colleagueJar, params: { id: company.id } },
     );
     expect(signed.status, JSON.stringify(signed.body)).toBe(200);
     const res = await call(claim, `/api/v1/companies/${company.id}/claim`, {
@@ -102,8 +107,8 @@ describe('verifier creates companies', () => {
       params: { id: company.id },
       headers: { 'Idempotency-Key': key() },
     });
-    expect(res.status, JSON.stringify(res.body)).toBe(409);
-    expect(res.body.error.details).toMatchObject({ reason: 'CONFLICT_OF_INTEREST' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.data.status).toBe('UNDER_VERIFICATION');
   });
 
   it('sees only the companies they onboarded in the company list', async () => {

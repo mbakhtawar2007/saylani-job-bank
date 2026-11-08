@@ -1,0 +1,66 @@
+import { describe, expect, it } from 'vitest';
+import { isReferrableApplicant, referJobToApplicantSchema } from './applicant-referrals';
+
+// "Verified applicant" (workflow §5): the profile is live (ACTIVE) and the
+// staff identity check passed (identityStatus VERIFIED). Either half missing
+// means the applicant cannot be referred a job.
+describe('isReferrableApplicant', () => {
+  it('ACTIVE + VERIFIED is referrable', () => {
+    expect(isReferrableApplicant({ status: 'ACTIVE', identityStatus: 'VERIFIED' })).toBe(true);
+  });
+
+  it('a DRAFT profile is not referrable even with a VERIFIED identity', () => {
+    expect(isReferrableApplicant({ status: 'DRAFT', identityStatus: 'VERIFIED' })).toBe(false);
+  });
+
+  it('an ACTIVE profile with an UNVERIFIED identity is not referrable', () => {
+    expect(isReferrableApplicant({ status: 'ACTIVE', identityStatus: 'UNVERIFIED' })).toBe(false);
+  });
+
+  it('an ACTIVE profile with a REJECTED identity is not referrable', () => {
+    expect(isReferrableApplicant({ status: 'ACTIVE', identityStatus: 'REJECTED' })).toBe(false);
+  });
+
+  it('an INACTIVE profile is not referrable', () => {
+    expect(isReferrableApplicant({ status: 'INACTIVE', identityStatus: 'VERIFIED' })).toBe(false);
+  });
+});
+
+describe('referJobToApplicantSchema', () => {
+  it('accepts a valid applicant id with an optional note', () => {
+    const parsed = referJobToApplicantSchema.parse({
+      applicantId: '123e4567-e89b-12d3-a456-426614174000',
+      note: 'Good fit — night shift preferred.',
+    });
+    expect(parsed.applicantId).toBe('123e4567-e89b-12d3-a456-426614174000');
+    expect(parsed.note).toBe('Good fit — night shift preferred.');
+  });
+
+  it('accepts a missing note', () => {
+    const parsed = referJobToApplicantSchema.parse({
+      applicantId: '123e4567-e89b-12d3-a456-426614174000',
+    });
+    expect(parsed.note).toBeUndefined();
+  });
+
+  it('trims the note', () => {
+    const parsed = referJobToApplicantSchema.parse({
+      applicantId: '123e4567-e89b-12d3-a456-426614174000',
+      note: '  hello  ',
+    });
+    expect(parsed.note).toBe('hello');
+  });
+
+  it('rejects a non-uuid applicant id', () => {
+    expect(() => referJobToApplicantSchema.parse({ applicantId: 'not-a-uuid' })).toThrow();
+  });
+
+  it('rejects a note over 500 characters', () => {
+    expect(() =>
+      referJobToApplicantSchema.parse({
+        applicantId: '123e4567-e89b-12d3-a456-426614174000',
+        note: 'x'.repeat(501),
+      }),
+    ).toThrow();
+  });
+});

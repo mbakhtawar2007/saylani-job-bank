@@ -124,6 +124,9 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'applicant:verify_identity',
     'applicant:manage',
     'job:read',
+    /** Staff post jobs for verified companies in their city scope (entry
+        points workstream): staffCreateJob still enforces VERIFIED + scope. */
+    'job:manage',
     'job:refer',
     'match_case:read',
     'match_case:manage',

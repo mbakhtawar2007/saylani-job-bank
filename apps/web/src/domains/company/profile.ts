@@ -2,6 +2,7 @@ import 'server-only';
 import type { GeoPoint } from '@jobbank/db';
 import {
   COMPANY_LEGAL_FIELDS,
+  isResubmitNoteSufficient,
   type CompanyContactsInput,
   type CompanyHeadOfficeInput,
   type CompanySiteInput,
@@ -10,7 +11,7 @@ import {
 } from '@jobbank/shared';
 import { and, eq, inArray, max, ne, notInArray } from 'drizzle-orm';
 import { getBranchContact, listBranchOptions, type BranchOption } from '@/domains/branch';
-import { assertActiveMasterData } from '@/domains/settings';
+import { assertActiveMasterData, getWorkingCalendar, slaDueDate } from '@/domains/settings';
 import { runCommand } from '@/domains/shared/audit';
 import {
   ConflictError,
@@ -26,8 +27,10 @@ import { companySubmittedEmail } from '@/lib/mail/templates';
 import { companyMachine } from './machine';
 import { emailEmployers } from './notify';
 import {
+  assertCityArea,
   buildCompanyView,
   c,
+  changedSinceInfoRequest,
   contacts,
   findCompanyForUser,
   locs,
@@ -245,6 +248,9 @@ export async function setMyHeadOffice(
     if (!branch?.isActive) {
       throw new ValidationError([{ path: 'branchId', message: 'Choose an active branch' }]);
     }
+    // H12: the city must be an active CITY and the area (if given) must belong to it,
+    // mirroring setMyLocation on the applicant side.
+    await assertCityArea(tx, input);
     const values = {
       label: 'Head office',
       addressLine: input.addressLine,
@@ -287,6 +293,8 @@ export async function addMySite(ctx: SignedIn, input: CompanySiteInput): Promise
   await runCommand(ctx, async ({ tx, audit }) => {
     const row = await requireOwnCompany(tx, ctx.actor, { forUpdate: true });
     if (!companyEditability(row.status).locations) throw readOnlyError(row, 'its locations');
+    // H12: see setMyHeadOffice.
+    await assertCityArea(tx, input);
     const existing = await tx
       .select({ id: locs.id, archivedAt: locs.archivedAt })
       .from(locs)
@@ -320,6 +328,8 @@ export async function updateMySite(
     const row = await requireOwnCompany(tx, ctx.actor, { forUpdate: true });
     if (!companyEditability(row.status).locations) throw readOnlyError(row, 'its locations');
     const site = await ownSite(tx, row, siteId);
+    // H12: see setMyHeadOffice.
+    await assertCityArea(tx, input);
     await tx.update(locs).set(input).where(eq(locs.id, site.id));
     audit({
       action: 'company.update_site',
@@ -428,6 +438,19 @@ export async function submitMyCompany(ctx: SignedIn): Promise<CompanyView> {
   return view;
 }
 
+/**
+ * M23: the due date for a resubmitted round. When the verifier's info request
+ * recorded the working days left (`slaRemainingDays`, migration 0032), the
+ * clock resumes from the resubmit date with exactly those days — the same
+ * working-days helper `verificationDueOn` uses. Null (a round paused before
+ * migration 0032, or one that never paused) keeps the previous behaviour: a
+ * full fresh SLA from the resubmit date.
+ */
+async function resubmitDueOn(now: Date, slaRemainingDays: number | null): Promise<string> {
+  if (slaRemainingDays == null) return verificationDueOn(now);
+  return slaDueDate(now, slaRemainingDays, await getWorkingCalendar());
+}
+
 /** After "more information needed": the employer made the changes and sends it back. */
 export async function resubmitMyCompany(
   ctx: SignedIn,
@@ -435,7 +458,6 @@ export async function resubmitMyCompany(
 ): Promise<CompanyView> {
   assertPermission(ctx.actor, 'company:register');
   const now = new Date();
-  const dueOn = await verificationDueOn(now);
   await runCommand(ctx, async ({ tx, audit }) => {
     const row = await requireOwnCompany(tx, ctx.actor, { forUpdate: true });
     const to = companyMachine.transition(
@@ -446,6 +468,24 @@ export async function resubmitMyCompany(
     );
     const round = await openVerification(tx, row.id, { forUpdate: true });
     if (!round) throw new ConflictError('There is no open verification to send back');
+    // M18: an unchanged company cannot be bounced back and burn a fresh SLA — a
+    // real note, or proof something changed since the verifier asked for more.
+    if (
+      !isResubmitNoteSufficient(input.note) &&
+      !(await changedSinceInfoRequest(tx, row.id, round.infoRequestedAt))
+    ) {
+      throw new ValidationError([
+        {
+          path: 'note',
+          message:
+            'Tell the verifier what you changed or sent (at least 10 characters), or upload the document they asked for first.',
+        },
+      ]);
+    }
+    // M23: resubmitting resumes the paused SLA instead of granting a full fresh
+    // one — the due date is the resubmit date + the working days that were left
+    // when the verifier asked for more information (recorded by requestInfo).
+    const dueOn = await resubmitDueOn(now, round.slaRemainingDays);
     await tx
       .update(ver)
       .set({ state: 'RESUBMITTED', employerNote: input.note, clockStartedAt: now, slaDueOn: dueOn })

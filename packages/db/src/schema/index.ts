@@ -7,7 +7,7 @@ export * from './settings';
 export * from './applicants';
 export * from './companies';
 export * from './jobs';
-export * from './job-referrals';
+export * from './job-applicant-referrals';
 export * from './applications';
 export * from './matching';
 export * from './notifications';

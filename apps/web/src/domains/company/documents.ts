@@ -164,6 +164,15 @@ async function loadStaffOnboardedCompany(ctx: SignedIn, companyId: string): Prom
       'Documents for this company can only be uploaded by the employer who registered it.',
     );
   }
+  // M9: no self-upload — the onboarder must not supply the documents the
+  // deciding verifier trusts. A colleague in the branch uploads them
+  // (this gate covers both the presign and the confirm step).
+  if (row.createdBy === ctx.actor.userId) {
+    throw new ConflictError(
+      'You cannot upload documents for a company you onboarded. Ask another staff member in your branch.',
+      { reason: 'SELF_ATTESTATION' },
+    );
+  }
   if (row.status !== 'DRAFT' && row.status !== 'INFO_REQUESTED') {
     throw new ConflictError(
       'Documents can only be uploaded while the company is still a draft or the verifier has asked for more information. Once it is with the verifier, only the verifier can review the documents.',

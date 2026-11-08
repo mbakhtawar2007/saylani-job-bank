@@ -225,6 +225,27 @@
       "when": 1794132997886,
       "tag": "0031_branch_applicant_tokens_cnic_day_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794136482225,
+      "tag": "0032_company_verifications_sla_remaining_days",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794137897662,
+      "tag": "0033_job_applicant_referrals",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1794137955988,
+      "tag": "0034_drop_job_referrals",
+      "breakpoints": true
     }
   ]
 }

@@ -334,7 +334,7 @@ export async function refreshProfileState(
   cmd: CommandScope,
   applicantId: string,
 ): Promise<{ status: ApplicantStatus; completeness: Completeness }> {
-  const { tx, audit, emit } = cmd;
+  const { tx, audit } = cmd;
   const row = await loadApplicant(tx, applicantId);
   const completeness = await completenessFor(tx, row);
   const changes: Partial<typeof a.$inferInsert> = {};
@@ -360,7 +360,6 @@ export async function refreshProfileState(
       before: { status: row.status },
       after: { status },
     });
-    emit('applicant.activated', { applicantId: row.id, branchId: row.branchId! });
   } else if (row.status === 'ACTIVE' && completeness.activationMissing.length > 0) {
     const demotion = applicantMachine.check(
       row.status,

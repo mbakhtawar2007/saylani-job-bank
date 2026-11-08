@@ -1,14 +1,28 @@
 'server-only';
 import { schema } from '@jobbank/db';
-import { and, desc, eq } from 'drizzle-orm';
+import type { PaginationMeta } from '@jobbank/shared';
+import { and, count, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
-import { ConflictError, ForbiddenError, NotFoundError } from '@/domains/shared/errors';
-import { assertCityAccess, assertPermission, type Actor } from '@/domains/shared/scope';
+import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from '@/domains/shared/errors';
+import { assertCityAccess, assertPermission, assertRole, type Actor } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
 import { createNotification, notifyCompanyEmployers } from '@/domains/notifications';
 import type { RequestContext } from '@/domains/shared/audit';
 import { lockAndTransitionApplication } from './machine';
+import { assertFutureInterviewAt, futureInterviewAtSchema } from './interview-date';
+
+export {
+  assertFutureInterviewAt,
+  futureInterviewAtSchema,
+  INTERVIEW_AT_GRACE_MS,
+} from './interview-date';
 export type ApplicationStatus =
   | 'SHORTLISTED'
   | 'INTERVIEW_SCHEDULED'
@@ -28,6 +42,17 @@ export type ApplicationStatus =
 type SignedIn = RequestContext & { actor: Actor };
 
 const ap = schema.applications;
+
+/**
+ * M32 — pagination for the placement lists. Pass a ListQuery (parsed with
+ * parseListQuery, pageSize capped at 100 by the helper) to get one page
+ * plus pagination metadata. Without a query the full list is returned, as
+ * before — existing dashboard callers still call it that way.
+ */
+export type PlacementListQuery = Pick<
+  ListQuery<'createdAt', Record<string, never>>,
+  'page' | 'pageSize' | 'offset' | 'limit'
+>;
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -67,7 +92,7 @@ export const shortlistSchema = z.object({
 export type ShortlistInput = z.infer<typeof shortlistSchema>;
 
 export const scheduleInterviewSchema = z.object({
-  interviewAt: z.string().datetime(),
+  interviewAt: futureInterviewAtSchema,
   interviewLocation: z.string().trim().min(3).max(300).optional(),
   interviewNote: z.string().trim().max(500).optional(),
 });
@@ -80,13 +105,25 @@ export const INTERVIEW_UPDATE_STATUSES = [
 ] as const;
 export type InterviewUpdateStatus = (typeof INTERVIEW_UPDATE_STATUSES)[number];
 
-export const updateInterviewStatusSchema = z.object({
-  status: z.enum(INTERVIEW_UPDATE_STATUSES),
-  interviewAt: z.string().datetime().optional(),
-  interviewLocation: z.string().trim().max(300).optional(),
-  interviewNote: z.string().trim().max(500).optional(),
-  note: z.string().trim().max(500).optional(),
-});
+export const updateInterviewStatusSchema = z
+  .object({
+    status: z.enum(INTERVIEW_UPDATE_STATUSES),
+    interviewAt: futureInterviewAtSchema.optional(),
+    interviewLocation: z.string().trim().max(300).optional(),
+    interviewNote: z.string().trim().max(500).optional(),
+    note: z.string().trim().max(500).optional(),
+  })
+  .superRefine((v, ctx) => {
+    // M19 — rescheduling back to SCHEDULED without a new date would silently
+    // keep the old date; the new date is required.
+    if (v.status === 'INTERVIEW_SCHEDULED' && !v.interviewAt) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['interviewAt'],
+        message: 'Provide a new interview date & time when rescheduling',
+      });
+    }
+  });
 export type UpdateInterviewStatusInput = z.infer<typeof updateInterviewStatusSchema>;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -145,7 +182,11 @@ export async function shortlistApplicant(
 
   // Verify applicant exists and actor has city access
   const [applicantRow] = await db
-    .select({ id: schema.applicants.id, branchId: schema.applicants.branchId })
+    .select({
+      id: schema.applicants.id,
+      userId: schema.applicants.userId,
+      branchId: schema.applicants.branchId,
+    })
     .from(schema.applicants)
     .where(eq(schema.applicants.id, input.applicantId));
   if (!applicantRow) throw new NotFoundError('Applicant', input.applicantId);
@@ -158,6 +199,7 @@ export async function shortlistApplicant(
   const [jobRow] = await db
     .select({
       id: schema.jobs.id,
+      title: schema.jobs.title,
       companyId: schema.jobs.companyId,
       branchId: schema.jobs.branchId,
       status: schema.jobs.status,
@@ -184,7 +226,7 @@ export async function shortlistApplicant(
     .where(and(eq(ap.applicantId, input.applicantId), eq(ap.jobId, input.jobId)));
   if (existing) throw new ConflictError('This applicant is already shortlisted for this job');
 
-  return runCommand(ctx, async ({ tx, audit }) => {
+  const view = await runCommand(ctx, async ({ tx, audit }) => {
     const [row] = await tx
       .insert(ap)
       .values({
@@ -205,6 +247,20 @@ export async function shortlistApplicant(
     });
     return row!;
   }).then(buildView);
+
+  // M25 — the applicant must hear they were shortlisted: until now only the
+  // referral was notified, so a shortlisted applicant heard nothing.
+  void createNotification(db, {
+    userId: applicantRow.userId,
+    type: 'MATCH_SHORTLISTED',
+    title: `Shortlisted — ${jobRow.title}`,
+    body: `You have been shortlisted for ${jobRow.title}. Job Bank staff will contact you about the next steps.`,
+    data: { applicationId: view.id, jobId: jobRow.id, jobTitle: jobRow.title },
+  }).catch((err) =>
+    ctx.log.error('shortlist notification failed', { applicationId: view.id, err }),
+  );
+
+  return view;
 }
 
 /** Branch Admin only: schedule a Job Bank interview for an application. */
@@ -220,6 +276,10 @@ export async function scheduleInterview(
 
   if (row.status === 'REJECTED' || row.status === 'HIRED')
     throw new ForbiddenError('Cannot schedule an interview for a closed application');
+
+  // H11 — service-level backstop: the schema already rejects past dates, but
+  // direct callers bypass it.
+  assertFutureInterviewAt(input.interviewAt);
 
   await assertCityAccess(ctx.actor, row.branchId, {
     entityType: 'application',
@@ -282,6 +342,18 @@ export async function updateInterviewStatus(
   ];
   if (!interviewStatuses.includes(row.status))
     throw new ForbiddenError('Can only update status for applications with a scheduled interview');
+
+  // H11 — a supplied new date must be in the future.
+  if (input.status === 'INTERVIEW_SCHEDULED' && input.interviewAt) {
+    assertFutureInterviewAt(input.interviewAt);
+  }
+  // M19 — service-level backstop for the schema rule above: rescheduling
+  // without a new date must not silently keep the old date.
+  if (input.status === 'INTERVIEW_SCHEDULED' && !input.interviewAt) {
+    throw new ValidationError([
+      { path: 'interviewAt', message: 'Provide a new interview date & time when rescheduling' },
+    ]);
+  }
 
   const view = await runCommand(ctx, async ({ tx, audit }) => {
     const event =
@@ -503,30 +575,68 @@ async function notifyReferral(
 export async function listApplicationsForApplicant(
   actor: Actor,
   applicantId: string,
-): Promise<ApplicationView[]> {
+): Promise<ApplicationView[]>;
+export async function listApplicationsForApplicant(
+  actor: Actor,
+  applicantId: string,
+  query: PlacementListQuery,
+): Promise<{ items: ApplicationView[]; pagination: PaginationMeta }>;
+export async function listApplicationsForApplicant(
+  actor: Actor,
+  applicantId: string,
+  query?: PlacementListQuery,
+): Promise<ApplicationView[] | { items: ApplicationView[]; pagination: PaginationMeta }> {
   assertPermission(actor, 'match_case:read');
-  const rows = await db
-    .select()
-    .from(ap)
-    .where(eq(ap.applicantId, applicantId))
-    .orderBy(desc(ap.createdAt));
-  return Promise.all(rows.map(buildView));
+  // M15 — defense-in-depth: staff roles only, city-scoped on the
+  // applicant's branch. Sole caller today is the staff applicant-detail
+  // page after a city check; a future caller must not inherit the hole.
+  assertRole(actor, 'STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN');
+  const [applicantRow] = await db
+    .select({ branchId: schema.applicants.branchId })
+    .from(schema.applicants)
+    .where(eq(schema.applicants.id, applicantId))
+    .limit(1);
+  if (!applicantRow) throw new NotFoundError('Applicant', applicantId);
+  await assertCityAccess(actor, applicantRow.branchId, {
+    entityType: 'applicant',
+    entityId: applicantId,
+  });
+  const where = eq(ap.applicantId, applicantId);
+  const [totalRow] = query
+    ? await db.select({ total: count() }).from(ap).where(where)
+    : [{ total: 0 }];
+  const base = db.select().from(ap).where(where).orderBy(desc(ap.createdAt));
+  const rows = query ? await base.limit(query.limit).offset(query.offset) : await base;
+  const items = await Promise.all(rows.map(buildView));
+  if (!query) return items;
+  return { items, pagination: paginationMeta(query, totalRow?.total ?? 0) };
 }
 
 /** List applications visible to the signed-in applicant (their own). */
-export async function listMyApplications(actor: Actor): Promise<ApplicationView[]> {
+export async function listMyApplications(actor: Actor): Promise<ApplicationView[]>;
+export async function listMyApplications(
+  actor: Actor,
+  query: PlacementListQuery,
+): Promise<{ items: ApplicationView[]; pagination: PaginationMeta }>;
+export async function listMyApplications(
+  actor: Actor,
+  query?: PlacementListQuery,
+): Promise<ApplicationView[] | { items: ApplicationView[]; pagination: PaginationMeta }> {
   const [applicant] = await db
     .select({ id: schema.applicants.id })
     .from(schema.applicants)
     .where(eq(schema.applicants.userId, actor.userId));
-  if (!applicant) return [];
+  if (!applicant) return query ? { items: [], pagination: paginationMeta(query, 0) } : [];
 
-  const rows = await db
-    .select()
-    .from(ap)
-    .where(eq(ap.applicantId, applicant.id))
-    .orderBy(desc(ap.updatedAt));
-  return Promise.all(rows.map(buildView));
+  const where = eq(ap.applicantId, applicant.id);
+  const [totalRow] = query
+    ? await db.select({ total: count() }).from(ap).where(where)
+    : [{ total: 0 }];
+  const base = db.select().from(ap).where(where).orderBy(desc(ap.updatedAt));
+  const rows = query ? await base.limit(query.limit).offset(query.offset) : await base;
+  const items = await Promise.all(rows.map(buildView));
+  if (!query) return items;
+  return { items, pagination: paginationMeta(query, totalRow?.total ?? 0) };
 }
 
 export { buildView };

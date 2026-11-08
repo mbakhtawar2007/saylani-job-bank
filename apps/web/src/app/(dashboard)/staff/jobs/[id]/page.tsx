@@ -1,6 +1,6 @@
 import { requireRole } from '@/domains/auth';
-import { getJobDetail, listJobReferrals, listReferralTargets } from '@/domains/job';
-import { ReferJobPanel } from '../../../_components/jobs/ReferJobPanel';
+import { getJobDetail, listJobApplicantReferrals, listReferrableApplicants } from '@/domains/job';
+import { ReferJobToApplicantPanel } from '../../../_components/jobs/ReferJobToApplicantPanel';
 import { masterDataLabels } from '@/domains/settings';
 import { NotFoundError } from '@/domains/shared/errors';
 import { Badge } from '@/components/atoms';
@@ -146,10 +146,10 @@ export default async function StaffJobDetailPage({ params }: { params: Promise<{
   const { id } = await params;
 
   try {
-    const [job, referrals, targets] = await Promise.all([
+    const [job, applicantReferrals, referrableApplicants] = await Promise.all([
       getJobDetail(actor, id),
-      listJobReferrals(actor, id),
-      listReferralTargets(actor),
+      listJobApplicantReferrals(actor, id),
+      listReferrableApplicants(actor),
     ]);
     const pill = STATUS_BADGE[job.status];
 
@@ -203,10 +203,10 @@ export default async function StaffJobDetailPage({ params }: { params: Promise<{
           </div>
         </header>
 
-        <ReferJobPanel
+        <ReferJobToApplicantPanel
           jobId={job.id}
-          targets={targets.map((t) => ({ value: t.id, label: t.name }))}
-          initialReferrals={referrals}
+          targets={referrableApplicants.map((t) => ({ value: t.id, label: t.fullName }))}
+          initialReferrals={applicantReferrals}
         />
 
         {/* ── Core details ───────────────────────────────────────── */}

@@ -2,12 +2,24 @@ import { requireRole } from '@/domains/auth';
 import { getMyCompany } from '@/domains/company';
 import { listJobsForEmployer } from '@/domains/job';
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, type JobType } from '@jobbank/shared';
+import { ValidationError } from '@/domains/shared/errors';
+import { parseListQuery } from '@/domains/shared/pagination';
 import { Badge, Button, Link } from '@/components/atoms';
 import { EmptyState } from '@/components/molecules';
 import { Briefcase, Building2, PlusCircle } from 'lucide-react';
 import NextLink from 'next/link';
 
 export const metadata = { title: 'My jobs' };
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+// M32: the employer's job list is paginated (20/page, newest first); the
+// domain layer already returns one page plus metadata, this wires the URL
+// params through to it.
+const listOptions = {
+  sortable: ['createdAt'] as const,
+  defaultSort: { field: 'createdAt' as const, direction: 'desc' as const },
+};
 
 const STATUS_BADGE: Record<
   string,
@@ -21,7 +33,7 @@ const STATUS_BADGE: Record<
   EXPIRED: { tone: 'danger' },
 };
 
-export default async function EmployerJobsPage() {
+export default async function EmployerJobsPage({ searchParams }: { searchParams: SearchParams }) {
   const { actor } = await requireRole('EMPLOYER');
   const company = await getMyCompany(actor);
 
@@ -89,8 +101,19 @@ export default async function EmployerJobsPage() {
     );
   }
 
-  const jobs = await listJobsForEmployer(actor);
-  const referredCount = jobs.filter((job) => job.source === 'REFERRED').length;
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(await searchParams)) {
+    if (typeof value === 'string' && value) params.set(key, value);
+  }
+  let query;
+  try {
+    query = parseListQuery(params, listOptions);
+  } catch (error) {
+    // A hand-edited URL with bad params falls back to the default view.
+    if (!(error instanceof ValidationError)) throw error;
+    query = parseListQuery(new URLSearchParams(), listOptions);
+  }
+  const { items: jobs, pagination } = await listJobsForEmployer(actor, query);
 
   return (
     <div className="grid w-full gap-6">
@@ -98,8 +121,7 @@ export default async function EmployerJobsPage() {
         <div>
           <h1 className="text-fg text-2xl font-semibold">My jobs</h1>
           <p className="text-fg-muted mt-1 text-sm">
-            {jobs.length} posting{jobs.length !== 1 ? 's' : ''}
-            {referredCount > 0 && ` · ${referredCount} referred to you by Saylani Job Bank`}
+            {pagination.total} posting{pagination.total !== 1 ? 's' : ''}
           </p>
         </div>
         <Link href="/employer/jobs/new">
@@ -114,7 +136,7 @@ export default async function EmployerJobsPage() {
         <EmptyState
           icon={Briefcase}
           title="No jobs yet"
-          description="Post your first job, or wait for Saylani Job Bank to refer one to you."
+          description="Post your first job to start hiring."
         />
       ) : (
         <div className="grid gap-3">
@@ -132,18 +154,46 @@ export default async function EmployerJobsPage() {
                     <p className="text-fg font-medium">{job.title}</p>
                     <p className="text-fg-muted text-sm">
                       {JOB_TYPE_LABELS[job.jobType as JobType]} · {job.vacancies} vacancies
-                      {job.source === 'REFERRED' && ' · Referred by Saylani'}
                     </p>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  {job.source === 'REFERRED' && <Badge tone="info">Referred</Badge>}
                   <Badge tone={pill.tone}>{JOB_STATUS_LABELS[job.status]}</Badge>
                 </div>
               </Link>
             );
           })}
         </div>
+      )}
+
+      {pagination.pageCount > 1 && (
+        <nav aria-label="Pagination" className="flex items-center justify-between gap-3 text-sm">
+          <p className="text-fg-muted numeric">
+            Showing {(pagination.page - 1) * pagination.pageSize + 1}–
+            {Math.min(pagination.page * pagination.pageSize, pagination.total)} of{' '}
+            {pagination.total.toLocaleString('en-PK')}
+          </p>
+          <div className="flex gap-2">
+            {pagination.page > 1 ? (
+              <Button asChild variant="secondary" size="sm">
+                <NextLink href={`/employer/jobs?page=${pagination.page - 1}`}>Previous</NextLink>
+              </Button>
+            ) : (
+              <Button variant="secondary" size="sm" disabled>
+                Previous
+              </Button>
+            )}
+            {pagination.page < pagination.pageCount ? (
+              <Button asChild variant="secondary" size="sm">
+                <NextLink href={`/employer/jobs?page=${pagination.page + 1}`}>Next</NextLink>
+              </Button>
+            ) : (
+              <Button variant="secondary" size="sm" disabled>
+                Next
+              </Button>
+            )}
+          </div>
+        </nav>
       )}
     </div>
   );

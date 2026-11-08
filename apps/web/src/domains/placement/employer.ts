@@ -2,10 +2,17 @@
 // Employer-side interview scheduling, decisions, applicant refusal, and chat.
 
 import { schema } from '@jobbank/db';
-import { and, asc, eq, or } from 'drizzle-orm';
+import type { PaginationMeta } from '@jobbank/shared';
+import { and, asc, count, eq, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
-import { ConflictError, ForbiddenError, NotFoundError } from '@/domains/shared/errors';
+import { paginationMeta } from '@/domains/shared/pagination';
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from '@/domains/shared/errors';
 import {
   assertCityAccess,
   assertPermission,
@@ -13,10 +20,17 @@ import {
   type Actor,
 } from '@/domains/shared/scope';
 import { jobMachine } from '@/domains/job';
+import { requireReasonCode } from '@/domains/matching';
 import { db } from '@/lib/db';
 import { createNotification, notifyCompanyEmployers } from '@/domains/notifications';
 import type { RequestContext } from '@/domains/shared/audit';
-import { buildView, type ApplicationView, type ApplicationStatus } from './index';
+import {
+  buildView,
+  type ApplicationView,
+  type ApplicationStatus,
+  type PlacementListQuery,
+} from './index';
+import { assertFutureInterviewAt, futureInterviewAtSchema } from './interview-date';
 import { lockAndTransitionApplication } from './machine';
 
 type SignedIn = RequestContext & { actor: Actor };
@@ -58,7 +72,7 @@ export interface MessageView {
 // ─── Schemas ──────────────────────────────────────────────────────────────
 
 export const scheduleEmployerInterviewSchema = z.object({
-  interviewAt: z.string().datetime(),
+  interviewAt: futureInterviewAtSchema,
   interviewLocation: z.string().trim().min(2).max(300).optional(),
   interviewNote: z.string().trim().max(500).optional(),
 });
@@ -71,12 +85,24 @@ export const EMPLOYER_INTERVIEW_UPDATE_STATUSES = [
 ] as const;
 export type EmployerInterviewUpdateStatus = (typeof EMPLOYER_INTERVIEW_UPDATE_STATUSES)[number];
 
-export const updateEmployerInterviewStatusSchema = z.object({
-  status: z.enum(EMPLOYER_INTERVIEW_UPDATE_STATUSES),
-  interviewAt: z.string().datetime().optional(),
-  interviewLocation: z.string().trim().max(300).optional(),
-  interviewNote: z.string().trim().max(500).optional(),
-});
+export const updateEmployerInterviewStatusSchema = z
+  .object({
+    status: z.enum(EMPLOYER_INTERVIEW_UPDATE_STATUSES),
+    interviewAt: futureInterviewAtSchema.optional(),
+    interviewLocation: z.string().trim().max(300).optional(),
+    interviewNote: z.string().trim().max(500).optional(),
+  })
+  .superRefine((v, ctx) => {
+    // M19 — rescheduling back to SCHEDULED without a new date would silently
+    // keep the old date; the new date is required.
+    if (v.status === 'EMPLOYER_INTERVIEW_SCHEDULED' && !v.interviewAt) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['interviewAt'],
+        message: 'Provide a new interview date & time when rescheduling',
+      });
+    }
+  });
 export type UpdateEmployerInterviewStatusInput = z.infer<
   typeof updateEmployerInterviewStatusSchema
 >;
@@ -84,14 +110,30 @@ export type UpdateEmployerInterviewStatusInput = z.infer<
 export const EMPLOYER_DECISION_OPTIONS = ['HOLD', 'ACCEPTED', 'REJECTED'] as const;
 export type EmployerDecisionOption = (typeof EMPLOYER_DECISION_OPTIONS)[number];
 
-export const recordEmployerDecisionSchema = z.object({
-  decision: z.enum(EMPLOYER_DECISION_OPTIONS),
-  note: z.string().trim().max(500).optional(),
-});
+export const recordEmployerDecisionSchema = z
+  .object({
+    decision: z.enum(EMPLOYER_DECISION_OPTIONS),
+    note: z.string().trim().max(500).optional(),
+  })
+  .superRefine((v, ctx) => {
+    // M19 — a rejection without a reason note tells the applicant nothing.
+    if (v.decision === 'REJECTED' && (v.note?.trim().length ?? 0) < 5) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['note'],
+        message: 'Add a short note (at least 5 characters) when rejecting',
+      });
+    }
+  });
 export type RecordEmployerDecisionInput = z.infer<typeof recordEmployerDecisionSchema>;
 
 export const refuseJobOfferSchema = z.object({
-  reason: z.string().trim().min(3).max(500),
+  /**
+   * H19 — unified with respondToJobOffer: a master-data REFUSAL_REASON code,
+   * not free text. The human-readable label is stored on the application
+   * (see refuseJobOffer) so existing displays keep showing real words.
+   */
+  reasonCode: z.string().trim().min(1).max(50),
   note: z.string().trim().max(500).optional(),
 });
 export type RefuseJobOfferInput = z.infer<typeof refuseJobOfferSchema>;
@@ -182,7 +224,7 @@ async function assertEmployerOwnsApplication(
 
 // ─── Queries ──────────────────────────────────────────────────────────────
 
-const EMPLOYER_VISIBLE_STATUSES: ApplicationStatus[] = [
+export const EMPLOYER_VISIBLE_STATUSES: ApplicationStatus[] = [
   'FORWARDED',
   'EMPLOYER_INTERVIEW_SCHEDULED',
   'EMPLOYER_INTERVIEW_POSTPONED',
@@ -194,31 +236,75 @@ const EMPLOYER_VISIBLE_STATUSES: ApplicationStatus[] = [
   'HIRED',
 ];
 
+/**
+ * H17 — employer decisions are only decidable from these states. Mirrors
+ * the placement machine's DECIDABLE_STATES; the machine re-checks inside
+ * the transaction, this is the early, readable rejection. HIRED,
+ * EMPLOYER_REJECTED, APPLICANT_REFUSED and REJECTED are terminal, and
+ * SHORTLISTED is pre-referral, so no decision can resurrect a closed
+ * application or pre-empt staff referral. This also closes the C3
+ * double-fill edge: a match-HIRED application is HIRED here too, so an
+ * employer ACCEPTED after it cannot extend a second offer that an
+ * applicant accept would fill a second vacancy with.
+ */
+export const EMPLOYER_DECIDABLE_STATUSES: ApplicationStatus[] = [
+  'FORWARDED',
+  'EMPLOYER_INTERVIEW_SCHEDULED',
+  'EMPLOYER_INTERVIEW_POSTPONED',
+  'EMPLOYER_INTERVIEW_CANCELLED',
+  'ON_HOLD',
+];
+
+export function assertEmployerCanDecide(status: ApplicationStatus): void {
+  if (!EMPLOYER_DECIDABLE_STATUSES.includes(status))
+    throw new ForbiddenError(
+      `Cannot record an employer decision for an application in status ${status}`,
+    );
+}
+
+/** H18 — employers only ever see applications staff have forwarded. */
+export function assertEmployerCanView(status: ApplicationStatus, applicationId: string): void {
+  if (!EMPLOYER_VISIBLE_STATUSES.includes(status))
+    throw new NotFoundError('Application', applicationId);
+}
+
 /** Employer: list all referred candidates for their company's jobs. */
-export async function listReferrals(actor: Actor): Promise<ApplicationView[]> {
+export async function listReferrals(actor: Actor): Promise<ApplicationView[]>;
+export async function listReferrals(
+  actor: Actor,
+  query: PlacementListQuery,
+): Promise<{ items: ApplicationView[]; pagination: PaginationMeta }>;
+export async function listReferrals(
+  actor: Actor,
+  query?: PlacementListQuery,
+): Promise<ApplicationView[] | { items: ApplicationView[]; pagination: PaginationMeta }> {
   assertPermission(actor, 'decision:employer');
-  if (!actor.companyId) return [];
+  if (!actor.companyId) return query ? { items: [], pagination: paginationMeta(query, 0) } : [];
 
   const companyJobs = await db
     .select({ id: schema.jobs.id })
     .from(schema.jobs)
     .where(eq(schema.jobs.companyId, actor.companyId));
 
-  if (companyJobs.length === 0) return [];
+  if (companyJobs.length === 0)
+    return query ? { items: [], pagination: paginationMeta(query, 0) } : [];
 
   const jobIds = companyJobs.map((j) => j.id);
 
-  const rows = await db
-    .select()
-    .from(ap)
-    .where(
-      and(
-        or(...jobIds.map((id) => eq(ap.jobId, id))),
-        or(...EMPLOYER_VISIBLE_STATUSES.map((s) => eq(ap.status, s))),
-      ),
-    );
-
-  return Promise.all(rows.map(buildView));
+  // M32 — the or(...jobIds) filter used to return every referral at once;
+  // with a query only one page is fetched, plus a count for the metadata.
+  const where = and(
+    or(...jobIds.map((id) => eq(ap.jobId, id))),
+    or(...EMPLOYER_VISIBLE_STATUSES.map((s) => eq(ap.status, s))),
+  );
+  const [totalRow] = query
+    ? await db.select({ total: count() }).from(ap).where(where)
+    : [{ total: 0 }];
+  const base = db.select().from(ap).where(where);
+  const rows = query ? await base.limit(query.limit).offset(query.offset) : await base;
+  const items = await Promise.all(rows.map(buildView));
+  if (!query) return items;
+  return { items, pagination: paginationMeta(query, totalRow?.total ?? 0) };
 }
 
 /** Employer: get full application + applicant summary for one referred candidate. */
@@ -228,6 +314,8 @@ export async function getApplicationForEmployer(
 ): Promise<ApplicationWithApplicant> {
   assertPermission(actor, 'decision:employer');
   const row = await assertEmployerOwnsApplication(actor, applicationId);
+  // H18 — pre-referral applications are invisible to employers, same as listReferrals.
+  assertEmployerCanView(row.status, applicationId);
   const [view, applicant] = await Promise.all([
     buildView(row),
     getApplicantSummary(row.applicantId),
@@ -257,6 +345,10 @@ export async function scheduleEmployerInterview(
     throw new ForbiddenError(
       'Application must be FORWARDED or have a postponed/cancelled employer interview to schedule',
     );
+
+  // H11 — service-level backstop: the schema already rejects past dates, but
+  // direct callers bypass it.
+  assertFutureInterviewAt(input.interviewAt);
 
   const [jobRow] = await db
     .select({ title: schema.jobs.title })
@@ -312,7 +404,7 @@ export async function scheduleEmployerInterview(
   if (applicantRow) {
     void createNotification(db, {
       userId: applicantRow.userId,
-      type: 'INTERVIEW_RESCHEDULED',
+      type: 'INTERVIEW_SCHEDULED',
       title: `Interview scheduled — ${jobTitle}`,
       body: `Your interview with ${companyName} is on ${interviewDate.toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' })}${input.interviewLocation ? ` at ${input.interviewLocation}` : ''}. Scheduled by the employer via Job Bank.`,
       data: { applicationId, jobTitle, companyName },
@@ -339,6 +431,18 @@ export async function updateEmployerInterviewStatus(
   ];
   if (!updatable.includes(row.status))
     throw new ForbiddenError('Can only update status for applications with an employer interview');
+
+  // H11 — a supplied new date must be in the future.
+  if (input.status === 'EMPLOYER_INTERVIEW_SCHEDULED' && input.interviewAt) {
+    assertFutureInterviewAt(input.interviewAt);
+  }
+  // M19 — service-level backstop for the schema rule above: rescheduling
+  // without a new date must not silently keep the old date.
+  if (input.status === 'EMPLOYER_INTERVIEW_SCHEDULED' && !input.interviewAt) {
+    throw new ValidationError([
+      { path: 'interviewAt', message: 'Provide a new interview date & time when rescheduling' },
+    ]);
+  }
 
   const patch: Partial<typeof ap.$inferInsert> = {
     status: input.status,
@@ -433,6 +537,18 @@ export async function recordEmployerDecision(
 
   const row = await assertEmployerOwnsApplication(ctx.actor, applicationId);
 
+  // H18 — an employer cannot decide on an application they cannot see
+  // (pre-referral). H17 — terminal / pre-referral states cannot be decided.
+  assertEmployerCanView(row.status, applicationId);
+  assertEmployerCanDecide(row.status);
+
+  // M19 — service-level backstop for the schema rule: a rejection needs a note.
+  if (input.decision === 'REJECTED' && (input.note?.trim().length ?? 0) < 5) {
+    throw new ValidationError([
+      { path: 'note', message: 'Add a short note (at least 5 characters) when rejecting' },
+    ]);
+  }
+
   const event =
     input.decision === 'HOLD'
       ? 'EMPLOYER_DECIDE_HOLD'
@@ -488,20 +604,20 @@ export async function recordEmployerDecision(
     .limit(1);
 
   if (applicantRow) {
-    type NotifType = 'OFFER_ACCEPTED' | 'OFFER_DECLINED' | 'MATCH_REJECTED';
+    type NotifType = 'OFFER_ACCEPTED' | 'APPLICATION_ON_HOLD' | 'MATCH_REJECTED';
     const notifType: NotifType =
       input.decision === 'ACCEPTED'
         ? 'OFFER_ACCEPTED'
         : input.decision === 'REJECTED'
           ? 'MATCH_REJECTED'
-          : 'OFFER_DECLINED';
+          : 'APPLICATION_ON_HOLD';
 
     const copy: Record<NotifType, { title: string; body: string }> = {
       OFFER_ACCEPTED: {
         title: `Job offer — ${jobTitle}`,
         body: `You have received a job offer from ${companyName} for ${jobTitle}. Please respond via your dashboard.`,
       },
-      OFFER_DECLINED: {
+      APPLICATION_ON_HOLD: {
         title: `Application on hold — ${jobTitle}`,
         body: `${companyName} has placed your application on hold for ${jobTitle}. They may reach out again.`,
       },
@@ -540,6 +656,11 @@ export async function refuseJobOffer(
   if (row.status !== 'OFFER_EXTENDED')
     throw new ConflictError('Only OFFER_EXTENDED applications can be refused');
 
+  // H19 — the refusal reason must be an active master-data REFUSAL_REASON
+  // code, the same validation respondToJobOffer applies (the machine's
+  // APPLICANT_REFUSE transition already guards the terminal-state flip).
+  const reason = await requireReasonCode('REFUSAL_REASON', input.reasonCode, input.note);
+
   const [jobRow] = await db
     .select({ title: schema.jobs.title, companyId: schema.jobs.companyId })
     .from(schema.jobs)
@@ -564,7 +685,7 @@ export async function refuseJobOffer(
       .update(ap)
       .set({
         status: to,
-        applicantRefusalReason: input.reason,
+        applicantRefusalReason: reason.label,
         applicantRefusedAt: new Date(),
         updatedAt: new Date(),
       })
@@ -572,7 +693,7 @@ export async function refuseJobOffer(
       .returning();
 
     // Open chat with first message from applicant
-    const content = `I have refused this offer. Reason: ${input.reason}${input.note ? '. ' + input.note : ''}`;
+    const content = `I have refused this offer. Reason: ${reason.label}${input.note ? '. ' + input.note : ''}`;
     await tx.insert(am).values({
       applicationId,
       senderId: ctx.actor.userId,
@@ -585,7 +706,7 @@ export async function refuseJobOffer(
       entityType: 'application',
       entityId: applicationId,
       branchId: row.branchId,
-      metadata: { reason: input.reason },
+      metadata: { reason: reason.code, reasonLabel: reason.label },
     });
     return updated!;
   }).then(buildView);
@@ -707,7 +828,17 @@ export async function acceptJobOffer(
 // ─── Messages ──────────────────────────────────────────────────────────────
 
 /** List all messages for an application. Accessible by employer, applicant, or match_case:read staff. */
-export async function listMessages(actor: Actor, applicationId: string): Promise<MessageView[]> {
+export async function listMessages(actor: Actor, applicationId: string): Promise<MessageView[]>;
+export async function listMessages(
+  actor: Actor,
+  applicationId: string,
+  query: PlacementListQuery,
+): Promise<{ items: MessageView[]; pagination: PaginationMeta }>;
+export async function listMessages(
+  actor: Actor,
+  applicationId: string,
+  query?: PlacementListQuery,
+): Promise<MessageView[] | { items: MessageView[]; pagination: PaginationMeta }> {
   const [row] = await db.select().from(ap).where(eq(ap.id, applicationId)).limit(1);
   if (!row) throw new NotFoundError('Application', applicationId);
 
@@ -737,7 +868,14 @@ export async function listMessages(actor: Actor, applicationId: string): Promise
     throw new ForbiddenError('Not authorised to view this application');
   }
 
-  const messages = await db
+  // M32 — paginate when a query is passed; the dashboard callers still get
+  // the full thread, as before.
+  const where = eq(am.applicationId, applicationId);
+  const [totalRow] = query
+    ? await db.select({ total: count() }).from(am).where(where)
+    : [{ total: 0 }];
+
+  const base = db
     .select({
       id: am.id,
       applicationId: am.applicationId,
@@ -749,10 +887,11 @@ export async function listMessages(actor: Actor, applicationId: string): Promise
     })
     .from(am)
     .innerJoin(schema.users, eq(schema.users.id, am.senderId))
-    .where(eq(am.applicationId, applicationId))
+    .where(where)
     .orderBy(asc(am.createdAt));
+  const messages = query ? await base.limit(query.limit).offset(query.offset) : await base;
 
-  return messages.map((m) => ({
+  const items = messages.map((m) => ({
     id: m.id,
     applicationId: m.applicationId,
     senderId: m.senderId,
@@ -761,6 +900,8 @@ export async function listMessages(actor: Actor, applicationId: string): Promise
     content: m.content,
     createdAt: m.createdAt.toISOString(),
   }));
+  if (!query) return items;
+  return { items, pagination: paginationMeta(query, totalRow?.total ?? 0) };
 }
 
 /** Send a message on an application. Only EMPLOYER or APPLICANT can send. */
@@ -823,7 +964,7 @@ export async function sendMessage(
     if (jobRow?.companyId) {
       void notifyCompanyEmployers(db, jobRow.companyId, ({ userId }) => ({
         userId,
-        type: 'OFFER_DECLINED' as const,
+        type: 'MESSAGE' as const,
         title: `New message — ${jobRow.title}`,
         body: 'The applicant sent a message regarding their refusal.',
         data: { applicationId },
@@ -839,7 +980,7 @@ export async function sendMessage(
     if (applicantRow) {
       void createNotification(db, {
         userId: applicantRow.userId,
-        type: 'OFFER_DECLINED',
+        type: 'MESSAGE',
         title: `New message — ${jobRow?.title ?? 'your application'}`,
         body: 'The employer replied to your message.',
         data: { applicationId },
