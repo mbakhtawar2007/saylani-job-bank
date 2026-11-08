@@ -8,6 +8,7 @@ import { assertCityAccess, assertPermission, type Actor } from '@/domains/shared
 import { db } from '@/lib/db';
 import { createNotification, notifyCompanyEmployers } from '@/domains/notifications';
 import type { RequestContext } from '@/domains/shared/audit';
+import { lockAndTransitionApplication } from './machine';
 export type ApplicationStatus =
   | 'SHORTLISTED'
   | 'INTERVIEW_SCHEDULED'
@@ -155,12 +156,26 @@ export async function shortlistApplicant(
 
   // Verify job exists and is open
   const [jobRow] = await db
-    .select({ id: schema.jobs.id, branchId: schema.jobs.branchId, status: schema.jobs.status })
+    .select({
+      id: schema.jobs.id,
+      companyId: schema.jobs.companyId,
+      branchId: schema.jobs.branchId,
+      status: schema.jobs.status,
+    })
     .from(schema.jobs)
     .where(eq(schema.jobs.id, input.jobId));
   if (!jobRow) throw new NotFoundError('Job', input.jobId);
   if (jobRow.status !== 'OPEN')
     throw new ForbiddenError('Only OPEN jobs can receive shortlisted candidates');
+
+  // A suspended or rejected company must not keep collecting candidates:
+  // shortlisting is only for companies that are verified right now.
+  const [companyRow] = await db
+    .select({ status: schema.companies.status })
+    .from(schema.companies)
+    .where(eq(schema.companies.id, jobRow.companyId));
+  if (companyRow?.status !== 'VERIFIED')
+    throw new ForbiddenError('Only verified companies can receive shortlisted candidates');
 
   // Check for duplicate
   const [existing] = await db
@@ -206,11 +221,17 @@ export async function scheduleInterview(
   if (row.status === 'REJECTED' || row.status === 'HIRED')
     throw new ForbiddenError('Cannot schedule an interview for a closed application');
 
-  return runCommand(ctx, async ({ tx, audit }) => {
+  await assertCityAccess(ctx.actor, row.branchId, {
+    entityType: 'application',
+    entityId: row.id,
+  });
+
+  const view = await runCommand(ctx, async ({ tx, audit }) => {
+    const { to } = await lockAndTransitionApplication(tx, applicationId, 'SCHEDULE_INTERVIEW');
     const [updated] = await tx
       .update(ap)
       .set({
-        status: 'INTERVIEW_SCHEDULED',
+        status: to,
         interviewAt: new Date(input.interviewAt),
         interviewLocation: input.interviewLocation ?? null,
         interviewNote: input.interviewNote ?? null,
@@ -228,6 +249,14 @@ export async function scheduleInterview(
     });
     return updated!;
   }).then(buildView);
+
+  // The applicant must hear about their first interview too: until now only
+  // postponements and cancellations were notified.
+  void notifyApplicantOfInterviewUpdate(ctx, row.applicantId, view, 'INTERVIEW_SCHEDULED').catch(
+    (err) => ctx.log.error('interview notification failed', { applicationId, err }),
+  );
+
+  return view;
 }
 
 /** Staff / Branch Admin: update the status and details of a scheduled interview. */
@@ -241,6 +270,11 @@ export async function updateInterviewStatus(
   const [row] = await db.select().from(ap).where(eq(ap.id, applicationId));
   if (!row) throw new NotFoundError('Application', applicationId);
 
+  await assertCityAccess(ctx.actor, row.branchId, {
+    entityType: 'application',
+    entityId: row.id,
+  });
+
   const interviewStatuses: ApplicationStatus[] = [
     'INTERVIEW_SCHEDULED',
     'INTERVIEW_POSTPONED',
@@ -250,8 +284,15 @@ export async function updateInterviewStatus(
     throw new ForbiddenError('Can only update status for applications with a scheduled interview');
 
   const view = await runCommand(ctx, async ({ tx, audit }) => {
+    const event =
+      input.status === 'INTERVIEW_SCHEDULED'
+        ? 'RESCHEDULE_INTERVIEW'
+        : input.status === 'INTERVIEW_POSTPONED'
+          ? 'POSTPONE_INTERVIEW'
+          : 'CANCEL_INTERVIEW';
+    const { to } = await lockAndTransitionApplication(tx, applicationId, event);
     const patch: Partial<typeof ap.$inferInsert> = {
-      status: input.status,
+      status: to,
       note: input.note ?? row.note,
       updatedAt: new Date(),
     };
@@ -293,8 +334,15 @@ async function notifyApplicantOfInterviewUpdate(
     .limit(1);
   if (!applicantRow) return;
 
-  type NotifType = 'INTERVIEW_POSTPONED' | 'INTERVIEW_CANCELLED' | 'INTERVIEW_RESCHEDULED';
+  type NotifType =
+    'INTERVIEW_SCHEDULED' | 'INTERVIEW_POSTPONED' | 'INTERVIEW_CANCELLED' | 'INTERVIEW_RESCHEDULED';
   const copy: Record<NotifType, { title: string; body: string }> = {
+    INTERVIEW_SCHEDULED: {
+      title: `Interview scheduled — ${view.jobTitle}`,
+      body: view.interviewAt
+        ? `Your interview is on ${new Date(view.interviewAt).toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' })}${view.interviewLocation ? ` at ${view.interviewLocation}` : ''}.`
+        : 'Your interview has been scheduled. Staff will contact you with details.',
+    },
     INTERVIEW_POSTPONED: {
       title: `Interview postponed — ${view.jobTitle}`,
       body: 'Your interview has been postponed. Staff will contact you with a new time.',
@@ -312,11 +360,13 @@ async function notifyApplicantOfInterviewUpdate(
   };
 
   const notifType = (
-    newStatus === 'INTERVIEW_POSTPONED'
-      ? 'INTERVIEW_POSTPONED'
-      : newStatus === 'INTERVIEW_CANCELLED'
-        ? 'INTERVIEW_CANCELLED'
-        : 'INTERVIEW_RESCHEDULED'
+    newStatus === 'INTERVIEW_SCHEDULED'
+      ? 'INTERVIEW_SCHEDULED'
+      : newStatus === 'INTERVIEW_POSTPONED'
+        ? 'INTERVIEW_POSTPONED'
+        : newStatus === 'INTERVIEW_CANCELLED'
+          ? 'INTERVIEW_CANCELLED'
+          : 'INTERVIEW_RESCHEDULED'
   ) satisfies NotifType;
 
   await createNotification(db, {
@@ -349,6 +399,11 @@ export async function referApplicantToEmployer(
   const [row] = await db.select().from(ap).where(eq(ap.id, applicationId));
   if (!row) throw new NotFoundError('Application', applicationId);
 
+  await assertCityAccess(ctx.actor, row.branchId, {
+    entityType: 'application',
+    entityId: row.id,
+  });
+
   const referable: ApplicationStatus[] = [
     'SHORTLISTED',
     'INTERVIEW_SCHEDULED',
@@ -357,11 +412,22 @@ export async function referApplicantToEmployer(
   if (!referable.includes(row.status))
     throw new ForbiddenError('Application must be shortlisted or interviewed to refer');
 
+  // The job's company must still be verified: a referral to a suspended
+  // or rejected company must not go out.
+  const [companyRow] = await db
+    .select({ status: schema.companies.status })
+    .from(schema.jobs)
+    .innerJoin(schema.companies, eq(schema.companies.id, schema.jobs.companyId))
+    .where(eq(schema.jobs.id, row.jobId));
+  if (companyRow?.status !== 'VERIFIED')
+    throw new ForbiddenError('Only verified companies can receive referred candidates');
+
   const view = await runCommand(ctx, async ({ tx, audit }) => {
+    const { to } = await lockAndTransitionApplication(tx, applicationId, 'REFER');
     const [updated] = await tx
       .update(ap)
       .set({
-        status: 'FORWARDED',
+        status: to,
         note: input.note ?? row.note,
         updatedAt: new Date(),
       })
@@ -466,3 +532,4 @@ export async function listMyApplications(actor: Actor): Promise<ApplicationView[
 export { buildView };
 
 export * from './employer';
+export { applicationMachine, lockAndTransitionApplication, type ApplicationEvent } from './machine';

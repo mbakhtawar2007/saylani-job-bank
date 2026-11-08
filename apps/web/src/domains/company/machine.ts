@@ -80,7 +80,12 @@ export const companyMachine = defineMachine<
       from: 'INFO_REQUESTED',
       event: 'RESUBMIT',
       to: 'RESUBMITTED',
-      actors: ['EMPLOYER'],
+      // The employer sends their own company back; a field-visit onboarder
+      // (staff, branch admin, super admin, or the verifier who onboarded
+      // it) sends back a company they onboarded — the employer has no
+      // account for those, and without this the company could never leave
+      // INFO_REQUESTED. The submission guard still applies to both.
+      actors: ['EMPLOYER', 'STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN', 'VERIFIER'],
       guard: submissionGuard,
     },
     {
@@ -88,9 +93,12 @@ export const companyMachine = defineMachine<
       event: 'VERIFY',
       to: 'VERIFIED',
       actors: ['VERIFIER'],
-      guard: ({ documentsNotAccepted }) =>
-        documentsNotAccepted.length === 0 ||
-        `Accept every required document first (${documentsNotAccepted.join(', ')})`,
+      guard: ({ documentsNotAccepted, submissionMissing }) =>
+        documentsNotAccepted.length === 0 && submissionMissing.length === 0
+          ? true
+          : documentsNotAccepted.length > 0
+            ? `Accept every required document first (${documentsNotAccepted.join(', ')})`
+            : `Complete the submission first (${submissionMissing.join(', ')})`,
     },
     {
       from: ['UNDER_VERIFICATION', 'RESUBMITTED', 'INFO_REQUESTED'],

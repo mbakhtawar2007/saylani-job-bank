@@ -1,11 +1,16 @@
 import 'server-only';
 import { schema } from '@jobbank/db';
 import type { DocumentReviewInput, VerificationState } from '@jobbank/shared';
-import { and, asc, count, desc, eq, inArray, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, lt, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { masterDataLabels, pktDate } from '@/domains/settings';
 import { runCommand } from '@/domains/shared/audit';
-import { ConflictError, ForbiddenError, NotFoundError } from '@/domains/shared/errors';
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from '@/domains/shared/errors';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
 import { assertCityAccess, assertPermission, cityScope, type Actor } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
@@ -148,6 +153,38 @@ export async function listQueue(
 
 // ─── Review helpers ────────────────────────────────────────────────────
 
+/**
+ * Monthly verifications done, current calendar year, branch-scoped exactly
+ * like the queue (cityScope): counts verification rounds decided VERIFIED,
+ * bucketed by decidedAt in UTC months. Months with no decisions are 0 —
+ * the dashboard chart shows real decisions, never invented bars.
+ */
+export async function countVerificationsDoneByMonth(actor: Actor, year: number): Promise<number[]> {
+  assertPermission(actor, 'company:verify');
+  const start = new Date(Date.UTC(year, 0, 1));
+  const end = new Date(Date.UTC(year + 1, 0, 1));
+  const rows = await db
+    .select({
+      month: sql<number>`extract(month from ${ver.decidedAt} at time zone 'UTC')`,
+      value: count(),
+    })
+    .from(ver)
+    .where(
+      and(
+        cityScope(actor, ver.branchId),
+        eq(ver.state, 'VERIFIED'),
+        gte(ver.decidedAt, start),
+        lt(ver.decidedAt, end),
+      ),
+    )
+    .groupBy(sql`extract(month from ${ver.decidedAt} at time zone 'UTC')`);
+  const values = Array.from({ length: 12 }, () => 0);
+  for (const row of rows) {
+    if (row.month >= 1 && row.month <= 12) values[row.month - 1] = row.value;
+  }
+  return values;
+}
+
 /** The verifier's full view of a company — same as the employer's view plus the verification. */
 export async function getCompanyForReview(actor: Actor, companyId: string): Promise<CompanyView> {
   assertPermission(actor, 'company:verify');
@@ -196,6 +233,63 @@ async function autoConflictCheck(actor: Actor, companyId: string): Promise<strin
       phones: contactRows.map((r) => r.phone),
     },
   );
+}
+
+/** Same conflict message as claimCompany, for the review paths below. */
+async function assertNoConflictOfInterest(actor: Actor, companyId: string): Promise<void> {
+  const conflict = await autoConflictCheck(actor, companyId);
+  if (conflict) {
+    throw new ConflictError(
+      `You cannot verify this company: ${conflict}. Ask another verifier or your Super Admin.`,
+      { reason: 'CONFLICT_OF_INTEREST' },
+    );
+  }
+}
+
+/**
+ * Validate a Super Admin assignment target before it is written: the user
+ * must exist, hold the VERIFIER role, work in the company's city, and pass
+ * the same segregation checks claimCompany runs (not the onboarder, no
+ * shared email/phone with the company's contacts). Assignment used to
+ * accept any user id — including staff, employers, or the creator.
+ */
+export async function assertAssignableVerifier(
+  verifierId: string,
+  company: CompanyRow,
+): Promise<void> {
+  const [user] = await db
+    .select({ id: schema.users.id })
+    .from(schema.users)
+    .where(eq(schema.users.id, verifierId));
+  if (!user) throw new NotFoundError('User', verifierId);
+  const roles = await db
+    .select({ roleCode: schema.userRoles.roleCode, branchId: schema.userRoles.branchId })
+    .from(schema.userRoles)
+    .where(eq(schema.userRoles.userId, verifierId));
+  const verifierBranches = roles
+    .filter((r) => r.roleCode === 'VERIFIER' && r.branchId)
+    .map((r) => r.branchId!);
+  if (verifierBranches.length === 0) {
+    throw new ValidationError([{ path: 'verifierId', message: 'Choose a verification officer' }]);
+  }
+  // The target's own scope, not the assigner's: assertCityAccess reads the
+  // branchIds off the actor it is given.
+  const target: Actor = {
+    userId: verifierId,
+    roles: ['VERIFIER'],
+    permissions: new Set(),
+    branchIds: verifierBranches,
+    activeBranchId: null,
+    companyId: null,
+    applicantId: null,
+    twoFactorPending: false,
+  };
+  await assertCityAccess(target, company.branchId, {
+    entityType: 'company',
+    entityId: company.id,
+  });
+  assertNotOwnOnboarding(company, target);
+  await assertNoConflictOfInterest(target, company.id);
 }
 
 // ─── Claim / release ───────────────────────────────────────────────────
@@ -302,6 +396,10 @@ export async function reviewDocument(
     const round = await openVerification(tx, row.id, { forUpdate: true });
     if (!round) throw new NotFoundError('Open verification for company', companyId);
     assertAssignedVerifier(round, ctx.actor);
+    // Segregation of duties also applies here: a Super Admin assignment
+    // bypasses claimCompany, so the review paths re-check it themselves.
+    assertNotOwnOnboarding(row, ctx.actor);
+    await assertNoConflictOfInterest(ctx.actor, companyId);
     if (!['UNDER_VERIFICATION', 'RESUBMITTED'].includes(row.status)) {
       throw new ForbiddenError(
         'Documents can only be reviewed while the company is under verification',
@@ -355,6 +453,9 @@ export async function requestInfo(
     const round = await openVerification(tx, row.id, { forUpdate: true });
     if (!round) throw new NotFoundError('Open verification for company', companyId);
     assertAssignedVerifier(round, ctx.actor);
+    // Segregation of duties also applies here (see reviewDocument).
+    assertNotOwnOnboarding(row, ctx.actor);
+    await assertNoConflictOfInterest(ctx.actor, companyId);
     const now = new Date();
     await tx
       .update(ver)
@@ -402,6 +503,7 @@ export async function verifyCompany(
     const row = await loadCompany(tx, companyId, { forUpdate: true });
     await assertCityAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
     assertNotOwnOnboarding(row, ctx.actor);
+    await assertNoConflictOfInterest(ctx.actor, companyId);
     const machineCtx: CompanyMachineContext = {
       submissionMissing: await submissionMissing(tx, row),
       documentsNotAccepted: await documentsNotAccepted(tx, row),
@@ -459,6 +561,9 @@ export async function rejectCompany(
     const round = await openVerification(tx, row.id, { forUpdate: true });
     if (!round) throw new NotFoundError('Open verification for company', companyId);
     assertAssignedVerifier(round, ctx.actor);
+    // Segregation of duties also applies here (see reviewDocument).
+    assertNotOwnOnboarding(row, ctx.actor);
+    await assertNoConflictOfInterest(ctx.actor, companyId);
     const now = new Date();
     await tx
       .update(ver)

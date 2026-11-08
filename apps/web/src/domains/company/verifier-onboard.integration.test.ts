@@ -108,13 +108,13 @@ describe('verifier creates companies', () => {
 
   it('sees only the companies they onboarded in the company list', async () => {
     const mine = await onboardedCompany();
-    const staffJar = await signIn('staff.khi@jobbank.local');
-    const staffRes = await call(onboard, '/api/v1/companies/onboard', {
+    const otherJar = await signIn('branchadmin.khi@jobbank.local');
+    const otherRes = await call(onboard, '/api/v1/companies/onboard', {
       method: 'POST',
-      body: onboardBody({ legalName: 'Staff Onboard Test Foods' }),
-      jar: staffJar,
+      body: onboardBody({ legalName: 'Branch Admin Onboard Test Foods' }),
+      jar: otherJar,
     });
-    expect(staffRes.status, JSON.stringify(staffRes.body)).toBe(201);
+    expect(otherRes.status, JSON.stringify(otherRes.body)).toBe(201);
     const res = await call(listCompanies, '/api/v1/companies', {
       method: 'GET',
       jar: verifierJar,
@@ -122,6 +122,6 @@ describe('verifier creates companies', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     const ids = (res.body.data.items as { id: string }[]).map((c) => c.id);
     expect(ids).toContain(mine.id);
-    expect(ids).not.toContain(staffRes.body.data.id);
+    expect(ids).not.toContain(otherRes.body.data.id);
   });
 });

@@ -1,12 +1,20 @@
 'use client';
 
-import { COMPANY_SIZE_LABELS, LEGAL_STRUCTURE_LABELS, type CompanyStatus } from '@jobbank/shared';
-import { ArrowLeft, ExternalLink, Pause, Play, Printer } from 'lucide-react';
+import {
+  COMPANY_SIZE_BANDS,
+  COMPANY_SIZE_LABELS,
+  LEGAL_STRUCTURE_LABELS,
+  LEGAL_STRUCTURES,
+  type CompanySizeBand,
+  type CompanyStatus,
+  type LegalStructure,
+} from '@jobbank/shared';
+import { ArrowLeft, ExternalLink, Pause, Pencil, Play, Printer } from 'lucide-react';
 import NextLink from 'next/link';
 import { usePathname } from 'next/navigation';
 import { createPortal } from 'react-dom';
-import { useEffect, useState } from 'react';
-import { Badge, Button, StatusPill, Textarea } from '@/components/atoms';
+import { useEffect, useRef, useState } from 'react';
+import { Badge, Button, Input, Select, StatusPill, Textarea } from '@/components/atoms';
 import { FormField, KeyValue } from '@/components/molecules';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import { formatDate } from '@/lib/format/date';
@@ -19,6 +27,15 @@ interface MasterDataOption {
   code: string;
   label: string;
   parentId: string | null;
+}
+
+interface GeocodeResult {
+  lat: number;
+  lng: number;
+  addressLine: string;
+  cityCode: string | null;
+  cityLabel: string | null;
+  display: string;
 }
 
 const STATUS_PILL: Record<
@@ -39,7 +56,7 @@ export function StaffCompanyPanel({
   company,
   onboarding,
   canSuspend,
-  canManage: _canManage,
+  canManage,
   canOnboard = false,
 }: {
   company: CompanyView;
@@ -53,9 +70,7 @@ export function StaffCompanyPanel({
     ? '/super-admin/companies'
     : pathname.includes('/verifier/')
       ? '/verifier/companies'
-      : pathname.includes('/staff/')
-        ? '/staff/companies'
-        : '/branch-admin/companies';
+      : '/branch-admin/companies';
   const [company_, setCompany_] = useState(company);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,12 +86,30 @@ export function StaffCompanyPanel({
     Boolean(company.registrationVerifiedSignedAt),
   );
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
-  // Staff upload (F1): only for a staff-onboarded DRAFT that has not been marked
-  // verified & signed yet — the same condition as the verified-signed button.
+  // Onboard upload (F1): for an onboarded DRAFT that has not been marked
+  // verified & signed yet — the same condition as the verified-signed button —
+  // and while the company is INFO_REQUESTED, when the verifier asked for
+  // more and the onboarder is supplying it.
   const canUploadDocs = Boolean(
-    canOnboard && onboarding && company_.status === 'DRAFT' && !verifiedSigned,
+    canOnboard &&
+    onboarding &&
+    ((company_.status === 'DRAFT' && !verifiedSigned) || company_.status === 'INFO_REQUESTED'),
   );
   const [industries, setIndustries] = useState<MasterDataOption[]>([]);
+  const [cities, setCities] = useState<MasterDataOption[]>([]);
+  // Head office form (H3): the onboard form only records the address as a
+  // note, so onboarded companies reach the verifier with no location row.
+  const [showHqForm, setShowHqForm] = useState(false);
+  const [hqAddress, setHqAddress] = useState('');
+  const [hqCity, setHqCity] = useState('');
+  const [hqArea, setHqArea] = useState('');
+  const [hqLat, setHqLat] = useState(0);
+  const [hqLng, setHqLng] = useState(0);
+  const [hqSearch, setHqSearch] = useState('');
+  const [hqSuggestions, setHqSuggestions] = useState<GeocodeResult[]>([]);
+  const [hqSearching, setHqSearching] = useState(false);
+  const [showHqSuggestions, setShowHqSuggestions] = useState(false);
+  const hqDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setPrintReady(true);
@@ -93,6 +126,13 @@ export function StaffCompanyPanel({
       })
       .finally(() => {
         if (active) setIndustriesSettled(true);
+      });
+    apiFetch<MasterDataOption[]>('/api/v1/master-data?type=CITY')
+      .then(({ data }) => {
+        if (active) setCities(data ?? []);
+      })
+      .catch(() => {
+        // City select falls back to an empty list; the head-office form stays unusable until it loads.
       });
     return () => {
       active = false;
@@ -184,6 +224,160 @@ export function StaffCompanyPanel({
     }
   }
 
+  function onHqSearchChange(value: string) {
+    setHqSearch(value);
+    if (hqDebounceRef.current) clearTimeout(hqDebounceRef.current);
+    if (value.trim().length < 3) {
+      setHqSuggestions([]);
+      setShowHqSuggestions(false);
+      return;
+    }
+    hqDebounceRef.current = setTimeout(async () => {
+      setHqSearching(true);
+      try {
+        const { data } = await apiFetch<GeocodeResult[]>(
+          `/api/v1/geocode/search?q=${encodeURIComponent(value)}`,
+        );
+        setHqSuggestions(data ?? []);
+        setShowHqSuggestions((data ?? []).length > 0);
+      } catch {
+        setHqSuggestions([]);
+        setShowHqSuggestions(false);
+      } finally {
+        setHqSearching(false);
+      }
+    }, 500);
+  }
+
+  function pickHqSuggestion(r: GeocodeResult) {
+    setHqLat(r.lat);
+    setHqLng(r.lng);
+    setHqAddress(r.addressLine);
+    setHqSearch(r.addressLine);
+    if (r.cityCode && cities.some((c) => c.code === r.cityCode)) setHqCity(r.cityCode);
+    setHqSuggestions([]);
+    setShowHqSuggestions(false);
+  }
+
+  async function saveHeadOffice() {
+    setPending('head-office');
+    setError(null);
+    try {
+      const { data: saved } = await apiFetch<CompanyView>(
+        `/api/v1/companies/${company_.id}/head-office`,
+        {
+          method: 'POST',
+          body: {
+            location: { lat: hqLat, lng: hqLng },
+            addressLine: hqAddress,
+            cityCode: hqCity,
+            areaCode: hqArea || undefined,
+          },
+        },
+      );
+      setCompany_(saved);
+      setShowHqForm(false);
+    } catch (err) {
+      setError(err instanceof ApiClientError ? err.message : 'Something went wrong.');
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function resubmitOnboarded() {
+    setPending('resubmit');
+    setError(null);
+    try {
+      const { data: saved } = await apiFetch<CompanyView>(
+        `/api/v1/companies/${company_.id}/resubmit`,
+        { method: 'POST', body: { note: null } },
+      );
+      setCompany_(saved);
+    } catch (err) {
+      setError(err instanceof ApiClientError ? err.message : 'Something went wrong.');
+    } finally {
+      setPending(null);
+    }
+  }
+
+  // Correct locked details (company:manage): only the fields that changed
+  // are sent, plus the mandatory audit reason.
+  const [showCorrectForm, setShowCorrectForm] = useState(false);
+  const [correct, setCorrect] = useState({
+    legalName: '',
+    tradeName: '',
+    legalStructure: 'PRIVATE_LIMITED' as LegalStructure,
+    ntn: '',
+    registrationNo: '',
+    industryCode: '',
+    sizeBand: '1_10' as CompanySizeBand,
+    website: '',
+    description: '',
+  });
+  const [correctReason, setCorrectReason] = useState('');
+
+  function openCorrectForm() {
+    setCorrect({
+      legalName: company_.details.legalName,
+      tradeName: company_.details.tradeName ?? '',
+      legalStructure: company_.details.legalStructure,
+      ntn: company_.details.ntn,
+      registrationNo: company_.details.registrationNo ?? '',
+      industryCode: company_.details.industryCode,
+      sizeBand: company_.details.sizeBand,
+      website: company_.details.website ?? '',
+      description: company_.details.description ?? '',
+    });
+    setCorrectReason('');
+    setError(null);
+    setShowCorrectForm(true);
+  }
+
+  async function saveCorrectDetails() {
+    const changes: Record<string, string> = {};
+    const d = company_.details;
+    if (correct.legalName.trim() !== d.legalName) changes.legalName = correct.legalName.trim();
+    if (correct.tradeName.trim() !== (d.tradeName ?? ''))
+      changes.tradeName = correct.tradeName.trim();
+    if (correct.legalStructure !== d.legalStructure)
+      changes.legalStructure = correct.legalStructure;
+    if (correct.ntn.trim() !== d.ntn) changes.ntn = correct.ntn.trim();
+    if (correct.registrationNo.trim() !== (d.registrationNo ?? ''))
+      changes.registrationNo = correct.registrationNo.trim();
+    if (correct.industryCode !== d.industryCode) changes.industryCode = correct.industryCode;
+    if (correct.sizeBand !== d.sizeBand) changes.sizeBand = correct.sizeBand;
+    if (correct.website.trim() !== (d.website ?? '')) changes.website = correct.website.trim();
+    if (correct.description.trim() !== (d.description ?? ''))
+      changes.description = correct.description.trim();
+    if (Object.keys(changes).length === 0) {
+      setError('Change at least one field.');
+      return;
+    }
+    if (correctReason.trim().length === 0) {
+      setError('Add a reason for this correction — it is recorded in the audit log.');
+      return;
+    }
+    setPending('correct');
+    setError(null);
+    try {
+      const { data: saved } = await apiFetch<CompanyView>(`/api/v1/companies/${company_.id}`, {
+        method: 'PATCH',
+        body: { ...changes, reason: correctReason.trim() },
+      });
+      setCompany_(saved);
+      setShowCorrectForm(false);
+    } catch (err) {
+      setError(err instanceof ApiClientError ? err.message : 'Something went wrong.');
+    } finally {
+      setPending(null);
+    }
+  }
+
+  const industryOptions = industries.map((i) => ({ value: i.code, label: i.label }));
+  if (correct.industryCode && !industryOptions.some((o) => o.value === correct.industryCode)) {
+    industryOptions.unshift({ value: correct.industryCode, label: correct.industryCode });
+  }
+
   return (
     <div className="grid w-full gap-6">
       <div>
@@ -225,6 +419,16 @@ export function StaffCompanyPanel({
                 Mark as verified &amp; signed
               </Button>
             )}
+            {canOnboard && onboarding && company_.status === 'INFO_REQUESTED' && (
+              <Button loading={pending === 'resubmit'} onClick={() => void resubmitOnboarded()}>
+                Send back to verifier
+              </Button>
+            )}
+            {canManage && !showCorrectForm && (
+              <Button variant="secondary" leftIcon={<Pencil />} onClick={openCorrectForm}>
+                Correct details
+              </Button>
+            )}
             {canSuspend && company_.status === 'VERIFIED' && !showSuspendForm && (
               <Button
                 variant="danger"
@@ -260,6 +464,112 @@ export function StaffCompanyPanel({
         </div>
       )}
 
+      {canOnboard &&
+        onboarding &&
+        !company_.headOffice &&
+        (company_.status === 'DRAFT' || company_.status === 'INFO_REQUESTED') && (
+          <section className="border-border bg-surface grid gap-4 rounded-xl border p-5">
+            <h2 className="text-fg font-semibold">Head office</h2>
+            {!showHqForm ? (
+              <>
+                <p className="text-fg-muted text-sm">
+                  The verifier needs a head office location before this company can be verified.
+                  {onboarding.notes.headOfficeAddress
+                    ? ` The visit notes record: ${onboarding.notes.headOfficeAddress}`
+                    : ' No address was recorded at the visit.'}
+                </p>
+                <div>
+                  <Button onClick={() => setShowHqForm(true)}>Add head office</Button>
+                </div>
+              </>
+            ) : (
+              <form
+                className="grid gap-4"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void saveHeadOffice();
+                }}
+              >
+                <div className="relative">
+                  <FormField label="Search address" required>
+                    <Input
+                      placeholder="Type the office address, e.g. Gulshan-e-Iqbal, Karachi"
+                      value={hqSearch}
+                      onChange={(e) => onHqSearchChange(e.target.value)}
+                      onBlur={() => setTimeout(() => setShowHqSuggestions(false), 150)}
+                      onFocus={() => hqSuggestions.length > 0 && setShowHqSuggestions(true)}
+                    />
+                  </FormField>
+                  {hqSearching && <p className="text-fg-muted mt-1 text-xs">Searching…</p>}
+                  {showHqSuggestions && (
+                    <ul className="border-border bg-surface absolute top-full z-10 mt-1 w-full overflow-hidden rounded-xl border shadow-lg">
+                      {hqSuggestions.map((r, i) => (
+                        <li key={i}>
+                          <button
+                            type="button"
+                            className="hover:bg-surface-muted w-full px-4 py-2.5 text-left text-sm"
+                            onMouseDown={() => pickHqSuggestion(r)}
+                          >
+                            {r.display}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                {hqLat !== 0 && hqLng !== 0 && (
+                  <p className="text-fg-muted text-xs">
+                    Coordinates: {hqLat.toFixed(6)}, {hqLng.toFixed(6)}
+                  </p>
+                )}
+                <FormField label="Full address" required>
+                  <Input
+                    placeholder="Building name, street, area"
+                    value={hqAddress}
+                    onChange={(e) => setHqAddress(e.target.value)}
+                  />
+                </FormField>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <FormField label="City" required>
+                    <Select
+                      value={hqCity}
+                      onChange={(e) => setHqCity(e.target.value)}
+                      options={cities.map((c) => ({ value: c.code, label: c.label }))}
+                      placeholder="Choose a city"
+                    />
+                  </FormField>
+                  <FormField label="Area">
+                    <Input
+                      placeholder="e.g. Gulshan-e-Iqbal"
+                      value={hqArea}
+                      onChange={(e) => setHqArea(e.target.value)}
+                    />
+                  </FormField>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="submit"
+                    loading={pending === 'head-office'}
+                    disabled={
+                      !(hqLat !== 0 && hqLng !== 0 && hqAddress.trim().length >= 5 && hqCity)
+                    }
+                  >
+                    Save head office
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setShowHqForm(false);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            )}
+          </section>
+        )}
+
       {showSuspendForm && (
         <div className="border-border bg-surface grid gap-3 rounded-xl border p-5">
           <h2 className="text-fg font-semibold">Suspend company</h2>
@@ -286,6 +596,100 @@ export function StaffCompanyPanel({
                 setSuspendNote('');
               }}
             >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {showCorrectForm && (
+        <div className="border-border bg-surface grid gap-3 rounded-xl border p-5">
+          <h2 className="text-fg font-semibold">Correct company details</h2>
+          <p className="text-fg-muted text-sm">
+            Only the fields you change are saved. The reason is recorded in the audit log.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField label="Registered company name" required>
+              <Input
+                value={correct.legalName}
+                onChange={(e) => setCorrect((c) => ({ ...c, legalName: e.target.value }))}
+              />
+            </FormField>
+            <FormField label="Trading name">
+              <Input
+                value={correct.tradeName}
+                onChange={(e) => setCorrect((c) => ({ ...c, tradeName: e.target.value }))}
+              />
+            </FormField>
+            <FormField label="Type of business" required>
+              <Select
+                value={correct.legalStructure}
+                onChange={(e) =>
+                  setCorrect((c) => ({ ...c, legalStructure: e.target.value as LegalStructure }))
+                }
+                options={LEGAL_STRUCTURES.map((v) => ({
+                  value: v,
+                  label: LEGAL_STRUCTURE_LABELS[v],
+                }))}
+              />
+            </FormField>
+            <FormField label="NTN" required>
+              <Input
+                value={correct.ntn}
+                onChange={(e) => setCorrect((c) => ({ ...c, ntn: e.target.value }))}
+              />
+            </FormField>
+            <FormField label="Registration no.">
+              <Input
+                value={correct.registrationNo}
+                onChange={(e) => setCorrect((c) => ({ ...c, registrationNo: e.target.value }))}
+              />
+            </FormField>
+            <FormField label="Industry" required>
+              <Select
+                value={correct.industryCode}
+                onChange={(e) => setCorrect((c) => ({ ...c, industryCode: e.target.value }))}
+                options={industryOptions}
+              />
+            </FormField>
+            <FormField label="Company size" required>
+              <Select
+                value={correct.sizeBand}
+                onChange={(e) =>
+                  setCorrect((c) => ({ ...c, sizeBand: e.target.value as CompanySizeBand }))
+                }
+                options={COMPANY_SIZE_BANDS.map((v) => ({
+                  value: v,
+                  label: COMPANY_SIZE_LABELS[v],
+                }))}
+              />
+            </FormField>
+            <FormField label="Website">
+              <Input
+                value={correct.website}
+                onChange={(e) => setCorrect((c) => ({ ...c, website: e.target.value }))}
+              />
+            </FormField>
+            <FormField label="About the company" className="sm:col-span-2">
+              <Textarea
+                rows={3}
+                value={correct.description}
+                onChange={(e) => setCorrect((c) => ({ ...c, description: e.target.value }))}
+              />
+            </FormField>
+            <FormField label="Reason for this correction" required className="sm:col-span-2">
+              <Textarea
+                rows={2}
+                value={correctReason}
+                onChange={(e) => setCorrectReason(e.target.value)}
+              />
+            </FormField>
+          </div>
+          <div className="flex gap-2">
+            <Button loading={pending === 'correct'} onClick={() => void saveCorrectDetails()}>
+              Save correction
+            </Button>
+            <Button variant="secondary" onClick={() => setShowCorrectForm(false)}>
               Cancel
             </Button>
           </div>
@@ -390,9 +794,9 @@ export function StaffCompanyPanel({
           <h2 className="text-fg font-semibold">Documents</h2>
           {canUploadDocs && (
             <p className="text-fg-muted text-sm">
-              Upload the required documents before marking the form verified &amp; signed. PDF, JPG
-              or PNG — the file size and type are checked on upload. Uploading a file of a type that
-              already has one replaces it.
+              {company_.status === 'INFO_REQUESTED'
+                ? 'The verifier asked for more — upload the missing documents here, then send the company back from the header.'
+                : 'Upload the required documents before marking the form verified & signed. PDF, JPG or PNG — the file size and type are checked on upload. Uploading a file of a type that already has one replaces it.'}
             </p>
           )}
           {canUploadDocs ? (

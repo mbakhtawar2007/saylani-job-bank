@@ -27,6 +27,9 @@ import { StatusToggle } from './_components/StatusToggle';
 
 export const metadata = { title: 'My Dashboard — Saylani Job Bank' };
 
+/** Live data on every load — dashboards are never statically cached. */
+export const dynamic = 'force-dynamic';
+
 const STEP_FOR: Record<ProfileSectionId, string> = {
   personal: 'personal',
   location: 'location',
@@ -37,6 +40,18 @@ const STEP_FOR: Record<ProfileSectionId, string> = {
   preferences: 'preferences',
   documents: 'documents',
 };
+
+/**
+ * Application statuses with no further action possible. The "Active
+ * Applications" tile counts everything except these — rejected, refused,
+ * hired and staff-rejected applications are outcomes, not live applications.
+ */
+const TERMINAL_APPLICATION_STATUSES: readonly string[] = [
+  'EMPLOYER_REJECTED',
+  'APPLICANT_REFUSED',
+  'HIRED',
+  'REJECTED',
+];
 
 export default async function ApplicantHomePage() {
   const { actor, user } = await requireRole('APPLICANT');
@@ -131,6 +146,9 @@ export default async function ApplicantHomePage() {
     (a) =>
       a.status === 'INTERVIEW_SCHEDULED' && a.interviewAt && new Date(a.interviewAt) > new Date(),
   );
+  const activeApplications = myApplications.filter(
+    (a) => !TERMINAL_APPLICATION_STATUSES.includes(a.status),
+  );
   const missingForActivation = completeness.sections.filter((s) =>
     completeness.activationMissing.includes(s.id),
   );
@@ -183,16 +201,15 @@ export default async function ApplicantHomePage() {
           icon={UserRound}
           tone="green"
           sub="Fill all sections"
-          spark={[20, 35, 50, 60, 65, 70, 80, completeness.percent]}
         />
         <StatCard
-          label="Applications"
-          value={myApplications.length > 0 ? String(myApplications.length) : '—'}
+          label="Active Applications"
+          value={activeApplications.length > 0 ? String(activeApplications.length) : '—'}
           icon={Briefcase}
           tone="blue"
           sub={
             myApplications.length > 0
-              ? `${myApplications.filter((a) => a.status === 'SHORTLISTED').length} shortlisted`
+              ? `${myApplications.filter((a) => a.status === 'SHORTLISTED').length} shortlisted · ${myApplications.length} total`
               : 'None yet'
           }
         />

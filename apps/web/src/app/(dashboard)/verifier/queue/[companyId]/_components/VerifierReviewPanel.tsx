@@ -56,6 +56,10 @@ export function VerifierReviewPanel({
   const [infoText, setInfoText] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [rejectNote, setRejectNote] = useState('');
+  // Document rejection needs a note (server requires ≥ 5 characters); the
+  // reject button opens this inline form instead of rejecting immediately.
+  const [docRejectId, setDocRejectId] = useState<string | null>(null);
+  const [docRejectNote, setDocRejectNote] = useState('');
 
   const ver = company_.verification;
   const pill = STATUS_PILL[company_.status];
@@ -121,10 +125,20 @@ export function VerifierReviewPanel({
         },
       );
       setCompany_(saved);
+      return true;
     } catch (err) {
       setError(err instanceof ApiClientError ? err.message : 'Something went wrong.');
+      return false;
     } finally {
       setPending(null);
+    }
+  }
+
+  async function submitDocReject(docId: string) {
+    const ok = await reviewDoc(docId, 'REJECTED', docRejectNote.trim());
+    if (ok) {
+      setDocRejectId(null);
+      setDocRejectNote('');
     }
   }
 
@@ -267,12 +281,48 @@ export function VerifierReviewPanel({
                       variant="danger"
                       size="sm"
                       loading={pending === `doc-${doc.id}`}
-                      onClick={() => void reviewDoc(doc.id, 'REJECTED')}
+                      onClick={() => {
+                        setDocRejectId(doc.id);
+                        setDocRejectNote('');
+                      }}
                     >
                       Reject
                     </Button>
                   )}
                 </div>
+                {docRejectId === doc.id && (
+                  <div className="grid w-full gap-2">
+                    <FormField label="Why is this document not accepted?" required>
+                      <Textarea
+                        rows={2}
+                        value={docRejectNote}
+                        onChange={(e) => setDocRejectNote(e.target.value)}
+                        placeholder="Say what is wrong, so the employer can fix it…"
+                      />
+                    </FormField>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        loading={pending === `doc-${doc.id}`}
+                        disabled={docRejectNote.trim().length < 5}
+                        onClick={() => void submitDocReject(doc.id)}
+                      >
+                        Send rejection
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setDocRejectId(null);
+                          setDocRejectNote('');
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

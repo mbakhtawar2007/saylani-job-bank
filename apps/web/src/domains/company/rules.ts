@@ -32,7 +32,9 @@ const NONE: CompanyEditability = {
   documents: false,
 };
 
-/** What the employer may change in each status. Nothing changes while a verifier reviews. */
+/** What the employer may change in each status. Nothing changes while a verifier reviews,
+ * and nothing changes once the company is verified or suspended: a verified badge must
+ * mean the verified details, so corrections go through Job Bank staff (company:manage). */
 export function companyEditability(status: CompanyStatus): CompanyEditability {
   switch (status) {
     case 'DRAFT':
@@ -41,7 +43,8 @@ export function companyEditability(status: CompanyStatus): CompanyEditability {
     case 'REJECTED':
       return { ...ALL, branch: false };
     case 'VERIFIED':
-      return { ...NONE, details: true, contacts: true, locations: true };
+    case 'SUSPENDED':
+      return NONE;
     default:
       return NONE;
   }

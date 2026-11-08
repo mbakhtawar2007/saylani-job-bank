@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 const params = z.object({ id: z.uuid(), docId: z.uuid() });
 
-/** POST /api/v1/companies/{id}/documents/{docId}/confirm — staff step 2: confirm upload. */
+/** POST /api/v1/companies/{id}/documents/{docId}/confirm — onboard step 2: confirm upload. */
 export const POST = apiHandler({
   permission: 'company:onboard',
   params,

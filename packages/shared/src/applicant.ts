@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { DOCUMENT_MIME_TYPES, masterDataCodeSchema } from './master-data';
-import { pkPhoneSchema } from './phone';
+import { pkMobileSchema } from './phone';
 
 /**
  * Applicant domain contracts (M6), shared by the API and the UI.
@@ -258,20 +258,31 @@ export const branchOptionsQuery = z.object({
 const unique = <T>(key: (item: T) => string, message: string) =>
   [(items: T[]) => new Set(items.map(key)).size === items.length, { message }] as const;
 
-export const educationItemSchema = z.object({
-  levelCode: masterDataCodeSchema,
-  institution: optionalText(160),
-  fieldOfStudy: optionalText(120),
-  completionYear: z
-    .number()
-    .int()
-    .min(1950)
-    .max(new Date().getUTCFullYear() + 6)
-    .nullish()
-    .transform((v) => v ?? null),
-  isCurrent: z.boolean().default(false),
-  grade: optionalText(40),
-});
+export const educationItemSchema = z
+  .object({
+    levelCode: masterDataCodeSchema,
+    institution: optionalText(160),
+    fieldOfStudy: optionalText(120),
+    completionYear: z
+      .number()
+      .int()
+      .min(1950)
+      .max(new Date().getUTCFullYear() + 6)
+      .nullish()
+      .transform((v) => v ?? null),
+    isCurrent: z.boolean().default(false),
+    grade: optionalText(40),
+  })
+  .refine(
+    (item) =>
+      item.isCurrent ||
+      item.completionYear == null ||
+      item.completionYear <= new Date().getUTCFullYear(),
+    {
+      message: 'Completion year cannot be in the future unless this is your current education',
+      path: ['completionYear'],
+    },
+  );
 export const educationSchema = z.object({ items: z.array(educationItemSchema).max(10) });
 export type EducationInput = z.infer<typeof educationSchema>;
 
@@ -346,6 +357,10 @@ export const certificationsSchema = z.object({
         .refine((c) => !c.issuedMonth || !c.expiresMonth || c.expiresMonth >= c.issuedMonth, {
           message: 'Must be after the issue date',
           path: ['expiresMonth'],
+        })
+        .refine((c) => !c.issuedMonth || c.issuedMonth <= currentMonth(), {
+          message: 'Cannot be in the future',
+          path: ['issuedMonth'],
         }),
     )
     .max(15),
@@ -375,13 +390,16 @@ export const preferencesSchema = z.object({
     .refine(...unique((s: string) => s, 'Each job type only once')),
   availableFrom: z.iso
     .date()
+    // A past "available from" is meaningless for matching (you are available
+    // now); the date must be today or later, in Pakistan time.
+    .refine((d) => d >= karachiDay(), { message: 'Available from cannot be in the past' })
     .nullish()
     .transform((v) => v ?? null),
 });
 export type PreferencesInput = z.infer<typeof preferencesSchema>;
 
 export const staffRegisterApplicantSchema = registerApplicantSchema.extend({
-  phone: z.string().trim().min(10).max(20),
+  phone: pkMobileSchema,
   branchId: z.uuid('Choose a branch'),
   address: applicantLocationSchema.optional(),
   /** Permanent home address (section 5). Same fields as the current address, no map pin. */
@@ -418,7 +436,7 @@ export const issueApplicantTokenSchema = z.object({
   branchId: z.uuid('Choose a branch'),
   cnic: cnicSchema,
   applicantName: personName('the applicant name'),
-  phone: pkPhoneSchema,
+  phone: pkMobileSchema,
 });
 export type IssueApplicantTokenInput = z.infer<typeof issueApplicantTokenSchema>;
 
@@ -486,7 +504,7 @@ export const identityVerificationSchema = z
   });
 export type IdentityVerificationInput = z.infer<typeof identityVerificationSchema>;
 
-export const changePhoneSchema = z.object({ phone: z.string().trim().min(10).max(20), reason });
+export const changePhoneSchema = z.object({ phone: pkMobileSchema, reason });
 export const transferApplicantSchema = z.object({ branchId: z.uuid('Choose a branch'), reason });
 
 // ─── Completeness & activation ─────────────────────────────────────────

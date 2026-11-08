@@ -6,9 +6,8 @@ import {
   COMPANY_SIZE_LABELS,
   type CompanyStatus,
 } from '@jobbank/shared';
-import { Building2, CheckCircle2, XCircle, AlertCircle, Clock } from 'lucide-react';
-import NextLink from 'next/link';
-import { Button, StatusPill } from '@/components/atoms';
+import { CheckCircle2, XCircle, AlertCircle, Clock } from 'lucide-react';
+import { StatusPill } from '@/components/atoms';
 import { KeyValue } from '@/components/molecules';
 import type { CompanyView } from '@/domains/company';
 
@@ -103,11 +102,14 @@ export function CompanyStatusPanel({ company }: { company: CompanyView }) {
         </section>
       )}
 
-      <div className="flex">
-        <Button asChild variant="secondary" leftIcon={<Building2 />}>
-          <NextLink href="/employer/company?step=details">Edit details</NextLink>
-        </Button>
-      </div>
+      {/* Read-only: the employer cannot edit company details from here. Verified
+          details stay as verified; anything waiting with a verifier stays as
+          submitted. Corrections go through Job Bank staff. */}
+      <p className="text-fg-muted text-sm">
+        {company.status === 'VERIFIED' || company.status === 'SUSPENDED'
+          ? 'These details were verified by Saylani Job Bank and can’t be changed here. To correct them, contact your Job Bank branch.'
+          : 'Your company is with a verifier, so these details can’t be changed here right now. If they ask for more information, you’ll be able to update them then.'}
+      </p>
     </div>
   );
 }

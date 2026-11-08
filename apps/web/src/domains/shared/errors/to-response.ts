@@ -26,6 +26,8 @@ const PG_ERRORS: Record<string, { code: ErrorCode; status: number; message: stri
     message: 'A related record does not exist or is still in use',
   },
   '23514': { code: 'VALIDATION_FAILED', status: 422, message: 'The data breaks a validation rule' },
+  /** Numeric value out of range (e.g. a salary that overflows Postgres `integer`) — S1. */
+  '22003': { code: 'VALIDATION_FAILED', status: 422, message: 'A number is too large' },
   JB001: {
     code: 'APPEND_ONLY_VIOLATION',
     status: 409,

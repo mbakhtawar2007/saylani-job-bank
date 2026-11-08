@@ -6,6 +6,7 @@ import {
   ROLE_LABELS,
   ROLE_PRIORITY,
   type CompanyStatus,
+  type OnboardedCompanyHeadOfficeInput,
   type RegisterCompanyInput,
   type Role,
   type StaffOnboardCompanyInput,
@@ -54,13 +55,16 @@ import {
   c,
   contacts,
   loadCompany,
+  locs,
   openVerification,
   recordTransition,
+  submissionMissing,
   ver,
   verificationDueOn,
   type CompanyView,
   type SignedIn,
 } from './repository';
+import { assertAssignableVerifier } from './verifier';
 
 // ─── Company listing ───────────────────────────────────────────────────
 
@@ -295,8 +299,16 @@ export async function assignVerifier(
   input: { verifierId: string; reason: string },
 ): Promise<CompanyView> {
   assertPermission(ctx.actor, 'company:manage');
+  // Validate the target before anything is written: the user must exist,
+  // hold the VERIFIER role, work in the company's city, and pass the
+  // segregation checks (not the onboarder, no shared contact details).
+  const company = await loadCompany(db, companyId);
+  await assertAssignableVerifier(input.verifierId, company);
   await runCommand(ctx, async ({ tx, audit }) => {
     const row = await loadCompany(tx, companyId, { forUpdate: true });
+    // Scope BEFORE the update (see correctCompanyDetails): the
+    // getCompanyDetail() at the end only fails after this commits.
+    assertBranchAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
     const to = companyMachine.transition(row.status, 'ASSIGN', READY, ctx.actor.roles);
     const round = await openVerification(tx, row.id, { forUpdate: true });
     if (!round) throw new NotFoundError('Open verification for company', companyId);
@@ -331,15 +343,21 @@ export async function assignVerifier(
   return getCompanyDetail(ctx.actor, companyId);
 }
 
-/** Super Admin changes the company's branch without re-verification. */
+/** Super Admin or Branch Admin changes the company's branch without re-verification. */
 export async function transferCompany(
   ctx: SignedIn,
   companyId: string,
   input: { branchId: string; reason: string },
 ): Promise<CompanyView> {
   assertPermission(ctx.actor, 'company:manage');
+  // company:manage is also held by verifiers since their scope grew; a
+  // verifier must never be able to move a company to another branch.
+  assertRole(ctx.actor, 'SUPER_ADMIN', 'BRANCH_ADMIN');
   await runCommand(ctx, async ({ tx, audit }) => {
     const row = await loadCompany(tx, companyId, { forUpdate: true });
+    // Scope BEFORE the move (see correctCompanyDetails): only a company in
+    // the actor's own branch can be transferred out of it.
+    assertBranchAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
     if (row.branchId === input.branchId) return;
     const branch = await getBranchContact(input.branchId, tx);
     if (!branch?.isActive) {
@@ -370,6 +388,10 @@ export async function staffRegisterCompany(
   input: RegisterCompanyInput & { branchId: string },
 ): Promise<CompanyView> {
   assertPermission(ctx.actor, 'company:manage');
+  // company:manage is also held by verifiers since their scope grew; direct
+  // registration must stay with Branch Admin and Super Admin — verifiers
+  // register companies through the field-visit onboarding flow instead.
+  assertRole(ctx.actor, 'SUPER_ADMIN', 'BRANCH_ADMIN');
   if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, input.branchId);
 
   const { branchId, ...companyInput } = input;
@@ -725,6 +747,132 @@ export async function markCompanyRegistrationVerifiedSigned(
   return getCompanyDetail(ctx.actor, companyId);
 }
 
+/**
+ * After "more information needed": the onboarder fixed what the verifier
+ * asked for and sends a field-visit company back. Mirrors resubmitMyCompany
+ * for employers — the employer has no account for these companies, and
+ * without this the company could never leave INFO_REQUESTED (RESUBMIT was
+ * employer-only), so the VERIFY completeness guard would strand it.
+ */
+export async function resubmitOnboardedCompany(
+  ctx: SignedIn,
+  companyId: string,
+  input: { note: string | null },
+): Promise<CompanyView> {
+  assertPermission(ctx.actor, 'company:onboard');
+  const company = await loadCompany(db, companyId);
+  if (!isSuperAdmin(ctx.actor)) {
+    assertBranchAccess(ctx.actor, company.branchId, {
+      entityType: 'company',
+      entityId: company.id,
+    });
+  }
+  const onboarding = await getCompanyOnboarding(ctx.actor, companyId);
+  if (!onboarding) {
+    throw new ConflictError(
+      'Only a company registered after a field visit can be sent back this way.',
+      { reason: 'NOT_ONBOARDED' },
+    );
+  }
+  const now = new Date();
+  const dueOn = await verificationDueOn(now);
+  await runCommand(ctx, async ({ tx, audit }) => {
+    const row = await loadCompany(tx, companyId, { forUpdate: true });
+    const to = companyMachine.transition(
+      row.status,
+      'RESUBMIT',
+      { submissionMissing: await submissionMissing(tx, row), documentsNotAccepted: [] },
+      ctx.actor.roles,
+    );
+    const round = await openVerification(tx, row.id, { forUpdate: true });
+    if (!round) throw new ConflictError('There is no open verification to send back');
+    await tx
+      .update(ver)
+      .set({ state: 'RESUBMITTED', employerNote: input.note, clockStartedAt: now, slaDueOn: dueOn })
+      .where(eq(ver.id, round.id));
+    await tx.update(c).set({ status: to }).where(eq(c.id, row.id));
+    await recordTransition(tx, {
+      verificationId: round.id,
+      companyId: row.id,
+      event: 'RESUBMIT',
+      fromStatus: row.status,
+      toStatus: to,
+      actorId: ctx.actor.userId,
+      note: input.note,
+      metadata: { slaDueOn: dueOn },
+    });
+    audit({
+      action: 'company.resubmit',
+      entityType: 'company',
+      entityId: row.id,
+      branchId: row.branchId,
+      before: { status: row.status },
+      after: { status: to },
+      metadata: { round: round.round, slaDueOn: dueOn },
+    });
+  });
+  return getCompanyDetail(ctx.actor, companyId);
+}
+
+/**
+ * Set the head office of a field-visit-onboarded company. The onboard form
+ * only records the address as a note, so these companies reach the verifier
+ * with no location row — and the VERIFY guard now requires one. The
+ * onboarder supplies it here (address search + pin), while the company is
+ * a draft or waiting for more information. The city must be an active
+ * master-data CITY code.
+ */
+export async function setOnboardedCompanyHeadOffice(
+  ctx: SignedIn,
+  companyId: string,
+  input: OnboardedCompanyHeadOfficeInput,
+): Promise<CompanyView> {
+  assertPermission(ctx.actor, 'company:onboard');
+  const company = await loadCompany(db, companyId);
+  if (!isSuperAdmin(ctx.actor)) {
+    assertBranchAccess(ctx.actor, company.branchId, {
+      entityType: 'company',
+      entityId: company.id,
+    });
+  }
+  const onboarding = await getCompanyOnboarding(ctx.actor, companyId);
+  if (!onboarding) {
+    throw new ConflictError(
+      'Only a company registered after a field visit can have its head office set this way.',
+      { reason: 'NOT_ONBOARDED' },
+    );
+  }
+  if (company.status !== 'DRAFT' && company.status !== 'INFO_REQUESTED') {
+    throw new ConflictError(
+      'The head office can only be set while the company is a draft or waiting for more information.',
+    );
+  }
+  await assertActiveMasterData(db, 'CITY', [input.cityCode], () => 'cityCode');
+  await runCommand(ctx, async ({ tx, audit }) => {
+    const row = await loadCompany(tx, companyId, { forUpdate: true });
+    const values = {
+      label: 'Head office',
+      addressLine: input.addressLine,
+      cityCode: input.cityCode,
+      areaCode: input.areaCode ?? null,
+      location: input.location,
+    };
+    const [hq] = await tx
+      .select({ id: locs.id })
+      .from(locs)
+      .where(and(eq(locs.companyId, row.id), eq(locs.kind, 'HQ')));
+    if (hq) await tx.update(locs).set(values).where(eq(locs.id, hq.id));
+    else await tx.insert(locs).values({ companyId: row.id, kind: 'HQ', ...values });
+    audit({
+      action: 'company.set_head_office',
+      entityType: 'company',
+      entityId: row.id,
+      branchId: row.branchId,
+    });
+  });
+  return getCompanyDetail(ctx.actor, companyId);
+}
+
 /** Super Admin corrects locked fields (legal name, NTN, etc.) on a verified company. */
 export async function correctCompanyDetails(
   ctx: SignedIn,
@@ -739,6 +887,10 @@ export async function correctCompanyDetails(
   try {
     await runCommand(ctx, async ({ tx, audit }) => {
       const row = await loadCompany(tx, companyId, { forUpdate: true });
+      // Scope BEFORE the update: getCompanyDetail() at the end checks the
+      // branch too, but only after this transaction commits — without this
+      // line a cross-branch correction would silently land.
+      assertBranchAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
       // A corrected NTN must not collide with another live company (see
       // assertNtnFree). Previously there was no check here at all: the update
       // hit the partial index and failed with a raw 500 instead of a 409.

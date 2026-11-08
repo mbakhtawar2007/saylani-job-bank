@@ -71,4 +71,15 @@ describe('issueApplicantTokenSchema', () => {
       }).success,
     ).toBe(false);
   });
+
+  it('rejects a landline: a token must go to a mobile that can receive an SMS (M21)', () => {
+    expect(
+      issueApplicantTokenSchema.safeParse({
+        branchId,
+        cnic: '4210112345671',
+        applicantName: 'Ahmed Raza',
+        phone: '021 34567890',
+      }).success,
+    ).toBe(false);
+  });
 });

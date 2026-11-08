@@ -6,11 +6,18 @@ import { and, asc, eq, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
 import { ConflictError, ForbiddenError, NotFoundError } from '@/domains/shared/errors';
-import { assertPermission, hasPermission, type Actor } from '@/domains/shared/scope';
+import {
+  assertCityAccess,
+  assertPermission,
+  hasPermission,
+  type Actor,
+} from '@/domains/shared/scope';
+import { jobMachine } from '@/domains/job';
 import { db } from '@/lib/db';
 import { createNotification, notifyCompanyEmployers } from '@/domains/notifications';
 import type { RequestContext } from '@/domains/shared/audit';
 import { buildView, type ApplicationView, type ApplicationStatus } from './index';
+import { lockAndTransitionApplication } from './machine';
 
 type SignedIn = RequestContext & { actor: Actor };
 
@@ -268,10 +275,15 @@ export async function scheduleEmployerInterview(
   const interviewDate = new Date(input.interviewAt);
 
   const view = await runCommand(ctx, async ({ tx, audit }) => {
+    const { to } = await lockAndTransitionApplication(
+      tx,
+      applicationId,
+      'SCHEDULE_EMPLOYER_INTERVIEW',
+    );
     const [updated] = await tx
       .update(ap)
       .set({
-        status: 'EMPLOYER_INTERVIEW_SCHEDULED',
+        status: to,
         employerInterviewAt: interviewDate,
         employerInterviewLocation: input.interviewLocation ?? null,
         employerInterviewNote: input.interviewNote ?? null,
@@ -340,6 +352,14 @@ export async function updateEmployerInterviewStatus(
   }
 
   const view = await runCommand(ctx, async ({ tx, audit }) => {
+    const event =
+      input.status === 'EMPLOYER_INTERVIEW_SCHEDULED'
+        ? 'RESCHEDULE_EMPLOYER_INTERVIEW'
+        : input.status === 'EMPLOYER_INTERVIEW_POSTPONED'
+          ? 'POSTPONE_EMPLOYER_INTERVIEW'
+          : 'CANCEL_EMPLOYER_INTERVIEW';
+    const { to } = await lockAndTransitionApplication(tx, applicationId, event);
+    patch.status = to;
     const [updated] = await tx.update(ap).set(patch).where(eq(ap.id, applicationId)).returning();
     audit({
       action: 'application.employer_interview_status_updated',
@@ -413,12 +433,12 @@ export async function recordEmployerDecision(
 
   const row = await assertEmployerOwnsApplication(ctx.actor, applicationId);
 
-  const newStatus: ApplicationStatus =
+  const event =
     input.decision === 'HOLD'
-      ? 'ON_HOLD'
+      ? 'EMPLOYER_DECIDE_HOLD'
       : input.decision === 'ACCEPTED'
-        ? 'OFFER_EXTENDED'
-        : 'EMPLOYER_REJECTED';
+        ? 'EMPLOYER_DECIDE_ACCEPT'
+        : 'EMPLOYER_DECIDE_REJECT';
 
   const [jobRow] = await db
     .select({ title: schema.jobs.title })
@@ -436,6 +456,7 @@ export async function recordEmployerDecision(
   const jobTitle = jobRow?.title ?? '';
 
   const view = await runCommand(ctx, async ({ tx, audit }) => {
+    const { to: newStatus } = await lockAndTransitionApplication(tx, applicationId, event);
     const [updated] = await tx
       .update(ap)
       .set({
@@ -538,10 +559,11 @@ export async function refuseJobOffer(
     .limit(1);
 
   const view = await runCommand(ctx, async ({ tx, audit }) => {
+    const { to } = await lockAndTransitionApplication(tx, applicationId, 'APPLICANT_REFUSE');
     const [updated] = await tx
       .update(ap)
       .set({
-        status: 'APPLICANT_REFUSED',
+        status: to,
         applicantRefusalReason: input.reason,
         applicantRefusedAt: new Date(),
         updatedAt: new Date(),
@@ -584,6 +606,104 @@ export async function refuseJobOffer(
   return view;
 }
 
+/**
+ * Applicant: accept a job offer. This is the hire path: the application
+ * becomes HIRED and one vacancy fills in the same transaction; when the
+ * last vacancy fills, the job itself becomes FILLED (system event). Until
+ * now an applicant could only refuse — nothing ever wrote HIRED, so jobs
+ * stayed OPEN forever and hire counts were permanently zero.
+ */
+export async function acceptJobOffer(
+  ctx: SignedIn,
+  applicationId: string,
+): Promise<ApplicationView> {
+  if (!ctx.actor.applicantId) throw new ForbiddenError('Only applicants can accept a job offer');
+
+  const [row] = await db.select().from(ap).where(eq(ap.id, applicationId)).limit(1);
+  if (!row) throw new NotFoundError('Application', applicationId);
+
+  if (row.applicantId !== ctx.actor.applicantId)
+    throw new ForbiddenError('You can only accept your own job offer');
+
+  if (row.status !== 'OFFER_EXTENDED')
+    throw new ConflictError('Only OFFER_EXTENDED applications can be accepted');
+
+  const [jobRow] = await db
+    .select({ title: schema.jobs.title, companyId: schema.jobs.companyId })
+    .from(schema.jobs)
+    .where(eq(schema.jobs.id, row.jobId))
+    .limit(1);
+
+  const [userRow] = await db
+    .select({ name: schema.users.name })
+    .from(schema.users)
+    .where(eq(schema.users.id, ctx.actor.userId))
+    .limit(1);
+
+  const view = await runCommand(ctx, async ({ tx, audit }) => {
+    // Row lock + machine check: a second, concurrent accept waits on the
+    // lock, then fails the transition instead of double-filling a vacancy.
+    const { to } = await lockAndTransitionApplication(tx, applicationId, 'APPLICANT_ACCEPT');
+    const [updated] = await tx
+      .update(ap)
+      .set({ status: to, updatedAt: new Date() })
+      .where(eq(ap.id, applicationId))
+      .returning();
+    if (!updated) throw new ConflictError('Only OFFER_EXTENDED applications can be accepted');
+
+    // Fill one vacancy in the same transaction, under a row lock.
+    const [job] = await tx
+      .select({
+        id: schema.jobs.id,
+        status: schema.jobs.status,
+        vacancies: schema.jobs.vacancies,
+        vacanciesFilled: schema.jobs.vacanciesFilled,
+      })
+      .from(schema.jobs)
+      .where(eq(schema.jobs.id, row.jobId))
+      .for('update');
+    if (job) {
+      const filled = job.vacanciesFilled + 1;
+      const patch: Partial<typeof schema.jobs.$inferInsert> = {
+        vacanciesFilled: filled,
+        updatedAt: new Date(),
+      };
+      if (filled >= job.vacancies && (job.status === 'OPEN' || job.status === 'PAUSED')) {
+        const check = jobMachine.check(job.status, 'FILL', {}, 'system');
+        if (check.ok) {
+          patch.status = check.to;
+          patch.closedAt = new Date();
+        }
+      }
+      await tx.update(schema.jobs).set(patch).where(eq(schema.jobs.id, job.id));
+    }
+
+    audit({
+      action: 'application.applicant_accepted',
+      entityType: 'application',
+      entityId: applicationId,
+      branchId: row.branchId,
+      metadata: { jobId: row.jobId },
+    });
+    return updated!;
+  }).then(buildView);
+
+  // Notify employer company users
+  if (jobRow?.companyId) {
+    const jobTitle = jobRow.title;
+    const applicantName = userRow?.name ?? 'The applicant';
+    void notifyCompanyEmployers(db, jobRow.companyId, ({ userId }) => ({
+      userId,
+      type: 'OFFER_ACCEPTED' as const,
+      title: `Offer accepted — ${jobTitle}`,
+      body: `${applicantName} has accepted the offer for ${jobTitle}.`,
+      data: { applicationId, jobTitle },
+    })).catch(() => null);
+  }
+
+  return view;
+}
+
 // ─── Messages ──────────────────────────────────────────────────────────────
 
 /** List all messages for an application. Accessible by employer, applicant, or match_case:read staff. */
@@ -591,17 +711,16 @@ export async function listMessages(actor: Actor, applicationId: string): Promise
   const [row] = await db.select().from(ap).where(eq(ap.id, applicationId)).limit(1);
   if (!row) throw new NotFoundError('Application', applicationId);
 
-  // Check access
-  const hasStaffAccess = hasPermission(actor, 'match_case:read');
-  const isEmployerAccess = actor.companyId != null;
-  const isApplicantAccess = actor.applicantId === row.applicantId;
-
-  if (!hasStaffAccess && !isEmployerAccess && !isApplicantAccess) {
-    throw new ForbiddenError('Not authorised to view this application');
-  }
-
-  if (isEmployerAccess && !hasStaffAccess) {
-    // Verify employer's company owns the job
+  // Access is ownership-first: an applicant sees only their own application,
+  // an employer only their own company's jobs. Staff need match_case:read AND
+  // city scope — holding the permission alone must never open every case.
+  if (actor.applicantId != null) {
+    if (actor.applicantId !== row.applicantId) {
+      throw new ForbiddenError('You can only view messages for your own application');
+    }
+  } else if (actor.companyId != null) {
+    // Verify employer's company owns the job (applies even to dual-role
+    // accounts that also hold staff permissions).
     const [jobRow] = await db
       .select({ companyId: schema.jobs.companyId })
       .from(schema.jobs)
@@ -609,6 +728,13 @@ export async function listMessages(actor: Actor, applicationId: string): Promise
       .limit(1);
     if (!jobRow || jobRow.companyId !== actor.companyId)
       throw new ForbiddenError('Not authorised to view this application');
+  } else if (hasPermission(actor, 'match_case:read')) {
+    await assertCityAccess(actor, row.branchId, {
+      entityType: 'application',
+      entityId: row.id,
+    });
+  } else {
+    throw new ForbiddenError('Not authorised to view this application');
   }
 
   const messages = await db

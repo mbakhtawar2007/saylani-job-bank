@@ -9,7 +9,7 @@ import type {
   ShiftType,
   SkillLevel,
 } from '@jobbank/shared';
-import { asc, desc, eq } from 'drizzle-orm';
+import { asc, desc, eq, inArray } from 'drizzle-orm';
 import { NotFoundError } from '@/domains/shared/errors';
 import { db, type DbExecutor } from '@/lib/db';
 
@@ -98,13 +98,18 @@ export async function loadJob(
   return row;
 }
 
-export async function buildJobView(executor: DbExecutor, row: JobRow): Promise<JobView> {
-  const [locations, [reqs], skills] = await Promise.all([
-    executor.select().from(jl).where(eq(jl.jobId, row.id)).orderBy(asc(jl.createdAt)),
-    executor.select().from(jr).where(eq(jr.jobId, row.id)),
-    executor.select().from(js).where(eq(js.jobId, row.id)).orderBy(asc(js.skillCode)),
-  ]);
-
+/**
+ * Pure assembly of a JobView from a job row plus its already-loaded child
+ * rows (locations in createdAt order, at most one requirements row, skills
+ * in skillCode order). Shared by the single- and batch loaders so both
+ * return identical views.
+ */
+function toJobView(
+  row: JobRow,
+  locations: JobLocationRow[],
+  reqs: JobRequirementsRow | undefined,
+  skills: JobSkillRow[],
+): JobView {
   return {
     id: row.id,
     companyId: row.companyId,
@@ -158,6 +163,52 @@ export async function buildJobView(executor: DbExecutor, row: JobRow): Promise<J
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+export async function buildJobView(executor: DbExecutor, row: JobRow): Promise<JobView> {
+  const [locations, [reqs], skills] = await Promise.all([
+    executor.select().from(jl).where(eq(jl.jobId, row.id)).orderBy(asc(jl.createdAt)),
+    executor.select().from(jr).where(eq(jr.jobId, row.id)),
+    executor.select().from(js).where(eq(js.jobId, row.id)).orderBy(asc(js.skillCode)),
+  ]);
+  return toJobView(row, locations, reqs, skills);
+}
+
+/**
+ * Batch loader: the same three child-table queries for ANY number of jobs
+ * (3 queries total, not 3 per job). `listJobsForEmployer` and the staff job
+ * lists map one row per job through `buildJobView` today, so N jobs cost
+ * 3N queries; callers that switch to this keep the identical views. Rows
+ * come back in the input order.
+ */
+export async function buildJobViews(executor: DbExecutor, rows: JobRow[]): Promise<JobView[]> {
+  if (rows.length === 0) return [];
+  const ids = rows.map((r) => r.id);
+  const [locations, reqs, skills] = await Promise.all([
+    executor.select().from(jl).where(inArray(jl.jobId, ids)).orderBy(asc(jl.createdAt)),
+    executor.select().from(jr).where(inArray(jr.jobId, ids)),
+    executor.select().from(js).where(inArray(js.jobId, ids)).orderBy(asc(js.skillCode)),
+  ]);
+  const byJob = <T extends { jobId: string }>(list: T[]): Map<string, T[]> => {
+    const map = new Map<string, T[]>();
+    for (const item of list) {
+      const bucket = map.get(item.jobId);
+      if (bucket) bucket.push(item);
+      else map.set(item.jobId, [item]);
+    }
+    return map;
+  };
+  const locationsByJob = byJob(locations);
+  const reqsByJob = byJob(reqs);
+  const skillsByJob = byJob(skills);
+  return rows.map((row) =>
+    toJobView(
+      row,
+      locationsByJob.get(row.id) ?? [],
+      reqsByJob.get(row.id)?.[0],
+      skillsByJob.get(row.id) ?? [],
+    ),
+  );
 }
 
 export async function getJob(jobId: string): Promise<JobView> {

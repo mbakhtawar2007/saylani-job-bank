@@ -11,9 +11,9 @@ import type {
   SkillsInput,
   UpdatePersonalInput,
 } from '@jobbank/shared';
-import { and, eq, ilike } from 'drizzle-orm';
+import { and, eq, ilike, ne } from 'drizzle-orm';
 import { getBranchContact, listBranchOptions, type BranchOption } from '@/domains/branch';
-import { assertActiveMasterData, resolveMatchRadius } from '@/domains/settings';
+import { assertActiveMasterData } from '@/domains/settings';
 import { recordAudit, runCommand, type CommandScope } from '@/domains/shared/audit';
 import {
   ConflictError,
@@ -92,6 +92,29 @@ export async function myBranchOptions(actor: Actor, point: GeoPoint): Promise<Br
 
 // ─── Registration & personal details ───────────────────────────────────
 
+/**
+ * Another applicant already uses this contact email (S3). The `applicants.email`
+ * column has no unique index, so the check lives here — 409 with EMAIL_TAKEN,
+ * like the staff-invite email check. (A DB unique index would close the
+ * concurrent-submit race; that needs a schema change outside this fix.)
+ * Emails are lowercased by the zod schema, so an exact match is enough.
+ */
+export async function assertEmailFree(
+  executor: DbExecutor,
+  email: string,
+  exceptId?: string,
+): Promise<void> {
+  const [other] = await executor
+    .select({ id: a.id })
+    .from(a)
+    .where(and(eq(a.email, email), exceptId ? ne(a.id, exceptId) : undefined));
+  if (other) {
+    throw new ConflictError('Another applicant is already registered with this email address.', {
+      reason: 'EMAIL_TAKEN',
+    });
+  }
+}
+
 /** Step 1 of the wizard: creates the DRAFT profile for the signed-in phone account. */
 export async function registerApplicant(
   ctx: SignedIn,
@@ -106,6 +129,7 @@ export async function registerApplicant(
       }
       const owner = await cnicOwner(tx, input.cnic);
       if (owner) throw await cnicTakenError(tx, owner);
+      if (input.email) await assertEmailFree(tx, input.email);
       const [row] = await tx
         .insert(a)
         .values({
@@ -186,6 +210,7 @@ export async function updateMyPersonal(
       const owner = await cnicOwner(tx, changes.cnic, row.id);
       if (owner) throw await cnicTakenError(tx, owner);
     }
+    if (changes.email) await assertEmailFree(tx, changes.email, row.id);
     // Fixing details after a failed check sends the profile back for a new check.
     const identityStatus =
       identityChanged && row.identityStatus === 'REJECTED' ? 'UNVERIFIED' : row.identityStatus;
@@ -363,20 +388,17 @@ export function saveMyExperience(ctx: SignedIn, input: ExperienceInput) {
 
 export function saveMySkills(ctx: SignedIn, input: SkillsInput) {
   return saveSection(ctx, 'skills', input, async ({ tx }, row) => {
-    // Auto-upsert any skill codes that don't yet exist in master data so applicants
-    // can enter custom skills without needing admin pre-approval.
+    // Skills must already exist as active master data (H14): applicants may not
+    // mint new SKILL codes — an unknown code is "not offered", like every other
+    // section. (The old auto-upsert let any applicant inject junk codes into
+    // the shared list every other applicant matches against.)
     if (input.items.length > 0) {
-      await tx
-        .insert(schema.masterData)
-        .values(
-          input.items.map((item) => ({
-            type: 'SKILL' as const,
-            code: item.skillCode,
-            label: item.skillCode.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-            isActive: true,
-          })),
-        )
-        .onConflictDoNothing();
+      await assertActiveMasterData(
+        tx,
+        'SKILL',
+        input.items.map((item) => item.skillCode),
+        (index) => `items.${index}.skillCode`,
+      );
     }
     await tx.delete(skl).where(eq(skl.applicantId, row.id));
     if (input.items.length > 0) {

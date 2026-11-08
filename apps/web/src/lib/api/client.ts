@@ -66,6 +66,44 @@ export async function apiFetch<T>(
   return json as { data: T; meta?: PaginationMeta };
 }
 
+/** "items.0.skillCode" → "items #1 › skill code"; "salaryMin" → "salary min". */
+function humanizePath(path: string): string {
+  return path
+    .split('.')
+    .map((segment) =>
+      /^\d+$/.test(segment)
+        ? `#${Number(segment) + 1}`
+        : segment
+            .replace(/([A-Z])/g, ' $1')
+            .trim()
+            .toLowerCase(),
+    )
+    .join(' › ');
+}
+
+/**
+ * One shared error message for forms (H15): a 422 arrives with per-field `issues`,
+ * but callers that showed only `err.message` rendered the useless "Invalid request
+ * body". With issues, list them field by field (at most five, then a count);
+ * without issues, fall back to the message. Renders on one line — the forms show
+ * it in a single <p>.
+ */
+export function friendlyApiError(err: unknown): string {
+  if (err instanceof ApiClientError) {
+    if (err.issues.length > 0) {
+      const parts = err.issues.map((issue) =>
+        issue.path === '(root)' ? issue.message : `${humanizePath(issue.path)}: ${issue.message}`,
+      );
+      const unique = [...new Set(parts)];
+      const shown = unique.slice(0, 5);
+      const extra = unique.length - shown.length;
+      return shown.join(' · ') + (extra > 0 ? ` · (+${extra} more)` : '');
+    }
+    return err.message;
+  }
+  return err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+}
+
 /** Only allow same-site relative redirects (prevents open redirects via ?next=). */
 export function safeNextPath(next: string | null | undefined): string | null {
   if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\'))

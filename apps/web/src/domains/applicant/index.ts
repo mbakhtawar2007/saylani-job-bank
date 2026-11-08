@@ -12,6 +12,7 @@ export {
   type PresignedDocument,
 } from './documents';
 export { applicantMachine, type ApplicantEvent } from './machine';
+export { monthlyApplicantCounts } from './monthlyCounts';
 export {
   applicantProfileSchema,
   applicantStaffViewSchema,

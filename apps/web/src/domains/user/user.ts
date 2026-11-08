@@ -290,7 +290,7 @@ export async function inviteStaff(
     const [existing] = await tx
       .select({ id: u.id })
       .from(u)
-      .where(eq(sql`lower(${u.email})`, input.email));
+      .where(eq(sql`lower(${u.email})`, input.email.toLowerCase()));
     if (existing) {
       throw new ConflictError(
         'An account with this email already exists. Open it and add a role instead.',
@@ -398,7 +398,10 @@ export async function grantRole(
   assertAllowed(canGrantRole(ctx.actor, input.role, input.branchId));
   if (userId === ctx.actor.userId) throw new ForbiddenError('You cannot change your own roles');
   await runCommand(ctx, async ({ tx, audit }) => {
-    await loadTarget(tx, ctx.actor, userId);
+    const { assignments } = await loadTarget(tx, ctx.actor, userId);
+    // Seeing a user is not managing them: a Branch Admin may only grant roles
+    // onto accounts whose every role is inside their own branches (H7).
+    assertAllowed(canManageUser(ctx.actor, userId, assignments));
     await branchName(tx, input.branchId);
     const inserted = await tx
       .insert(ur)

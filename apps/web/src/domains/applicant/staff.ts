@@ -56,7 +56,7 @@ import {
 import { db } from '@/lib/db';
 import { normalizePkMobile } from '@/lib/format/phone';
 import { applicantMachine } from './machine';
-import { cnicTakenError, IDENTITY_FIELDS } from './profile';
+import { assertEmailFree, cnicTakenError, IDENTITY_FIELDS } from './profile';
 import {
   a,
   addr,
@@ -120,9 +120,19 @@ export const applicantFilters = {
   cityCode: multiCode,
   areaCode: multiCode,
   skillCode: multiCode,
-  /** Registration date range (inclusive, UTC day boundaries). */
+  /** Registration date range (inclusive, Pakistan day boundaries — M1). */
   createdFrom: dateOnlySchema,
   createdTo: dateOnlySchema,
+};
+
+/** Start of a YYYY-MM-DD day in Pakistan time, as a Date. */
+const pktDayStart = (day: string): Date => new Date(`${day}T00:00:00.000+05:00`);
+
+/** The calendar day after a YYYY-MM-DD date. */
+const nextDay = (day: string): string => {
+  const d = new Date(`${day}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
 };
 
 export interface ApplicantListItem {
@@ -176,8 +186,14 @@ export async function listApplicants(
   }
 
   // City-based scoping: staff see all applicants whose city matches any city of their branches.
+  // A branch stores its city as a display name ("Rahim Yar Khan") while the applicant address
+  // stores the master-data CITY code ("RAHIM_YAR_KHAN"), so the comparison goes through the
+  // CITY label (M30) — never branch name vs city code. A Super Admin with a branch selected
+  // in the switcher sees only that branch's applicants, like every other dashboard count (H9).
   const cityScope: SQL | undefined = isSuperAdmin(actor)
-    ? undefined
+    ? actor.activeBranchId
+      ? eq(a.branchId, actor.activeBranchId)
+      : undefined
     : actor.branchIds.length === 0
       ? sql`false`
       : exists(
@@ -187,7 +203,18 @@ export async function listApplicants(
             .where(
               and(
                 inArray(schema.branches.id, actor.branchIds),
-                sql`upper(${schema.branches.city}) = upper(${addr.cityCode})`,
+                exists(
+                  db
+                    .select({ one: sql`1` })
+                    .from(schema.masterData)
+                    .where(
+                      and(
+                        eq(schema.masterData.type, 'CITY'),
+                        eq(schema.masterData.code, addr.cityCode),
+                        sql`upper(${schema.masterData.label}) = upper(${schema.branches.city})`,
+                      ),
+                    ),
+                ),
               ),
             ),
         );
@@ -199,11 +226,10 @@ export async function listApplicants(
     f.branchId?.length ? inArray(a.branchId, f.branchId) : undefined,
     f.cityCode?.length ? inArray(addr.cityCode, f.cityCode) : undefined,
     f.areaCode?.length ? inArray(addr.areaCode, f.areaCode) : undefined,
-    // Registration date range: from is the start of that day, to is the end (exclusive next day).
-    f.createdFrom ? gte(a.createdAt, new Date(`${f.createdFrom}T00:00:00.000Z`)) : undefined,
-    f.createdTo
-      ? lt(a.createdAt, new Date(new Date(`${f.createdTo}T00:00:00.000Z`).getTime() + 86_400_000))
-      : undefined,
+    // Registration date range: from is the start of that day in Pakistan time,
+    // to is the end (exclusive start of the next Pakistan day).
+    f.createdFrom ? gte(a.createdAt, pktDayStart(f.createdFrom)) : undefined,
+    f.createdTo ? lt(a.createdAt, pktDayStart(nextDay(f.createdTo))) : undefined,
     f.skillCode?.length
       ? exists(
           db
@@ -355,6 +381,7 @@ export async function staffRegisterApplicant(
       const { tx, audit } = cmd;
       const owner = await cnicOwner(tx, input.cnic);
       if (owner) throw await cnicTakenError(tx, owner);
+      if (input.email) await assertEmailFree(tx, input.email);
 
       const [existingPhone] = await tx
         .select({ id: schema.users.id })
@@ -460,17 +487,15 @@ export async function staffRegisterApplicant(
       }
 
       if (input.skills?.items.length) {
-        await tx
-          .insert(schema.masterData)
-          .values(
-            input.skills.items.map((item) => ({
-              type: 'SKILL' as const,
-              code: item.skillCode,
-              label: item.skillCode.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-              isActive: true,
-            })),
-          )
-          .onConflictDoNothing();
+        // Skills must already exist as active master data (H14): staff may not
+        // mint new SKILL codes — an unknown code is "not offered", like every
+        // other section in this form.
+        await assertActiveMasterData(
+          tx,
+          'SKILL',
+          input.skills.items.map((item) => item.skillCode),
+          (index) => `skills.items.${index}.skillCode`,
+        );
         await tx
           .insert(skl)
           .values(input.skills.items.map((item) => ({ ...item, applicantId: row!.id })));
@@ -722,8 +747,9 @@ export async function getApplicantForStaff(
 
 /**
  * Records a staff identity check (append-only) and updates the applicant's identity status.
- * A document review needs the current CNIC front and back; those documents are marked
- * accepted or rejected along with the check.
+ * A VERIFIED outcome needs the CNIC evidence behind it whatever the method: both uploaded
+ * sides, or — for an in-person check — a note saying the original card was seen. A document
+ * review marks those documents accepted or rejected along with the check.
  */
 export async function verifyApplicantIdentity(
   ctx: SignedIn,
@@ -743,10 +769,20 @@ export async function verifyApplicantIdentity(
     const current = await currentDocuments(tx, row.id);
     const front = current.find((d) => d.typeCode === 'CNIC_FRONT') ?? null;
     const back = current.find((d) => d.typeCode === 'CNIC_BACK') ?? null;
-    if (input.method === 'DOCUMENT_REVIEW' && (!front || !back)) {
-      throw new ConflictError(
-        'The applicant has not uploaded both sides of their CNIC. Ask them to, or check the original card in person.',
-      );
+    if (input.outcome === 'VERIFIED') {
+      // A VERIFIED mark needs the CNIC evidence behind it, whatever the method (L18):
+      // both uploaded sides, or — for an in-person check — a written note saying
+      // the original card was seen (that note is the method-specific justification).
+      const inPersonJustification =
+        input.method === 'IN_PERSON' && (input.notes?.trim().length ?? 0) >= 5;
+      if (!front || !back) {
+        if (!inPersonJustification) {
+          throw new ConflictError(
+            'To mark this identity verified, the applicant must have uploaded both sides of ' +
+              'their CNIC, or — for an in-person check — record in the notes that you saw the original card.',
+          );
+        }
+      }
     }
     const now = new Date();
     await tx.insert(idv).values({
@@ -812,6 +848,7 @@ export async function staffUpdateApplicant(
         const owner = await cnicOwner(tx, changes.cnic, row.id);
         if (owner) throw await cnicTakenError(tx, owner);
       }
+      if (changes.email) await assertEmailFree(tx, changes.email, row.id);
       const identityChanged = IDENTITY_FIELDS.some((field) => field in changes);
       await tx
         .update(a)
@@ -970,6 +1007,16 @@ export async function transferApplicant(
     const target = await getBranchContact(input.branchId, tx);
     if (!target?.isActive) {
       throw new ValidationError([{ path: 'branchId', message: 'Choose an active branch' }]);
+    }
+    // The destination must be one of the actor's own branches (M13) — a Branch
+    // Admin cannot move an applicant to a branch in another city. Super Admins
+    // move applicants anywhere.
+    if (!isSuperAdmin(ctx.actor) && !ctx.actor.branchIds.includes(input.branchId)) {
+      throw new ScopeViolationError(undefined, {
+        entityType: 'branch',
+        entityId: input.branchId,
+        branchId: input.branchId,
+      });
     }
     await tx.update(a).set({ branchId: input.branchId }).where(eq(a.id, row.id));
     audit({

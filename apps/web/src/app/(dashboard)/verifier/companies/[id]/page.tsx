@@ -1,5 +1,6 @@
 import { getCompanyDetail, getCompanyOnboarding } from '@/domains/company';
 import { requireRole } from '@/domains/auth';
+import { hasPermission } from '@/domains/shared/scope';
 import { StaffCompanyPanel } from '@/app/(dashboard)/branch-admin/companies/[id]/_components/StaffCompanyPanel';
 
 export const metadata = { title: 'Company detail' };
@@ -19,7 +20,7 @@ export default async function VerifierCompanyDetailPage({
       company={company}
       onboarding={onboarding}
       canSuspend={false}
-      canManage={false}
+      canManage={hasPermission(actor, 'company:manage')}
       canOnboard
     />
   );

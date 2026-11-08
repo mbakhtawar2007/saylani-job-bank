@@ -15,7 +15,7 @@ export const PERMISSIONS = {
   'master_data:manage': 'Manage master data lists',
 
   'company:read': 'View companies',
-  'company:register': 'Register and edit own company',
+  'company:register': 'Register own company and edit it while it is still un-verified',
   /** Field-visit onboarding: a staff member registers a company they approached. */
   'company:onboard': 'Register a company on behalf of an employer after a field visit',
   'company:verify': 'Verify, reject or request info for companies',
@@ -72,6 +72,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'company:read',
     'company:onboard',
     'company:manage',
+    'company:suspend',
     'applicant:read',
     'applicant:manage',
     'applicant:transfer',
@@ -110,13 +111,15 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'branch:read',
     'company:read',
     'company:onboard',
+    'company:manage',
     'company:verify',
+    'job:read',
+    'job:manage',
     'blacklist:request',
   ],
   STAFF: [
     'branch:read',
     'company:read',
-    'company:onboard',
     'applicant:read',
     'applicant:verify_identity',
     'applicant:manage',

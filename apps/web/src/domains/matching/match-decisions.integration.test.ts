@@ -1,15 +1,19 @@
+import { permissionsFor } from '@jobbank/shared';
 import { schema } from '@jobbank/db';
 import { and, eq, isNull } from 'drizzle-orm';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PATCH as decideMatch } from '@/app/api/v1/jobs/[id]/matches/[applicantId]/route';
 import { POST as respondOffer } from '@/app/api/v1/offers/[jobId]/response/route';
+import { countHiresByMonth } from '@/domains/job';
 import { resetMemoryRateLimits } from '@/domains/shared/rate-limit';
+import type { Actor } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
 import { mailOutbox } from '@/lib/mail/mailer';
 import { call, randomPhone, signIn, signInApplicant, Jar } from '@/test/api-client';
 
 const us = schema.users;
 const ap = schema.applicants;
+const apn = schema.applications;
 const co = schema.companies;
 const cm = schema.companyMembers;
 const j = schema.jobs;
@@ -172,6 +176,31 @@ const respond = (jobId: string, jar: Jar, body: unknown) =>
     body: body as Record<string, unknown>,
   });
 
+/** The fixture employer, as a domain actor (owns `companyId`). */
+const employerActor = (): Actor => ({
+  userId: employerUserId,
+  roles: ['EMPLOYER'],
+  permissions: permissionsFor(['EMPLOYER']),
+  branchIds: [KHI],
+  activeBranchId: null,
+  companyId,
+  applicantId: null,
+  twoFactorPending: false,
+});
+
+/** Current year/month in Asia/Karachi — the hires chart buckets in PKT. */
+function currentPktYearMonth(): { year: number; month: number } {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Karachi',
+    year: 'numeric',
+    month: 'numeric',
+  }).formatToParts(new Date());
+  return {
+    year: Number(parts.find((p) => p.type === 'year')?.value),
+    month: Number(parts.find((p) => p.type === 'month')?.value),
+  };
+}
+
 describe('employer match decisions (hire / reject)', () => {
   it('rejecting without a reason code is refused', async () => {
     const f = await seedFixture();
@@ -227,6 +256,10 @@ describe('employer match decisions (hire / reject)', () => {
 
   it('hiring notifies the applicant, who can then accept', async () => {
     const f = await seedFixture();
+    const shortlisted = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'SHORTLISTED',
+    });
+    expect(shortlisted.status, JSON.stringify(shortlisted.body)).toBe(200);
     const hired = await decision(f.jobId, f.applicantId, employerJar, { reviewStatus: 'HIRED' });
     expect(hired.status, JSON.stringify(hired.body)).toBe(200);
 
@@ -255,6 +288,10 @@ describe('employer match decisions (hire / reject)', () => {
 
   it('declining requires a refusal reason and closes the offer', async () => {
     const f = await seedFixture();
+    const shortlisted = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'SHORTLISTED',
+    });
+    expect(shortlisted.status, JSON.stringify(shortlisted.body)).toBe(200);
     await decision(f.jobId, f.applicantId, employerJar, { reviewStatus: 'HIRED' });
 
     const missingReason = await respond(f.jobId, f.applicantJar, {
@@ -304,6 +341,10 @@ describe('employer match decisions (hire / reject)', () => {
 
   it('unread notifications list for the applicant includes the decision', async () => {
     const f = await seedFixture();
+    const shortlisted = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'SHORTLISTED',
+    });
+    expect(shortlisted.status, JSON.stringify(shortlisted.body)).toBe(200);
     await decision(f.jobId, f.applicantId, employerJar, { reviewStatus: 'HIRED' });
 
     const [row] = await db
@@ -324,5 +365,116 @@ describe('employer match decisions (hire / reject)', () => {
       .from(nt)
       .where(and(eq(nt.userId, f.applicantUserId), isNull(nt.readAt)));
     expect(stillUnread).toHaveLength(0);
+  });
+
+  it('review decisions enforce the transition table (H19)', async () => {
+    const f = await seedFixture();
+    // NEW cannot jump straight to HIRED.
+    const directHire = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'HIRED',
+    });
+    expect(directHire.status).toBe(409);
+
+    const reviewed = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'REVIEWED',
+    });
+    expect(reviewed.status, JSON.stringify(reviewed.body)).toBe(200);
+
+    // REVIEWED cannot hire either — SHORTLISTED first.
+    const hireFromReviewed = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'HIRED',
+    });
+    expect(hireFromReviewed.status).toBe(409);
+
+    const shortlisted = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'SHORTLISTED',
+    });
+    expect(shortlisted.status, JSON.stringify(shortlisted.body)).toBe(200);
+
+    const hired = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'HIRED',
+    });
+    expect(hired.status, JSON.stringify(hired.body)).toBe(200);
+
+    // HIRED is terminal: it cannot be flipped back to REJECTED.
+    const unhire = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'REJECTED',
+      reasonCode: 'SKILLS_MISMATCH',
+      note: 'Changed our mind',
+    });
+    expect(unhire.status).toBe(409);
+  });
+
+  it('decisions on a closed job are refused (H19)', async () => {
+    const f = await seedFixture();
+    await db.update(j).set({ status: 'CLOSED' }).where(eq(j.id, f.jobId));
+    const res = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'REVIEWED',
+    });
+    expect(res.status).toBe(409);
+  });
+
+  it('a HIRED match fills the vacancy, syncs the application and shows in the hires chart (C3)', async () => {
+    const f = await seedFixture();
+    await db.insert(apn).values({
+      applicantId: f.applicantId,
+      jobId: f.jobId,
+      branchId: KHI,
+      createdBy: employerUserId,
+      status: 'SHORTLISTED',
+    });
+
+    // Other tests in this file hire for the same company, so the chart
+    // assertion is a before/after delta, not an absolute bucket.
+    const { year, month } = currentPktYearMonth();
+    const before = await countHiresByMonth(employerActor(), year);
+
+    const shortlisted = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'SHORTLISTED',
+    });
+    expect(shortlisted.status, JSON.stringify(shortlisted.body)).toBe(200);
+    const hired = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'HIRED',
+    });
+    expect(hired.status, JSON.stringify(hired.body)).toBe(200);
+
+    // The application was synced to HIRED …
+    const [application] = await db
+      .select()
+      .from(apn)
+      .where(and(eq(apn.jobId, f.jobId), eq(apn.applicantId, f.applicantId)));
+    expect(application!.status).toBe('HIRED');
+
+    // … the single vacancy filled, so the job is FILLED …
+    const [job] = await db
+      .select({ status: j.status, vacanciesFilled: j.vacanciesFilled })
+      .from(j)
+      .where(eq(j.id, f.jobId));
+    expect(job!.vacanciesFilled).toBe(1);
+    expect(job!.status).toBe('FILLED');
+
+    // … and the hire shows in this month's chart bucket (PKT).
+    const after = await countHiresByMonth(employerActor(), year);
+    expect(after[month - 1]! - before[month - 1]!).toBe(1);
+  });
+
+  it('a declined match offer drops out of the hires chart (C3)', async () => {
+    const f = await seedFixture();
+    const { year, month } = currentPktYearMonth();
+    const before = await countHiresByMonth(employerActor(), year);
+
+    const shortlisted = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'SHORTLISTED',
+    });
+    expect(shortlisted.status, JSON.stringify(shortlisted.body)).toBe(200);
+    await decision(f.jobId, f.applicantId, employerJar, { reviewStatus: 'HIRED' });
+    const declined = await respond(f.jobId, f.applicantJar, {
+      applicantResponse: 'DECLINED',
+      reasonCode: 'BETTER_OFFER',
+    });
+    expect(declined.status, JSON.stringify(declined.body)).toBe(200);
+
+    const after = await countHiresByMonth(employerActor(), year);
+    expect(after[month - 1]! - before[month - 1]!).toBe(0);
   });
 });

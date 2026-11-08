@@ -107,6 +107,18 @@ export async function listJobs(
   const scopeCondition = cityScope(actor, j.branchId);
   if (scopeCondition) conditions.push(scopeCondition);
 
+  // Employers see only their own company's listings through this staff
+  // endpoint. Without this, an employer with a branch assignment would see
+  // every job in the city. (Their own UI uses listJobsForEmployer instead;
+  // a pure-employer actor has a company but neither job:manage nor job:refer.)
+  if (
+    actor.companyId &&
+    !hasPermission(actor, 'job:manage') &&
+    !hasPermission(actor, 'job:refer')
+  ) {
+    conditions.push(eq(j.companyId, actor.companyId));
+  }
+
   if (f.status?.length) conditions.push(inArray(j.status, f.status));
   if (f.companyId) conditions.push(eq(j.companyId, f.companyId));
   if (f.branchId) conditions.push(eq(j.branchId, f.branchId));
@@ -239,6 +251,16 @@ export async function listJobs(
 export async function getJobDetail(actor: Actor, jobId: string): Promise<JobView> {
   assertPermission(actor, 'job:read');
   const row = await loadJob(db, jobId);
+  // Same own-company rule as listJobs: a pure-employer actor sees only
+  // their own company's jobs here.
+  if (
+    actor.companyId &&
+    !hasPermission(actor, 'job:manage') &&
+    !hasPermission(actor, 'job:refer') &&
+    row.companyId !== actor.companyId
+  ) {
+    throw new NotFoundError('Job', jobId);
+  }
   await assertCityAccess(actor, row.branchId, { entityType: 'job', entityId: row.id });
   return buildJobView(db, row);
 }
@@ -286,6 +308,16 @@ export async function staffCreateJob(
         salaryMax: input.salaryMax ?? null,
         status: 'DRAFT',
         closesAt: input.closesAt ? new Date(input.closesAt) : null,
+        fuelAllowance: input.fuelAllowance ?? false,
+        flexibleHours: input.flexibleHours ?? false,
+        annualLeaveDays: input.annualLeaveDays ?? null,
+        medicalCoverage: input.medicalCoverage ?? 'NONE',
+        bonusTier: input.bonusTier ?? 'NONE',
+        workFromHome: input.workFromHome ?? false,
+        providentFund: input.providentFund ?? false,
+        transportAllowance: input.transportAllowance ?? false,
+        eobi: input.eobi ?? false,
+        lifeInsurance: input.lifeInsurance ?? false,
         createdBy: ctx.actor.userId,
       })
       .returning();

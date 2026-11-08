@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { ApplicationView } from '@/domains/placement';
+import { AcceptOfferButton } from './_components/AcceptOfferButton';
 import { RefuseOfferButton } from './_components/RefuseOfferButton';
 import { ApplicantChatPanel } from './_components/ApplicantChatPanel';
 
@@ -130,12 +131,13 @@ async function ApplicationCard({
         </div>
       )}
 
-      {/* Offer extended — show refuse button */}
+      {/* Offer extended — show accept / refuse buttons */}
       {app.status === 'OFFER_EXTENDED' && (
-        <div className="mt-4 flex items-center gap-3">
+        <div className="mt-4 flex flex-wrap items-center gap-3">
           <p className="text-success-soft-fg text-sm font-semibold">
             You have received a job offer!
           </p>
+          <AcceptOfferButton applicationId={app.id} jobTitle={app.jobTitle} />
           <RefuseOfferButton applicationId={app.id} />
         </div>
       )}

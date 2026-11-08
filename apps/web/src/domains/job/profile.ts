@@ -44,8 +44,15 @@ export async function createJob(ctx: SignedIn, input: CreateJobInput): Promise<J
   assertPermission(ctx.actor, 'job:manage_own');
   const company = await requireOwnCompany(db, ctx.actor);
   if (!company.branchId) throw new ForbiddenError('Company must have a branch before posting jobs');
+  if (company.status !== 'VERIFIED')
+    throw new ForbiddenError('Only verified companies can post jobs');
 
   return runCommand(ctx, async ({ tx, audit }) => {
+    // Re-check inside the transaction: a suspension landing between the
+    // read above and the insert must not let an unverified job through.
+    const fresh = await requireOwnCompany(tx, ctx.actor, { forUpdate: true });
+    if (fresh.status !== 'VERIFIED')
+      throw new ForbiddenError('Only verified companies can post jobs');
     const [row] = await tx
       .insert(j)
       .values({
@@ -167,6 +174,16 @@ export async function transitionJobStatus(
         : input.status === 'PAUSED'
           ? 'PAUSE'
           : 'CLOSE';
+
+    // Going live (publish / reopen / resume) requires a verified company;
+    // pausing or closing a job is always safe and stays allowed, so a
+    // suspended company can still take its listings down. Re-checked
+    // in-transaction against the locked company row.
+    if (event === 'PUBLISH' || event === 'REOPEN' || event === 'RESUME') {
+      const fresh = await requireOwnCompany(tx, ctx.actor, { forUpdate: true });
+      if (fresh.status !== 'VERIFIED')
+        throw new ForbiddenError('Only verified companies can publish jobs');
+    }
 
     const check = jobMachine.check(row.status, event, {}, ctx.actor.roles);
     if (!check.ok) throw new ForbiddenError(check.message);

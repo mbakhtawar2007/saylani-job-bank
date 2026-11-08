@@ -12,12 +12,11 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Badge, Input, Select, StatusPill, Textarea } from '@/components/atoms';
 import { FormField } from '@/components/molecules';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import type { CompanyView } from '@/domains/company';
 
 function friendlyError(err: unknown): string {
-  if (err instanceof ApiClientError) return err.message;
-  return 'Something went wrong. Please try again.';
+  return friendlyApiError(err);
 }
 
 type WizardStep = 'details' | 'contacts' | 'location' | 'documents' | 'submit';

@@ -1,6 +1,11 @@
 import 'server-only';
 import { schema, type GeoPoint } from '@jobbank/db';
-import { radiusValueSchema, type ResolvedRadius } from '@jobbank/shared';
+import {
+  pakistanPointSchema,
+  pkPhoneSchema,
+  radiusValueSchema,
+  type ResolvedRadius,
+} from '@jobbank/shared';
 import { asc, count, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand, type RequestContext } from '@/domains/shared/audit';
@@ -31,15 +36,16 @@ export interface BranchView {
   staffCount: number;
 }
 
-const point = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) });
-
 /** Editable fields, without defaults (a default would leak into every PATCH). */
 const branchFields = z.object({
   name: z.string().trim().min(3).max(120),
   city: z.string().trim().min(2).max(60),
   address: z.string().trim().max(300).nullable().optional(),
-  phone: z.string().trim().max(30).nullable().optional(),
-  location: point,
+  // A branch phone must be a real Pakistani number (L14); the landline-tolerant
+  // schema is right here — branches genuinely have landlines.
+  phone: pkPhoneSchema.nullable().optional(),
+  // Branch pins must be inside Pakistan, like applicant pins (L14).
+  location: pakistanPointSchema,
   /**
    * The branch's own matching radius (BRANCH policy, within the global max). `null`
    * removes it so the branch follows the global radius; omitted = unchanged.

@@ -16,8 +16,7 @@ import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import { Button, Input, Select, Textarea } from '@/components/atoms';
 import { FormField, toast } from '@/components/molecules';
-import { apiFetch } from '@/lib/api/client';
-import { ApiClientError } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 
 interface Props {
   companies: { id: string; name: string }[];
@@ -99,7 +98,7 @@ export function StaffPostJobForm({ companies, categories }: Props) {
         toast.success('Job created as draft');
         router.push('/branch-admin/jobs');
       } catch (e) {
-        setError(e instanceof ApiClientError ? e.message : 'Something went wrong');
+        setError(friendlyApiError(e));
       }
     });
   }

@@ -1,7 +1,10 @@
 import 'server-only';
 import { schema } from '@jobbank/db';
+import type { JobStatus } from '@jobbank/shared';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { runCommand, type RequestContext } from '@/domains/shared/audit';
+import type { Transaction } from '@/lib/db';
+import { jobMachine } from '@/domains/job';
 import {
   ConflictError,
   ForbiddenError,
@@ -31,6 +34,7 @@ const j = schema.jobs;
 const mr = schema.matchRuns;
 const jm = schema.jobMatches;
 const ap = schema.applicants;
+const apn = schema.applications;
 const us = schema.users;
 const md = schema.masterData;
 
@@ -46,6 +50,21 @@ export type MatchReviewStatus = (typeof MATCH_REVIEW_STATUSES)[number];
 
 export const OFFER_RESPONSES = ['ACCEPTED', 'DECLINED'] as const;
 export type OfferResponse = (typeof OFFER_RESPONSES)[number];
+
+/**
+ * H19 — allowed review-status moves. HIRED and REJECTED are terminal: a
+ * decision can no longer be flipped or resurrected, and NEW cannot jump
+ * straight to HIRED (it goes through SHORTLISTED first). Notifications only
+ * fire for a real transition now — previously they fired on no-op/reversal
+ * transitions too, since nothing checked the current status.
+ */
+export const MATCH_REVIEW_TRANSITIONS: Record<MatchReviewStatus, MatchReviewStatus[]> = {
+  NEW: ['REVIEWED', 'SHORTLISTED', 'REJECTED'],
+  REVIEWED: ['SHORTLISTED', 'REJECTED'],
+  SHORTLISTED: ['HIRED', 'REJECTED'],
+  HIRED: [],
+  REJECTED: [],
+};
 
 /** Employer sees only their own company's job; staff are branch-scoped. */
 async function loadJobForActor(actor: Actor, jobId: string) {
@@ -63,7 +82,23 @@ async function loadJobForActor(actor: Actor, jobId: string) {
   if (!job) throw new NotFoundError('Job', jobId);
 
   if (actor.roles.includes('EMPLOYER')) {
-    if (actor.companyId !== job.companyId) throw new NotFoundError('Job', jobId);
+    if (actor.companyId !== job.companyId) {
+      // M28: a job staff referred to this employer's company is as open to
+      // them as their own posting — otherwise a referred employer 404s on
+      // the job's matches. Anything else stays a 404.
+      if (!actor.companyId) throw new NotFoundError('Job', jobId);
+      const [referral] = await db
+        .select({ id: schema.jobReferrals.id })
+        .from(schema.jobReferrals)
+        .where(
+          and(
+            eq(schema.jobReferrals.jobId, jobId),
+            eq(schema.jobReferrals.companyId, actor.companyId),
+          ),
+        )
+        .limit(1);
+      if (!referral) throw new NotFoundError('Job', jobId);
+    }
   } else {
     assertBranchAccess(actor, job.branchId, { entityType: 'job', entityId: job.id });
   }
@@ -158,6 +193,63 @@ export interface MatchDecisionInput {
 }
 
 /**
+ * C3 — match-side hire sync. Runs inside the decision transaction, under the
+ * job-row lock taken by setJobMatchReviewStatus.
+ *
+ * A HIRED match decision is a hire, not just a label: the application (when
+ * one exists for this job + applicant) becomes HIRED, one vacancy fills, and
+ * the job becomes FILLED when the last vacancy fills (machine FILL event).
+ *
+ * No double-fill: when the application is already HIRED — e.g. the applicant
+ * accepted a placement offer via acceptJobOffer (7ee4e4d) before this match
+ * decision — the vacancy was already filled by that path, so this one only
+ * syncs the label and returns false. When no application exists at all, the
+ * match itself is the hire signal and the vacancy still fills.
+ *
+ * NOTE (declined match offers): if the applicant later declines this offer
+ * via respondToJobOffer, the vacancy filled here is NOT rolled back — the
+ * offer source of truth is split between the match table and the application
+ * table, and only a unified offer flow can unwind a hire safely. The hire
+ * counts do exclude declined offers, so the chart stays right while the
+ * vacancy count needs that follow-up.
+ */
+async function syncMatchHire(
+  tx: Transaction,
+  jobId: string,
+  applicantId: string,
+  job: { id: string; status: JobStatus; vacancies: number; vacanciesFilled: number },
+): Promise<boolean> {
+  const [application] = await tx
+    .select({ id: apn.id, status: apn.status })
+    .from(apn)
+    .where(and(eq(apn.jobId, jobId), eq(apn.applicantId, applicantId)))
+    .for('update');
+  const filledByUs = !application || application.status !== 'HIRED';
+  if (application && application.status !== 'HIRED') {
+    await tx
+      .update(apn)
+      .set({ status: 'HIRED', updatedAt: new Date() })
+      .where(eq(apn.id, application.id));
+  }
+  if (!filledByUs) return false;
+
+  const filled = job.vacanciesFilled + 1;
+  const patch: Partial<typeof j.$inferInsert> = {
+    vacanciesFilled: filled,
+    updatedAt: new Date(),
+  };
+  if (filled >= job.vacancies) {
+    const check = jobMachine.check(job.status, 'FILL', {}, 'system');
+    if (check.ok) {
+      patch.status = check.to;
+      patch.closedAt = new Date();
+    }
+  }
+  await tx.update(j).set(patch).where(eq(j.id, job.id));
+  return true;
+}
+
+/**
  * Employer/staff decision on one shortlisted applicant (latest completed run).
  * Allowed for staff (`match_case:manage`) and the owning employer
  * (`decision:employer`). REJECTED persists a reason and the applicant is
@@ -184,6 +276,26 @@ export async function setJobMatchReviewStatus(
   const note = input.note?.trim() || null;
 
   await runCommand(ctx, async ({ tx, audit }) => {
+    // Lock the job row first: the OPEN check and the vacancy fill below must
+    // see the same state, and concurrent HIRED decisions on one job must
+    // serialise on this lock (vacanciesFilled <= vacancies is a DB check).
+    const [lockedJob] = await tx
+      .select({
+        id: j.id,
+        status: j.status,
+        vacancies: j.vacancies,
+        vacanciesFilled: j.vacanciesFilled,
+      })
+      .from(j)
+      .where(eq(j.id, jobId))
+      .for('update');
+    if (!lockedJob) throw new NotFoundError('Job', jobId);
+    // H19: decisions only happen on open jobs — never on CLOSED / FILLED /
+    // EXPIRED ones.
+    if (lockedJob.status !== 'OPEN') {
+      throw new ConflictError('Only open jobs can be reviewed');
+    }
+
     const [latestRun] = await tx
       .select({ id: mr.id })
       .from(mr)
@@ -191,6 +303,27 @@ export async function setJobMatchReviewStatus(
       .orderBy(desc(mr.createdAt))
       .limit(1);
     if (!latestRun) throw new NotFoundError('Match run', jobId);
+
+    const [match] = await tx
+      .select({ id: jm.id, reviewStatus: jm.reviewStatus })
+      .from(jm)
+      .where(and(eq(jm.runId, latestRun.id), eq(jm.applicantId, applicantId)))
+      .for('update');
+    if (!match) throw new NotFoundError('Match', applicantId);
+
+    // H19: enforce the transition table.
+    const allowed = MATCH_REVIEW_TRANSITIONS[match.reviewStatus] ?? [];
+    if (!allowed.includes(input.reviewStatus)) {
+      throw new ConflictError(
+        `Cannot move a match from ${match.reviewStatus} to ${input.reviewStatus}`,
+      );
+    }
+
+    // C3: a HIRED decision needs a free vacancy, checked under the job lock.
+    const hiring = input.reviewStatus === 'HIRED';
+    if (hiring && lockedJob.vacanciesFilled >= lockedJob.vacancies) {
+      throw new ConflictError('This job has no open vacancies');
+    }
 
     const updated = await tx
       .update(jm)
@@ -202,9 +335,13 @@ export async function setJobMatchReviewStatus(
         reviewedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(and(eq(jm.runId, latestRun.id), eq(jm.applicantId, applicantId)))
+      .where(eq(jm.id, match.id))
       .returning({ id: jm.id });
     if (updated.length === 0) throw new NotFoundError('Match', applicantId);
+
+    // C3: a HIRED match decision is a hire — sync the application, fill one
+    // vacancy, and FILL the job when the last vacancy fills.
+    const vacancyFilled = hiring ? await syncMatchHire(tx, jobId, applicantId, lockedJob) : null;
 
     audit({
       action: 'match.review_status',
@@ -215,6 +352,7 @@ export async function setJobMatchReviewStatus(
         review_status: input.reviewStatus,
         reason_code: reason?.code ?? null,
         note,
+        ...(hiring ? { vacancy_filled: vacancyFilled } : {}),
       },
     });
   });
@@ -451,10 +589,12 @@ export async function listMatchedJobs(profile: { id: string }): Promise<MatchedJ
     .innerJoin(mr, eq(mr.id, jm.runId))
     .innerJoin(j, and(eq(j.id, jm.jobId), eq(j.status, 'OPEN')))
     .where(and(eq(jm.applicantId, profile.id), eq(mr.status, 'COMPLETED')))
-    .orderBy(desc(jm.score), desc(mr.createdAt));
+    .orderBy(desc(mr.createdAt), desc(jm.score));
 
-  // One entry per job: keep the row from the most recent run (rows are already
-  // DESC by createdAt so the first occurrence for each jobId is the latest).
+  // One entry per job: keep the row from the most recent run. Runs are
+  // ordered by run date first, so the first occurrence for each jobId is the
+  // latest — previously score was the primary sort, which kept the
+  // highest-scoring row across all runs instead (M27).
   const seen = new Set<string>();
   const out: MatchedJob[] = [];
   for (const row of rows) {

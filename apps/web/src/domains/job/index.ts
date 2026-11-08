@@ -1,5 +1,7 @@
 /** Jobs domain (M8): posting, status transitions, staff board. */
 
+export { expirePastCloseJobs } from './expiry';
+export { jobMachine } from './machine';
 export {
   createJob,
   deleteJob,
@@ -29,6 +31,7 @@ export {
 } from './staff';
 export {
   countEmployerCandidates,
+  countHiresByMonth,
   getEmployerJob,
   getEmployerReferralStats,
   hasVisibleEmployerJobs,

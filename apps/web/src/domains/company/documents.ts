@@ -54,7 +54,7 @@ function assertDocumentEditable(row: CompanyRow): void {
 /**
  * Step 1 (shared): checks file against the document type's rules, creates a
  * PENDING_UPLOAD row, returns a presigned PUT the browser sends the file straight to.
- * Used by the employer's own upload and by the staff upload for onboarded companies —
+ * Used by the employer's own upload and by the onboard upload for onboarded companies —
  * the type allowlist, size limits, content-type locking and rate limit are identical.
  */
 async function presignDocumentForCompany(
@@ -98,7 +98,7 @@ async function ownDocument(executor: DbExecutor, row: CompanyRow, documentId: st
  * Step 2 (shared): browser finished the PUT. Verify what actually landed in storage,
  * verify the file's magic bytes match its declared type, scan for malware, then make
  * it the current document of its type (superseding earlier uploads). Used by the
- * employer's own upload and by the staff upload for onboarded companies — storage
+ * employer's own upload and by the onboard upload for onboarded companies — storage
  * check, type check, scan handling, supersede and audit are identical. See
  * `confirmDocumentUpload` in `@/domains/shared/documents` for the shared outcomes
  * (mismatch leaves the row PENDING_UPLOAD — the company enum has no REJECTED value;
@@ -137,18 +137,20 @@ export async function confirmMyCompanyDocument(
   return confirmDocumentForCompany(ctx, row, documentId);
 }
 
-// ─── Staff upload (F1) ─────────────────────────────────────────────────
+// ─── Onboard upload (F1) ─────────────────────────────────────────────────
 
 /**
- * Gate for the staff upload path. A company qualifies only when staff onboarded it
+ * Gate for the onboard upload path. A company qualifies only when it was onboarded
  * after a field visit — the outreach record is the marker (see getCompanyOnboarding,
  * the same detector markCompanyRegistrationVerifiedSigned uses): employer
  * self-registered companies and legacy staff-registered companies carry no visit /
  * agreement record and are rejected here. Uploads happen while the company is still
- * a DRAFT, i.e. before the paper form is marked verified & signed; once the company
- * is with the verifier, documents are the verifier's to review, not staff's to
- * change. Branch scope matches staffOnboardCompany / markCompanyRegistrationVerifiedSigned:
- * Super Admin bypasses it, everyone else must be in the company's branch.
+ * a DRAFT, i.e. before the paper form is marked verified & signed, and while it is
+ * INFO_REQUESTED, i.e. the verifier asked for more and the onboarder is supplying
+ * it; once the company is with the verifier, documents are the verifier's to
+ * review, not staff's to change. Branch scope matches staffOnboardCompany /
+ * markCompanyRegistrationVerifiedSigned: Super Admin bypasses it, everyone else
+ * must be in the company's branch.
  */
 async function loadStaffOnboardedCompany(ctx: SignedIn, companyId: string): Promise<CompanyRow> {
   assertPermission(ctx.actor, 'company:onboard');
@@ -162,16 +164,16 @@ async function loadStaffOnboardedCompany(ctx: SignedIn, companyId: string): Prom
       'Documents for this company can only be uploaded by the employer who registered it.',
     );
   }
-  if (row.status !== 'DRAFT') {
+  if (row.status !== 'DRAFT' && row.status !== 'INFO_REQUESTED') {
     throw new ConflictError(
-      'Documents can only be uploaded while the company is still a draft. Once it is with the verifier, only the verifier can review the documents.',
+      'Documents can only be uploaded while the company is still a draft or the verifier has asked for more information. Once it is with the verifier, only the verifier can review the documents.',
     );
   }
   return row;
 }
 
 /**
- * Step 1 (staff): presign an upload for a staff-onboarded DRAFT company.
+ * Step 1 (onboard): presign an upload for an onboarded DRAFT company.
  * Same pipeline as the employer path — type allowlist, size limits, content-type
  * locking and the per-company rate limit are identical.
  */
@@ -185,7 +187,7 @@ export async function presignStaffCompanyDocument(
 }
 
 /**
- * Step 2 (staff): confirm an upload for a staff-onboarded DRAFT company.
+ * Step 2 (onboard): confirm an upload for an onboarded DRAFT company.
  * Same pipeline as the employer path — storage check, malware scan, supersede of
  * earlier uploads of the same type, and the same audit entries.
  */

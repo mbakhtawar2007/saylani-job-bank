@@ -21,16 +21,21 @@ describe('permission matrix encodes the PRD rules', () => {
     expect(holders('company:verify')).toEqual(['VERIFIER']);
   });
 
-  it('field-visit onboarding: staff, branch admins, verifiers and Super Admin onboard companies', () => {
-    expect(holders('company:onboard')).toEqual([
-      'SUPER_ADMIN',
-      'BRANCH_ADMIN',
-      'VERIFIER',
-      'STAFF',
-    ]);
-    // Onboarding is not management: a verifier can create companies but cannot
-    // correct locked details, transfer companies or assign verifiers.
-    expect(ROLE_PERMISSIONS.VERIFIER).not.toContain('company:manage');
+  it('field-visit onboarding: branch admins, verifiers and Super Admin onboard companies — staff do not', () => {
+    expect(holders('company:onboard')).toEqual(['SUPER_ADMIN', 'BRANCH_ADMIN', 'VERIFIER']);
+    // Onboarding alone is not suspension: only Branch Admin and Super Admin suspend companies.
+    expect(holders('company:suspend')).toEqual(['SUPER_ADMIN', 'BRANCH_ADMIN']);
+    expect(ROLE_PERMISSIONS.VERIFIER).not.toContain('company:suspend');
+  });
+
+  it('verifiers manage companies and post jobs for them', () => {
+    expect(holders('company:manage')).toEqual(['SUPER_ADMIN', 'BRANCH_ADMIN', 'VERIFIER']);
+    expect(holders('job:manage')).toEqual(['BRANCH_ADMIN', 'VERIFIER']);
+    expect(ROLE_PERMISSIONS.VERIFIER).toContain('job:read');
+    // A verifier creates companies and jobs, but never refers candidates or
+    // suspends companies — those stay with staff and branch admins.
+    expect(ROLE_PERMISSIONS.VERIFIER).not.toContain('job:refer');
+    expect(ROLE_PERMISSIONS.VERIFIER).not.toContain('company:suspend');
   });
 
   it('rule 5: decisions belong to their actors; nobody holds proxy decisions by default', () => {
@@ -46,7 +51,7 @@ describe('permission matrix encodes the PRD rules', () => {
 
   it('applicant records: staff correct them, only admins move them between branches', () => {
     expect(holders('applicant:verify_identity')).toEqual(['STAFF']);
-    expect(holders('applicant:manage')).toEqual(['BRANCH_ADMIN', 'STAFF']);
+    expect(holders('applicant:manage')).toEqual(['SUPER_ADMIN', 'BRANCH_ADMIN', 'STAFF']);
     expect(holders('applicant:transfer')).toEqual(['SUPER_ADMIN', 'BRANCH_ADMIN']);
     expect(ROLE_PERMISSIONS.EMPLOYER.filter((p) => p.startsWith('applicant:'))).toEqual([]);
   });

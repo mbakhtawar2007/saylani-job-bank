@@ -9,7 +9,7 @@ import {
   type MasterDataItem,
   type MasterDataType,
 } from '@jobbank/shared';
-import { and, asc, eq, gte, inArray, lt, type SQL } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, lt, ne, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand, type RequestContext } from '@/domains/shared/audit';
 import { ConflictError, NotFoundError, ValidationError, zodIssues } from '@/domains/shared/errors';
@@ -333,6 +333,17 @@ export async function updateHoliday(
       const before = await getHoliday(id, tx);
       const changes = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
       if (Object.keys(changes).length === 0) return;
+      // Same duplicate-date check as create, excluding this row (M22): without
+      // it an edit onto another holiday's date fails only at the DB index as a
+      // generic PG-23505 409.
+      if (typeof changes.date === 'string') {
+        const date = changes.date;
+        const [taken] = await tx
+          .select({ id: h.id })
+          .from(h)
+          .where(and(eq(h.date, date), ne(h.id, id)));
+        if (taken) throw new ConflictError(`${date} is already a holiday`);
+      }
       await tx.update(h).set(changes).where(eq(h.id, id));
       audit({
         action:

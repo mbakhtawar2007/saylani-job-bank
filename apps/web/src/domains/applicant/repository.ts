@@ -326,7 +326,9 @@ async function loadCompletenessInputs(
 /**
  * Re-computes completeness after a change and activates a DRAFT profile as soon as the
  * activation requirements are met (owner decision: automatic, no staff step). Call at the
- * end of every command that changes the profile.
+ * end of every command that changes the profile. It also demotes an ACTIVE profile back
+ * to DRAFT when its completeness regresses (M31): a profile that lost its location or
+ * required documents must not stay ACTIVE and matchable.
  */
 export async function refreshProfileState(
   cmd: CommandScope,
@@ -359,6 +361,27 @@ export async function refreshProfileState(
       after: { status },
     });
     emit('applicant.activated', { applicantId: row.id, branchId: row.branchId! });
+  } else if (row.status === 'ACTIVE' && completeness.activationMissing.length > 0) {
+    const demotion = applicantMachine.check(
+      row.status,
+      'DEMOTE',
+      { activationMissing: completeness.activationMissing },
+      'system',
+    );
+    if (demotion.ok) {
+      status = demotion.to;
+      changes.status = status;
+      changes.activatedAt = null;
+      audit({
+        action: 'applicant.auto_draft',
+        entityType: 'applicant',
+        entityId: row.id,
+        branchId: row.branchId,
+        before: { status: row.status },
+        after: { status },
+        metadata: { missing: completeness.activationMissing },
+      });
+    }
   }
   if (Object.keys(changes).length > 0) await tx.update(a).set(changes).where(eq(a.id, row.id));
   return { status, completeness };

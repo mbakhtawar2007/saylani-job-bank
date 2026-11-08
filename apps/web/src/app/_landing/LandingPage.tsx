@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import {
   ArrowRight,
-  ArrowUpRight,
   Briefcase,
   Building2,
   CheckCircle2,
@@ -55,25 +54,25 @@ const PK_PATH = `
   L 112,42 L 132,34 L 148,21 Z
 `;
 const CITIES = [
-  { id: 'karachi', name: 'Karachi', x: 128, y: 358, detail: '2,400+ jobs in Finance & Tech' },
-  { id: 'lahore', name: 'Lahore', x: 288, y: 148, detail: '1,800+ IT & Business roles' },
+  { id: 'karachi', name: 'Karachi', x: 128, y: 358, detail: 'Finance & Tech' },
+  { id: 'lahore', name: 'Lahore', x: 288, y: 148, detail: 'IT & Business' },
   {
     id: 'islamabad',
     name: 'Islamabad',
     x: 210,
     y: 107,
-    detail: '950+ Government & Tech positions',
+    detail: 'Government & Tech',
   },
   {
     id: 'peshawar',
     name: 'Peshawar',
     x: 103,
     y: 74,
-    detail: '450+ Healthcare & Engineering roles',
+    detail: 'Healthcare & Engineering',
   },
-  { id: 'quetta', name: 'Quetta', x: 55, y: 165, detail: '320+ roles in key industries' },
-  { id: 'multan', name: 'Multan', x: 258, y: 210, detail: '680+ Agriculture & Trade openings' },
-  { id: 'hyderabad', name: 'Hyderabad', x: 166, y: 308, detail: '380+ Education & Retail roles' },
+  { id: 'quetta', name: 'Quetta', x: 55, y: 165, detail: 'Key industries' },
+  { id: 'multan', name: 'Multan', x: 258, y: 210, detail: 'Agriculture & Trade' },
+  { id: 'hyderabad', name: 'Hyderabad', x: 166, y: 308, detail: 'Education & Retail' },
 ];
 const MAP_CARDS = [
   {
@@ -207,7 +206,7 @@ const FEATURES = [
   {
     icon: Shield,
     title: 'Verified Employers',
-    desc: 'Every company is manually reviewed by Saylani staff. Zero scam risk, zero fake listings.',
+    desc: 'Every company is manually reviewed by Saylani staff before it can post jobs.',
   },
   {
     icon: Zap,
@@ -292,7 +291,7 @@ const STEPS = [
     n: '01',
     icon: Upload,
     title: 'Create Your Profile',
-    desc: 'Sign up free in 2 minutes. Add your Saylani certifications and skills.',
+    desc: 'Sign up free. Add your Saylani certifications and skills.',
   },
   {
     n: '02',
@@ -310,7 +309,7 @@ const STEPS = [
     n: '04',
     icon: CheckCircle2,
     title: 'Land the Interview',
-    desc: 'Our average time-to-interview is 4 days. Faster than any other platform.',
+    desc: 'Your branch arranges interviews with verified employers.',
   },
 ];
 const FAQS = [
@@ -756,9 +755,14 @@ export default function LandingPage({
             </span>
           </NextLink>
           <div style={{ display: 'flex', gap: 36 }}>
-            {['Home', 'About Us', 'How It Works', 'Contact'].map((l) => (
-              <a key={l} href="#" className="nav-link">
-                {l}
+            {[
+              { label: 'Home', href: '#home' },
+              { label: 'About Us', href: '#about' },
+              { label: 'How It Works', href: '#how-it-works' },
+              { label: 'Contact', href: '#contact' },
+            ].map((l) => (
+              <a key={l.label} href={l.href} className="nav-link">
+                {l.label}
               </a>
             ))}
           </div>
@@ -801,6 +805,7 @@ export default function LandingPage({
 
       {/* ═══ HERO ═══════════════════════════════════════════════════════════ */}
       <section
+        id="home"
         style={{
           paddingTop: 66,
           minHeight: '100vh',
@@ -851,7 +856,7 @@ export default function LandingPage({
               style={{ width: 7, height: 7, borderRadius: '50%', background: C.primary }}
             />
             <span style={{ color: C.primary, fontSize: 13, fontWeight: 700 }}>
-              Pakistan's #1 Free Job Platform
+              A Saylani Welfare Initiative
             </span>
           </div>
 
@@ -936,7 +941,7 @@ export default function LandingPage({
             {['Software', 'Healthcare', 'Finance', 'Education', 'Engineering'].map((cat) => (
               <a
                 key={cat}
-                href="#"
+                href="#jobs"
                 style={{
                   background: C.bg,
                   color: C.text,
@@ -1287,7 +1292,7 @@ export default function LandingPage({
                         style={{ width: 4, height: 4, borderRadius: '50%', background: C.primary }}
                       />
                       <span style={{ fontSize: 9, fontWeight: 800, color: C.primary }}>
-                        Available
+                        Sample profile
                       </span>
                     </div>
                   </div>
@@ -1383,11 +1388,11 @@ export default function LandingPage({
                 color: C.text,
               }}
             >
-              Trusted by Leading Companies &amp; Enterprises
+              Example Employers
             </h2>
             <p style={{ color: C.muted, fontSize: 15, maxWidth: 500, margin: '0 auto' }}>
-              Verified organizations and industry leaders recruit qualified, pre-screened talent
-              from Saylani Job Bank.
+              Sample company profiles shown for illustration. Only verified employers can post jobs
+              on Saylani Job Bank.
             </p>
           </div>
           <div
@@ -1727,8 +1732,8 @@ export default function LandingPage({
         </div>
       </section>
 
-      {/* ═══ LIVE JOB LISTINGS ══════════════════════════════════════════════ */}
-      <section style={{ background: C.surface, padding: '100px 40px' }}>
+      {/* ═══ SAMPLE JOB LISTINGS (labelled samples, not live data) ══════════ */}
+      <section id="jobs" style={{ background: C.surface, padding: '100px 40px' }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <div
             style={{
@@ -1764,7 +1769,7 @@ export default function LandingPage({
                     textTransform: 'uppercase',
                   }}
                 >
-                  Live Openings
+                  Sample Listings
                 </span>
               </div>
               <h2
@@ -1779,6 +1784,10 @@ export default function LandingPage({
               >
                 Roles worth looking at.
               </h2>
+              <p style={{ color: C.muted, fontSize: 14, margin: '12px 0 0', maxWidth: 520 }}>
+                Sample listings for illustration — sign up to see real openings from verified
+                employers.
+              </p>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               {['All', 'Full-time', 'Part-time'].map((t) => (
@@ -1910,7 +1919,8 @@ export default function LandingPage({
                   </span>
                 </div>
                 <div style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{job.sal}</div>
-                <button
+                <NextLink
+                  href="/register"
                   className="apply-btn"
                   style={{
                     background: C.limeLight,
@@ -1919,10 +1929,12 @@ export default function LandingPage({
                     padding: '9px 18px',
                     fontSize: 13,
                     fontWeight: 700,
+                    display: 'inline-block',
+                    textDecoration: 'none',
                   }}
                 >
                   Apply Now →
-                </button>
+                </NextLink>
               </div>
             ))}
           </div>
@@ -2058,20 +2070,6 @@ export default function LandingPage({
                 >
                   {f.desc}
                 </p>
-                <a
-                  href="#"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 5,
-                    fontWeight: 700,
-                    fontSize: 13,
-                    color: i === 1 || i === 2 ? C.lime : C.primary,
-                    textDecoration: 'none',
-                  }}
-                >
-                  Learn More <ArrowUpRight size={13} />
-                </a>
               </div>
             ))}
           </div>
@@ -2079,7 +2077,7 @@ export default function LandingPage({
       </section>
 
       {/* ═══ HOW IT WORKS (tabbed) ══════════════════════════════════════════ */}
-      <section style={{ background: C.surface, padding: '100px 40px' }}>
+      <section id="how-it-works" style={{ background: C.surface, padding: '100px 40px' }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 48 }}>
             <div
@@ -2349,7 +2347,7 @@ export default function LandingPage({
       </section>
 
       {/* ═══ ABOUT ══════════════════════════════════════════════════════════ */}
-      <section style={{ background: C.bg, padding: '100px 40px' }}>
+      <section id="about" style={{ background: C.bg, padding: '100px 40px' }}>
         <div
           style={{
             maxWidth: 1200,
@@ -2459,20 +2457,6 @@ export default function LandingPage({
               >
                 Join Free Today <ArrowRight size={14} />
               </NextLink>
-              <a
-                href="#"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  color: C.primary,
-                  fontWeight: 600,
-                  fontSize: 14,
-                  textDecoration: 'none',
-                }}
-              >
-                More About Us <ArrowUpRight size={14} />
-              </a>
             </div>
           </div>
         </div>
@@ -2705,7 +2689,7 @@ export default function LandingPage({
       </section>
 
       {/* ═══ FOOTER ═════════════════════════════════════════════════════════ */}
-      <footer style={{ background: '#060d08' }}>
+      <footer id="contact" style={{ background: '#060d08' }}>
         {/* Top footer */}
         <div style={{ padding: '72px 40px 52px', maxWidth: 1200, margin: '0 auto' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '2.6fr 1fr 1fr 1fr', gap: 52 }}>
@@ -2772,37 +2756,6 @@ export default function LandingPage({
                   </div>
                 ))}
               </div>
-              {/* Social icons */}
-              <div style={{ display: 'flex', gap: 8 }}>
-                {[
-                  { label: 'FB', title: 'Facebook' },
-                  { label: 'X', title: 'Twitter/X' },
-                  { label: 'in', title: 'LinkedIn' },
-                  { label: '📷', title: 'Instagram' },
-                ].map((s) => (
-                  <a
-                    key={s.title}
-                    href="#"
-                    title={s.title}
-                    className="social-btn"
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 9,
-                      background: 'rgba(255,255,255,0.06)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: 'rgba(255,255,255,0.45)',
-                      textDecoration: 'none',
-                      fontSize: 12,
-                      fontWeight: 800,
-                    }}
-                  >
-                    {s.label}
-                  </a>
-                ))}
-              </div>
             </div>
 
             {/* Links */}
@@ -2810,31 +2763,23 @@ export default function LandingPage({
               {
                 title: 'For Job Seekers',
                 links: [
-                  { l: 'Browse Jobs', href: '#' },
-                  { l: 'Create Profile', href: '#' },
-                  { l: 'Get Saylani Endorsed', href: '#' },
-                  { l: 'Career Tips & Guides', href: '#' },
-                  { l: 'Resume Builder', href: '#' },
+                  { l: 'Browse Jobs', href: '/register' },
+                  { l: 'Create Profile', href: '/register' },
                 ],
               },
               {
                 title: 'For Employers',
                 links: [
-                  { l: 'Post a Job', href: '#' },
-                  { l: 'Find Talent', href: '#' },
-                  { l: 'Partner With Us', href: '#' },
-                  { l: 'Employer Dashboard', href: '#' },
-                  { l: 'Pricing Plans', href: '#' },
+                  { l: 'Post a Job', href: '/login' },
+                  { l: 'Find Talent', href: '/login' },
+                  { l: 'Employer Dashboard', href: '/login' },
                 ],
               },
               {
                 title: 'Company',
                 links: [
-                  { l: 'About Saylani', href: '#' },
-                  { l: 'Contact Us', href: '#' },
-                  { l: 'Privacy Policy', href: '#' },
-                  { l: 'Terms of Use', href: '#' },
-                  { l: 'Sitemap', href: '#' },
+                  { l: 'About Saylani', href: '#about' },
+                  { l: 'Contact Us', href: '#contact' },
                 ],
               },
             ].map((col) => (
@@ -2880,17 +2825,7 @@ export default function LandingPage({
           <span style={{ color: 'rgba(255,255,255,0.18)', fontSize: 13 }}>
             © 2025 Saylani Job Bank. All rights reserved.
           </span>
-          <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
-            {['Privacy Policy', 'Terms of Use', 'Cookie Policy'].map((l) => (
-              <a
-                key={l}
-                href="#"
-                style={{ color: 'rgba(255,255,255,0.18)', fontSize: 12, textDecoration: 'none' }}
-              >
-                {l}
-              </a>
-            ))}
-          </div>
+          {/* Legal links removed: no Privacy/Terms/Cookie pages exist yet. */}
           <span style={{ color: 'rgba(255,255,255,0.18)', fontSize: 13 }}>
             A Saylani Welfare International Trust initiative
           </span>

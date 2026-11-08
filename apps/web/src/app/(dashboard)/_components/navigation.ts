@@ -80,6 +80,7 @@ export function navigationFor(
           items: [
             overview,
             { href: '/verifier/companies', label: 'Companies', icon: Building2 },
+            { href: '/verifier/jobs', label: 'Jobs', icon: Briefcase },
             { href: '/verifier/queue', label: 'Verification queue', icon: CheckSquare },
           ],
         },

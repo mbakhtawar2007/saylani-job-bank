@@ -388,6 +388,15 @@ export const companyHeadOfficeSchema = z.object({
 });
 export type CompanyHeadOfficeInput = z.infer<typeof companyHeadOfficeSchema>;
 
+/**
+ * Head office pin for a field-visit-onboarded company. No branchId: the
+ * company already has a branch from onboarding.
+ */
+export const onboardedCompanyHeadOfficeSchema = companyHeadOfficeSchema.omit({
+  branchId: true,
+});
+export type OnboardedCompanyHeadOfficeInput = z.infer<typeof onboardedCompanyHeadOfficeSchema>;
+
 /** Other workplaces (factories, shops, offices). Jobs (M8) are posted at one of these. */
 export const companySiteSchema = z.object({
   label: z.string('Name this site').trim().min(2, 'Name this site, e.g. "SITE factory"').max(80),

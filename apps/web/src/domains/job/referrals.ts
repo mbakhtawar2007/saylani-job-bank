@@ -1,12 +1,19 @@
 import 'server-only';
 import { schema } from '@jobbank/db';
-import type { JobStatus } from '@jobbank/shared';
-import { and, count, desc, eq, inArray } from 'drizzle-orm';
+import type { JobStatus, PaginationMeta } from '@jobbank/shared';
+import { and, count, desc, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
 import type { RequestContext } from '@/domains/shared/audit';
 import { ForbiddenError, isUniqueViolation, NotFoundError } from '@/domains/shared/errors';
-import { assertCityAccess, assertPermission, cityScope, type Actor } from '@/domains/shared/scope';
+import {
+  assertCityAccess,
+  assertPermission,
+  cityScope,
+  hasPermission,
+  type Actor,
+} from '@/domains/shared/scope';
+import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
 import { notifyCompanyEmployers } from '@/domains/notifications';
 import { db } from '@/lib/db';
 import { buildJobView, j, loadJob, type JobView } from './repository';
@@ -17,6 +24,8 @@ const jr = schema.jobReferrals;
 const co = schema.companies;
 const us = schema.users;
 const ap = schema.applications;
+const jm = schema.jobMatches;
+const mr = schema.matchRuns;
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -113,6 +122,11 @@ export async function referJobToEmployer(
   // index below is the backstop for a concurrent first referral.
   if (existing) return buildReferralView(db, existing, job.title, company);
 
+  // M28: only live, open jobs go out to employers — staff cannot refer a
+  // DRAFT job that was never published, or a CLOSED / EXPIRED / FILLED one.
+  if (job.status !== 'OPEN')
+    throw new ForbiddenError('Only open jobs can be referred to employers');
+
   let view: JobReferralView;
   try {
     view = await runCommand(ctx, async ({ tx, audit }) => {
@@ -195,7 +209,25 @@ export async function listJobReferrals(actor: Actor, jobId: string): Promise<Job
   assertPermission(actor, 'job:read');
   const job = await loadJob(db, jobId);
   await assertCityAccess(actor, job.branchId, { entityType: 'job', entityId: job.id });
-  const rows = await db.select().from(jr).where(eq(jr.jobId, job.id)).orderBy(desc(jr.createdAt));
+  // H5: same pure-employer forcing as job/staff.ts listJobs/getJobDetail —
+  // an actor with a company but neither job:manage nor job:refer sees only
+  // referrals to their own company, never which other companies a job in
+  // their city was referred to. (Pure employers stay fail-closed here by
+  // assertCityAccess, as in getJobDetail; they read their own referrals
+  // through listJobsForEmployer / getEmployerJob instead.)
+  const ownCompanyId =
+    actor.companyId && !hasPermission(actor, 'job:manage') && !hasPermission(actor, 'job:refer')
+      ? actor.companyId
+      : null;
+  const rows = await db
+    .select()
+    .from(jr)
+    .where(
+      ownCompanyId
+        ? and(eq(jr.jobId, job.id), eq(jr.companyId, ownCompanyId))
+        : eq(jr.jobId, job.id),
+    )
+    .orderBy(desc(jr.createdAt));
   if (rows.length === 0) return [];
   const companies = await db
     .select({ id: co.id, legalName: co.legalName, tradeName: co.tradeName })
@@ -229,49 +261,100 @@ export async function listJobReferrals(actor: Actor, jobId: string): Promise<Job
  * The employer's Jobs list: their own company's postings plus jobs staff
  * referred to their company, newest activity first. A job that is both
  * (own posting, also referred back) appears once, as OWN.
+ *
+ * M32 — pagination: pass a ListQuery (parsed with parseListQuery, pageSize
+ * capped at 100 by the helper) to get one page plus pagination metadata.
+ * The sort is fixed to newest-activity-first (referredAt ?? createdAt); the
+ * query's sort field is ignored. Without a query the full list is returned,
+ * as before — the dashboard and the jobs page still call it that way.
  */
-export async function listJobsForEmployer(actor: Actor): Promise<EmployerJobListItem[]> {
+export async function listJobsForEmployer(actor: Actor): Promise<EmployerJobListItem[]>;
+export async function listJobsForEmployer(
+  actor: Actor,
+  query: Pick<
+    ListQuery<'createdAt', Record<string, never>>,
+    'page' | 'pageSize' | 'offset' | 'limit'
+  >,
+): Promise<{ items: EmployerJobListItem[]; pagination: PaginationMeta }>;
+export async function listJobsForEmployer(
+  actor: Actor,
+  query?: Pick<
+    ListQuery<'createdAt', Record<string, never>>,
+    'page' | 'pageSize' | 'offset' | 'limit'
+  >,
+): Promise<EmployerJobListItem[] | { items: EmployerJobListItem[]; pagination: PaginationMeta }> {
   assertPermission(actor, 'job:read');
-  if (!actor.companyId) return [];
+  if (!actor.companyId) return query ? { items: [], pagination: paginationMeta(query, 0) } : [];
 
-  const [ownRows, referredRows] = await Promise.all([
-    db.select().from(j).where(eq(j.companyId, actor.companyId)),
+  // Cheap id-only pass first: buildJobView runs 3 queries per job, so it
+  // only ever runs for the page being returned.
+  const [ownIds, referredRows] = await Promise.all([
+    db.select({ id: j.id, createdAt: j.createdAt }).from(j).where(eq(j.companyId, actor.companyId)),
     db
-      .select({ job: j, referredAt: jr.createdAt, note: jr.note })
+      .select({ jobId: jr.jobId, referredAt: jr.createdAt, note: jr.note })
       .from(jr)
       .innerJoin(j, eq(j.id, jr.jobId))
       .where(eq(jr.companyId, actor.companyId)),
   ]);
 
-  const ownIds = new Set(ownRows.map((row) => row.id));
-  const [ownViews, referredViews] = await Promise.all([
-    Promise.all(ownRows.map((row) => buildJobView(db, row))),
-    Promise.all(
-      referredRows
-        .filter(({ job }) => !ownIds.has(job.id))
-        .map(async ({ job, referredAt, note }) => ({
-          ...(await buildJobView(db, job)),
-          source: 'REFERRED' as const,
-          referredAt: referredAt.toISOString(),
-          referralNote: note,
-        })),
-    ),
-  ]);
-  const items: EmployerJobListItem[] = [
-    ...ownViews.map((view) => ({
-      ...view,
+  const ownIdSet = new Set(ownIds.map((row) => row.id));
+  const descriptors: {
+    jobId: string;
+    sortKey: Date;
+    source: 'OWN' | 'REFERRED';
+    referredAt: Date | null;
+    referralNote: string | null;
+  }[] = [
+    ...ownIds.map((row) => ({
+      jobId: row.id,
+      sortKey: row.createdAt,
       source: 'OWN' as const,
       referredAt: null,
       referralNote: null,
     })),
-    ...referredViews,
+    ...referredRows
+      .filter(({ jobId }) => !ownIdSet.has(jobId))
+      .map(({ jobId, referredAt, note }) => ({
+        jobId,
+        sortKey: referredAt,
+        source: 'REFERRED' as const,
+        referredAt,
+        referralNote: note,
+      })),
   ];
-  items.sort((a, b) => {
-    const da = new Date(a.referredAt ?? a.createdAt).getTime();
-    const dbTime = new Date(b.referredAt ?? b.createdAt).getTime();
-    return dbTime - da;
-  });
-  return items;
+  descriptors.sort((a, b) => b.sortKey.getTime() - a.sortKey.getTime());
+
+  const page = query ? descriptors.slice(query.offset, query.offset + query.limit) : descriptors;
+  const rows =
+    page.length === 0
+      ? []
+      : await db
+          .select()
+          .from(j)
+          .where(
+            inArray(
+              j.id,
+              page.map((d) => d.jobId),
+            ),
+          );
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const items: EmployerJobListItem[] = (
+    await Promise.all(
+      page.map(async (d) => {
+        const row = byId.get(d.jobId);
+        if (!row) return null;
+        return {
+          ...(await buildJobView(db, row)),
+          source: d.source,
+          referredAt: d.referredAt?.toISOString() ?? null,
+          referralNote: d.referralNote,
+        };
+      }),
+    )
+  ).filter((item): item is EmployerJobListItem => item !== null);
+
+  if (!query) return items;
+  return { items, pagination: paginationMeta(query, descriptors.length) };
 }
 
 /**
@@ -355,7 +438,7 @@ export async function getEmployerReferralStats(actor: Actor): Promise<EmployerRe
   const latestReferredAt = referred.map((r) => r.referredAt.getTime()).sort((a, b) => b - a)[0]!;
 
   const jobIds = referred.map((r) => r.jobId);
-  const [candidates, hired] = await Promise.all([
+  const [candidates, hireEvents] = await Promise.all([
     db
       .select({ value: count() })
       .from(ap)
@@ -365,10 +448,7 @@ export async function getEmployerReferralStats(actor: Actor): Promise<EmployerRe
           inArray(ap.status, [...EMPLOYER_VISIBLE_APPLICATION_STATUSES]),
         ),
       ),
-    db
-      .select({ value: count() })
-      .from(ap)
-      .where(and(inArray(ap.jobId, jobIds), eq(ap.status, 'HIRED'))),
+    listHireEvents(jobIds),
   ]);
 
   return {
@@ -377,7 +457,7 @@ export async function getEmployerReferralStats(actor: Actor): Promise<EmployerRe
     openReferred: byStatus.OPEN,
     referredLast30Days,
     candidatesReferred: candidates[0]?.value ?? 0,
-    hiredFromReferred: hired[0]?.value ?? 0,
+    hiredFromReferred: hireEvents.length,
     latestReferredAt: new Date(latestReferredAt).toISOString(),
   };
 }
@@ -387,10 +467,9 @@ export async function countEmployerCandidates(
   actor: Actor,
 ): Promise<{ referred: number; hired: number }> {
   if (!actor.companyId) return { referred: 0, hired: 0 };
-  const jobs = await listJobsForEmployer(actor);
-  if (jobs.length === 0) return { referred: 0, hired: 0 };
-  const jobIds = jobs.map((job) => job.id);
-  const [candidates, hired] = await Promise.all([
+  const jobIds = await visibleEmployerJobIds(actor);
+  if (jobIds.length === 0) return { referred: 0, hired: 0 };
+  const [candidates, hireEvents] = await Promise.all([
     db
       .select({ value: count() })
       .from(ap)
@@ -400,10 +479,120 @@ export async function countEmployerCandidates(
           inArray(ap.status, [...EMPLOYER_VISIBLE_APPLICATION_STATUSES]),
         ),
       ),
+    listHireEvents(jobIds),
+  ]);
+  return { referred: candidates[0]?.value ?? 0, hired: hireEvents.length };
+}
+
+/** Job ids the employer can see: their own postings + jobs referred to their company. */
+async function visibleEmployerJobIds(actor: Actor): Promise<string[]> {
+  if (!actor.companyId) return [];
+  const [own, referred] = await Promise.all([
+    db.select({ id: j.id }).from(j).where(eq(j.companyId, actor.companyId)),
+    db.select({ jobId: jr.jobId }).from(jr).where(eq(jr.companyId, actor.companyId)),
+  ]);
+  return [...new Set([...own.map((row) => row.id), ...referred.map((row) => row.jobId)])];
+}
+
+/** One hire, as seen by either hire writer, with the time the hire was made. */
+export interface HireEvent {
+  jobId: string;
+  applicantId: string;
+  hiredAt: Date | null;
+}
+
+const pktMonthFormat = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Karachi',
+  year: 'numeric',
+  month: 'numeric',
+});
+
+/**
+ * M1 — [year, month] of a timestamp in Asia/Karachi. Hires at 00:00–04:59
+ * PKT belong to the PKT day/month, not the UTC one the old extracts used.
+ */
+export function pktYearMonth(date: Date): { year: number; month: number } {
+  const parts = pktMonthFormat.formatToParts(date);
+  const year = Number(parts.find((p) => p.type === 'year')?.value);
+  const month = Number(parts.find((p) => p.type === 'month')?.value);
+  return { year, month };
+}
+
+/**
+ * C3 — every hire for these jobs, from BOTH hire writers, deduplicated by
+ * (job, applicant):
+ *
+ * - match hires: job_matches reviewStatus HIRED, excluding offers the
+ *   applicant declined (applicantResponse DECLINED). Hires the audit's way —
+ *   bucketed by reviewedAt, which the codebase already treats as hire time
+ *   (getMyPendingOffers).
+ * - placement hires: applications status HIRED, written by acceptJobOffer
+ *   (7ee4e4d) for offers that never went through a match row. Bucketed by
+ *   updatedAt — there is no hired-at column on applications, and HIRED is
+ *   terminal there, so updatedAt is the hire time unless a later transition
+ *   moves it (see H17, parallel-owned).
+ *
+ * A chart over job_matches alone would miss every placement hire, and a
+ * chart over applications alone would miss match hires that have no
+ * application row yet — so the counts are the union, with the match
+ * decision time winning when both rows exist.
+ */
+async function listHireEvents(jobIds: string[]): Promise<HireEvent[]> {
+  if (jobIds.length === 0) return [];
+  const [matches, applications] = await Promise.all([
     db
-      .select({ value: count() })
+      .select({ jobId: jm.jobId, applicantId: jm.applicantId, hiredAt: jm.reviewedAt })
+      .from(jm)
+      .innerJoin(mr, eq(mr.id, jm.runId))
+      .where(
+        and(
+          inArray(jm.jobId, jobIds),
+          eq(jm.reviewStatus, 'HIRED'),
+          or(isNull(jm.applicantResponse), ne(jm.applicantResponse, 'DECLINED')),
+          eq(mr.status, 'COMPLETED'),
+        ),
+      ),
+    db
+      .select({ jobId: ap.jobId, applicantId: ap.applicantId, hiredAt: ap.updatedAt })
       .from(ap)
       .where(and(inArray(ap.jobId, jobIds), eq(ap.status, 'HIRED'))),
   ]);
-  return { referred: candidates[0]?.value ?? 0, hired: hired[0]?.value ?? 0 };
+  const byKey = new Map<string, HireEvent>();
+  for (const row of applications) {
+    byKey.set(`${row.jobId}:${row.applicantId}`, {
+      jobId: row.jobId,
+      applicantId: row.applicantId,
+      hiredAt: row.hiredAt,
+    });
+  }
+  for (const row of matches) {
+    const key = `${row.jobId}:${row.applicantId}`;
+    const existing = byKey.get(key);
+    byKey.set(key, {
+      jobId: row.jobId,
+      applicantId: row.applicantId,
+      hiredAt: row.hiredAt ?? existing?.hiredAt ?? null,
+    });
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * Monthly hires for the employer's visible jobs, current calendar year.
+ * Bucketed by hire time in Asia/Karachi (M1); months with no hires are 0.
+ * Signature unchanged, so the employer dashboard chart keeps working.
+ */
+export async function countHiresByMonth(actor: Actor, year: number): Promise<number[]> {
+  const zeros = Array.from({ length: 12 }, () => 0);
+  if (!actor.companyId) return zeros;
+  const jobIds = await visibleEmployerJobIds(actor);
+  if (jobIds.length === 0) return zeros;
+  const hires = await listHireEvents(jobIds);
+  for (const hire of hires) {
+    if (!hire.hiredAt) continue;
+    const { year: hireYear, month } = pktYearMonth(hire.hiredAt);
+    if (hireYear === year && month >= 1 && month <= 12)
+      zeros[month - 1] = (zeros[month - 1] ?? 0) + 1;
+  }
+  return zeros;
 }

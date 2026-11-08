@@ -103,7 +103,8 @@ export interface PresignDocumentOptions {
 /**
  * Step 1 of an upload: checks the file against the document type's rules and
  * returns a presigned PUT. The file goes straight from the browser to storage,
- * never through the app. Not audited: nothing is stored yet; confirm records it.
+ * never through the app. Audited: the row is created here, so the presign itself
+ * is the audit entry (confirm records the upload separately).
  */
 export async function presignDocumentUpload(
   options: PresignDocumentOptions,
@@ -137,28 +138,38 @@ export async function presignDocumentUpload(
     entityId: row.id,
     contentType: input.contentType,
   });
-  const documentId = await runCommand(
-    ctx,
-    async ({ tx }) => {
-      const [inserted] = await tx
-        .insert(store.table)
-        .values({
-          [store.owner.name]: row.id,
-          typeCode: type.code,
-          storageKey: key,
-          fileName: input.fileName,
-          contentType: input.contentType,
-          sizeBytes: input.sizeBytes,
-        })
-        .returning({ id: store.id });
-      const id = inserted?.id;
-      if (typeof id !== 'string') {
-        throw new DomainError('INTERNAL', 500, 'Document upload could not be created');
-      }
-      return id;
-    },
-    { audited: false },
-  );
+  const documentId = await runCommand(ctx, async ({ tx, audit }) => {
+    const [inserted] = await tx
+      .insert(store.table)
+      .values({
+        [store.owner.name]: row.id,
+        typeCode: type.code,
+        storageKey: key,
+        fileName: input.fileName,
+        contentType: input.contentType,
+        sizeBytes: input.sizeBytes,
+      })
+      .returning({ id: store.id });
+    const id = inserted?.id;
+    if (typeof id !== 'string') {
+      throw new DomainError('INTERNAL', 500, 'Document upload could not be created');
+    }
+    // Presign creates the row, so it is audited here (L7): confirm records the
+    // upload, but a presign never confirmed would otherwise leave no trace.
+    audit({
+      action: `${entity}.document_presign`,
+      entityType: entity,
+      entityId: row.id,
+      branchId: row.branchId,
+      metadata: {
+        documentId: id,
+        typeCode: type.code,
+        fileName: input.fileName,
+        sizeBytes: input.sizeBytes,
+      },
+    });
+    return id;
+  });
   const upload = await presignUpload({
     key,
     contentType: input.contentType,

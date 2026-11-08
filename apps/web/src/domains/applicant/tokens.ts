@@ -84,10 +84,38 @@ export async function issueApplicantToken(
     )
     .orderBy(desc(tokens.issuedAt))
     .limit(1);
-  if (existing) return toView(existing, branch);
+  if (existing) {
+    // If the name or phone now differ (a correction, or the slip details were
+    // mistyped), update the stored details instead of silently returning the
+    // stale ones (L17) — and audit the correction.
+    if (existing.applicantName !== input.applicantName || existing.phone !== input.phone) {
+      const updated = await runCommand(ctx, async ({ tx, audit }) => {
+        const [row] = await tx
+          .update(tokens)
+          .set({ applicantName: input.applicantName, phone: input.phone })
+          .where(eq(tokens.id, existing.id))
+          .returning();
+        audit({
+          action: 'applicant.token_reissued',
+          entityType: 'applicant_token',
+          entityId: existing.id,
+          branchId: input.branchId,
+          before: { applicantName: existing.applicantName, phone: existing.phone },
+          after: { applicantName: input.applicantName, phone: input.phone },
+          metadata: { tokenNumber: existing.tokenNumber },
+        });
+        return row!;
+      });
+      return toView(updated, branch);
+    }
+    return toView(existing, branch);
+  }
 
-  // Two counters can issue at the same moment: the unique index on
-  // (branch, day, number) is the guard — on a collision, retry with the next number.
+  // Two counters can issue at the same moment: the unique indexes are the guard —
+  // (branch, day, number) for the daily sequence, and the partial unique index on
+  // (branch, day, cnic) WHERE status = 'ISSUED' (migration 0031) for the same-CNIC
+  // dedupe (H22). On a collision, retry with the next number — or hand back the
+  // token that won the race.
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       const row = await runCommand(ctx, async ({ tx, audit }) => {
@@ -136,6 +164,24 @@ export async function issueApplicantToken(
         attempt < 4
       ) {
         continue;
+      }
+      if (isUniqueViolation(error, 'branch_applicant_tokens_branch_day_cnic_issued_unique')) {
+        // A second counter issued for the same CNIC at the same moment: the
+        // partial unique index caught the race — hand back the token that won.
+        const [winner] = await db
+          .select()
+          .from(tokens)
+          .where(
+            and(
+              eq(tokens.branchId, input.branchId),
+              eq(tokens.registrationDay, today),
+              eq(tokens.cnic, input.cnic),
+              eq(tokens.status, 'ISSUED'),
+            ),
+          )
+          .orderBy(desc(tokens.issuedAt))
+          .limit(1);
+        if (winner) return toView(winner, branch);
       }
       throw error;
     }

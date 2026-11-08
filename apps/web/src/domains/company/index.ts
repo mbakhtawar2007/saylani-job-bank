@@ -59,6 +59,8 @@ export {
   listCompanies,
   markCompanyRegistrationVerifiedSigned,
   reinstateCompany,
+  resubmitOnboardedCompany,
+  setOnboardedCompanyHeadOffice,
   staffOnboardCompany,
   staffRegisterCompany,
   suspendCompany,
@@ -69,6 +71,7 @@ export {
 } from './staff';
 export {
   claimCompany,
+  countVerificationsDoneByMonth,
   getCompanyForReview,
   listQueue,
   QUEUE_SORTABLE,

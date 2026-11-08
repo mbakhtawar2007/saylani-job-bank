@@ -124,6 +124,9 @@ export async function registerCompany(
         reason: 'ALREADY_REGISTERED',
       });
     }
+    // A concurrent duplicate NTN hits the active-NTN unique index (L12): report
+    // it as NTN_TAKEN, not a generic 409.
+    if (isUniqueViolation(error, ACTIVE_NTN_CONSTRAINT)) throw ntnTaken();
     throw error;
   }
   return myCompany(ctx.actor);

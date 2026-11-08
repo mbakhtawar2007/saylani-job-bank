@@ -17,12 +17,15 @@ export default async function EmployerCompanyPage({
     return <CompanyWizard initialStep="details" initialCompany={null} />;
   }
 
-  // VERIFIED/SUSPENDED with ?step= → show wizard (editable sections only)
-  if ((company.status === 'VERIFIED' || company.status === 'SUSPENDED') && step) {
-    return <CompanyWizard initialStep={step} initialCompany={company} />;
-  }
-
-  if (company.status === 'VERIFIED' || company.status === 'SUSPENDED') {
+  // Only an un-verified company is editable by the employer: DRAFT, or fixing what
+  // a verifier asked for (INFO_REQUESTED) / was rejected (REJECTED). Every other
+  // status — VERIFIED, SUSPENDED, and anything waiting with a verifier — is
+  // read-only here; a ?step= deep link must not reopen the wizard.
+  const editableStatus =
+    company.status === 'DRAFT' ||
+    company.status === 'INFO_REQUESTED' ||
+    company.status === 'REJECTED';
+  if (!editableStatus) {
     return <CompanyStatusPanel company={company} />;
   }
 

@@ -7,8 +7,10 @@ import {
   getEmployerJob,
   getEmployerReferralStats,
   hasVisibleEmployerJobs,
+  listJobReferrals,
   listJobsForEmployer,
 } from '@/domains/job';
+import { getJobMatches } from '@/domains/matching';
 import { NotFoundError } from '@/domains/shared/errors';
 import type { Actor } from '@/domains/shared/scope';
 import { resetMemoryRateLimits } from '@/domains/shared/rate-limit';
@@ -199,5 +201,89 @@ describe('job referrals', () => {
       params: { id: jobId },
     });
     expect(byEmployer.status, JSON.stringify(byEmployer.body)).toBe(403);
+  });
+
+  it('a branch-assigned employer sees only their own company’s referrals for a job (H5)', async () => {
+    const [otherCompany] = await db
+      .insert(co)
+      .values({
+        branchId: KHI,
+        legalName: `Other Referral Traders ${tag}`,
+        legalStructure: 'PRIVATE_LIMITED',
+        ntn: String(Math.floor(1e6 + Math.random() * 9e6)),
+        industryCode: 'RETAIL',
+        sizeBand: '1_10',
+        status: 'VERIFIED',
+        verifiedAt: new Date(),
+        createdBy: employerUserId,
+      })
+      .returning({ id: co.id });
+    for (const target of [HAMZA_ID, otherCompany!.id]) {
+      const res = await call(referJob, `/api/v1/jobs/${jobId}/referrals`, {
+        method: 'POST',
+        body: { companyId: target },
+        jar: staffJar,
+        params: { id: jobId },
+      });
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+    }
+
+    // Staff see both referrals …
+    const staffListed = await call(listReferrals, `/api/v1/jobs/${jobId}/referrals`, {
+      jar: staffJar,
+      params: { id: jobId },
+    });
+    expect(staffListed.status).toBe(200);
+    expect(staffListed.body.data).toHaveLength(2);
+
+    // … but the branch-assigned employer sees only their own company’s row.
+    const employer = actorFor(employerUserId, ['EMPLOYER'], HAMZA_ID);
+    const rows = await listJobReferrals(employer, jobId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.companyId).toBe(HAMZA_ID);
+  });
+
+  it('cannot refer a DRAFT job; a referred employer can open its matches (M28)', async () => {
+    const [draftJob] = await db
+      .insert(j)
+      .values({
+        companyId: HAMZA_ID,
+        branchId: KHI,
+        title: `Draft Rider ${tag}`,
+        categoryCode: 'DRIVING_DELIVERY',
+        description: 'Never published.',
+        jobType: 'FULL_TIME',
+        shift: 'DAY',
+        vacancies: 1,
+        status: 'DRAFT',
+        createdBy: employerUserId,
+      })
+      .returning({ id: j.id });
+    const draft = await call(referJob, `/api/v1/jobs/${draftJob!.id}/referrals`, {
+      method: 'POST',
+      body: { companyId: HAMZA_ID },
+      jar: staffJar,
+      params: { id: draftJob!.id },
+    });
+    expect(draft.status, JSON.stringify(draft.body)).toBe(403);
+
+    // The fixture job is referred to Hamza Traders (idempotent re-refer).
+    const referred = await call(referJob, `/api/v1/jobs/${jobId}/referrals`, {
+      method: 'POST',
+      body: { companyId: HAMZA_ID },
+      jar: staffJar,
+      params: { id: jobId },
+    });
+    expect(referred.status, JSON.stringify(referred.body)).toBe(201);
+
+    const employer = actorFor(employerUserId, ['EMPLOYER'], HAMZA_ID);
+    await expect(getJobMatches(employer, jobId, { page: 1, pageSize: 20 })).resolves.toEqual({
+      run: null,
+      matches: [],
+      total: 0,
+    });
+    await expect(
+      getJobMatches(employer, otherJobId, { page: 1, pageSize: 20 }),
+    ).rejects.toBeInstanceOf(NotFoundError);
   });
 });

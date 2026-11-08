@@ -62,21 +62,39 @@ export const GENDER_PREFERENCE_LABELS: Record<GenderPreference, string> = {
 
 // ─── Schemas ────────────────────────────────────────────────────────────
 
-export const createJobSchema = z.object({
+// Field shapes without defaults. The create schema adds defaults on top;
+// the update schema is built from these directly, so a partial PATCH never
+// silently resets a field the caller did not touch (zod defaults survive
+// .partial(), which used to wipe gender preference and every benefit).
+const jobFieldSchema = {
   title: z.string().trim().min(3).max(200),
   categoryCode: z.string().trim().min(1).max(50),
   description: z.string().trim().min(10).max(5000),
   jobType: z.enum(JOB_TYPES),
   shift: z.enum(SHIFT_TYPES),
-  genderPreference: z.enum(GENDER_PREFERENCES).default('ANY'),
+  genderPreference: z.enum(GENDER_PREFERENCES),
   vacancies: z.number().int().min(1).max(9999),
   salaryMin: z.number().int().min(0).optional(),
   salaryMax: z.number().int().min(0).optional(),
   closesAt: z.string().datetime().optional(),
   // Benefits & Perks
+  fuelAllowance: z.boolean(),
+  flexibleHours: z.boolean(),
+  annualLeaveDays: z.number().int().min(0).max(365).optional(),
+  medicalCoverage: z.enum(MEDICAL_COVERAGE_TYPES),
+  bonusTier: z.enum(BONUS_TIERS),
+  workFromHome: z.boolean(),
+  providentFund: z.boolean(),
+  transportAllowance: z.boolean(),
+  eobi: z.boolean(),
+  lifeInsurance: z.boolean(),
+};
+
+export const createJobSchema = z.object({
+  ...jobFieldSchema,
+  genderPreference: z.enum(GENDER_PREFERENCES).default('ANY'),
   fuelAllowance: z.boolean().default(false),
   flexibleHours: z.boolean().default(false),
-  annualLeaveDays: z.number().int().min(0).max(365).optional(),
   medicalCoverage: z.enum(MEDICAL_COVERAGE_TYPES).default('NONE'),
   bonusTier: z.enum(BONUS_TIERS).default('NONE'),
   workFromHome: z.boolean().default(false),
@@ -88,7 +106,7 @@ export const createJobSchema = z.object({
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
 
-export const updateJobSchema = createJobSchema.partial();
+export const updateJobSchema = z.object(jobFieldSchema).partial();
 export type UpdateJobInput = z.infer<typeof updateJobSchema>;
 
 export const jobStatusSchema = z.object({

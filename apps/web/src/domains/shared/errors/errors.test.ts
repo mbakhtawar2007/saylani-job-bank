@@ -60,6 +60,14 @@ describe('toErrorResponse', () => {
     const unique = Object.assign(new Error('duplicate key value'), { code: '23505' });
     expect(toErrorResponse(unique, CID).body.error.code).toBe('CONFLICT');
 
+    // S1: a number that overflows Postgres `integer` (e.g. salaryMin 3_000_000_000)
+    // is a 422, not a raw 500.
+    const overflow = Object.assign(new Error('numeric field overflow'), { code: '22003' });
+    const overflowRes = toErrorResponse(overflow, CID);
+    expect(overflowRes.status).toBe(422);
+    expect(overflowRes.body.error.code).toBe('VALIDATION_FAILED');
+    expect(overflowRes.unexpected).toBe(false);
+
     const wrapped = new Error('Failed query: UPDATE audit_logs', {
       cause: Object.assign(new Error('table "audit_logs" is append-only'), { code: 'JB001' }),
     });

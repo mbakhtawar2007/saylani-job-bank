@@ -22,7 +22,7 @@ import {
   type SkillLevel,
 } from '@jobbank/shared';
 import type { JobView } from '@/domains/job';
-import { apiFetch, ApiClientError } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import { Button, Input, Select, Spinner, Textarea } from '@/components/atoms';
 import { FormField } from '@/components/molecules';
 import { MapPinPicker, type LatLng } from '@/components/organisms';
@@ -56,8 +56,7 @@ const BONUS_OPTIONS = BONUS_TIERS.map((v) => ({ value: v, label: BONUS_TIER_LABE
 const LEVEL_OPTIONS = SKILL_LEVELS.map((v) => ({ value: v, label: SKILL_LEVEL_LABELS[v] }));
 
 function friendlyError(err: unknown): string {
-  if (err instanceof ApiClientError) return err.message;
-  return 'Something went wrong. Please try again.';
+  return friendlyApiError(err);
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────
