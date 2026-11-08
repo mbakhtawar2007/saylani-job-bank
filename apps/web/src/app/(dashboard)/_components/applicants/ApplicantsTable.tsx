@@ -14,7 +14,6 @@ import {
   ActiveFilterChips,
   CheckboxFilterGroup,
   FilterSection,
-  FilterSidebar,
   useFilterParams,
   type ActiveFilterChip,
 } from '../filters';
@@ -57,7 +56,6 @@ export function ApplicantsTable({ rows, meta, sort, branches, skills, cities, ar
   const pathname = usePathname();
   const params = useSearchParams();
   const { values, update, toggle, setValue, clearKeys } = useFilterParams();
-  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const selectedStatuses = values('status');
   const selectedIdentities = values('identityStatus');
@@ -77,6 +75,7 @@ export function ApplicantsTable({ rows, meta, sort, branches, skills, cities, ar
     selectedAreas.length +
     (createdFrom ? 1 : 0) +
     (createdTo ? 1 : 0);
+  const [filtersOpen, setFiltersOpen] = useState(activeCount > 0);
 
   const labelFor = (options: SelectOption[], value: string) =>
     options.find((o) => o.value === value)?.label ?? value;
@@ -124,7 +123,7 @@ export function ApplicantsTable({ rows, meta, sort, branches, skills, cities, ar
   };
 
   // Areas belong to cities: ticking a city off drops areas that no longer belong
-  // to any selected city, so the sidebar can never hold an impossible pair.
+  // to any selected city, so the filters can never hold an impossible pair.
   const toggleCity = (cityCode: string) => {
     const next = selectedCities.includes(cityCode)
       ? selectedCities.filter((v) => v !== cityCode)
@@ -146,7 +145,7 @@ export function ApplicantsTable({ rows, meta, sort, branches, skills, cities, ar
         )
       : [];
 
-  const sidebar = (
+  const filterSections = (
     <>
       <FilterSection title="Status" selectedCount={selectedStatuses.length}>
         <CheckboxFilterGroup
@@ -222,136 +221,141 @@ export function ApplicantsTable({ rows, meta, sort, branches, skills, cities, ar
   );
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[264px_minmax(0,1fr)] lg:gap-6">
-      <FilterSidebar
-        activeCount={activeCount}
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        onClearAll={() => clearKeys(FILTER_KEYS)}
-      >
-        {sidebar}
-      </FilterSidebar>
-
-      <div className="grid min-w-0 content-start gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            className="lg:hidden"
-            onClick={() => setDrawerOpen(true)}
-            aria-label="Open filters"
-          >
-            <SlidersHorizontal className="mr-1.5 size-4" aria-hidden="true" />
-            Filters
-            {activeCount > 0 && (
-              <span className="bg-primary text-primary-fg ms-1.5 grid size-5 place-items-center rounded-full text-xs font-semibold">
-                {activeCount}
-              </span>
-            )}
-          </Button>
-          <SearchBar
-            className="w-full sm:max-w-xs"
-            defaultValue={params.get('q') ?? ''}
-            onSearch={(q) => setValue('q', q || null)}
-            placeholder="Name, CNIC, mobile or area…"
-            label="Search applicants"
-          />
-          <span className="text-fg-muted ms-auto text-sm">
-            {meta.total} {meta.total === 1 ? 'applicant' : 'applicants'}
-          </span>
-        </div>
-        <ActiveFilterChips
-          chips={chips}
-          onRemove={removeChip}
-          onClearAll={() => clearKeys(FILTER_KEYS)}
+    <div className="grid min-w-0 content-start gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <SearchBar
+          className="w-full sm:max-w-xs"
+          defaultValue={params.get('q') ?? ''}
+          onSearch={(q) => setValue('q', q || null)}
+          placeholder="Name, CNIC, mobile or area…"
+          label="Search applicants"
         />
-        <DataTable<ApplicantListItem>
-          caption="Applicants"
-          rows={rows}
-          getRowId={(r) => r.id}
-          sort={sort}
-          onSortChange={(s) => update({ sort: `${s.id}:${s.direction}` })}
-          onRowClick={(r) => router.push(`${pathname}/${r.id}`)}
-          empty={
-            <EmptyState
-              icon={Contact}
-              title="No applicants found"
-              description="Try clearing the filters or searching by CNIC or mobile number."
-            />
-          }
-          pagination={{
-            page: meta.page,
-            pageCount: meta.pageCount,
-            pageSize: meta.pageSize,
-            total: meta.total,
-            onPageChange: (p) => update({ page: String(p) }),
-          }}
-          columns={[
-            {
-              id: 'fullName',
-              header: 'Name',
-              sortable: true,
-              cell: (r) => (
-                <div className="grid min-w-0">
-                  <span className="truncate font-medium">{r.fullName}</span>
-                  <span className="text-fg-subtle numeric truncate text-xs">
-                    {r.cnicMasked}
-                    {r.phoneMasked ? ` · ${r.phoneMasked}` : ''}
-                  </span>
-                </div>
-              ),
-            },
-            {
-              id: 'area',
-              header: 'Area',
-              hideBelow: 'md',
-              cell: (r) =>
-                r.areaLabel || r.cityLabel ? (
-                  [r.areaLabel, r.cityLabel].filter(Boolean).join(', ')
-                ) : (
-                  <span className="text-fg-subtle">No location yet</span>
-                ),
-            },
-            ...(branches.length > 1
-              ? [
-                  {
-                    id: 'branch',
-                    header: 'Branch',
-                    hideBelow: 'lg' as const,
-                    cell: (r: ApplicantListItem) =>
-                      r.branchName ?? <span className="text-fg-subtle">Not chosen</span>,
-                  },
-                ]
-              : []),
-            {
-              id: 'profileCompleteness',
-              header: 'Profile',
-              sortable: true,
-              hideBelow: 'sm',
-              cell: (r) => <span className="numeric">{r.profileCompleteness}%</span>,
-            },
-            {
-              id: 'identity',
-              header: 'Identity',
-              hideBelow: 'md',
-              cell: (r) => <StatusPill {...IDENTITY_PILL[r.identityStatus]} />,
-            },
-            {
-              id: 'createdAt',
-              header: 'Registered',
-              sortable: true,
-              hideBelow: 'lg',
-              cell: (r) => formatDate(r.createdAt),
-            },
-            {
-              id: 'status',
-              header: 'Status',
-              cell: (r) => <StatusPill {...APPLICANT_STATUS_PILL[r.status]} />,
-            },
-          ]}
-        />
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => setFiltersOpen((open) => !open)}
+          aria-expanded={filtersOpen}
+          aria-controls="applicant-filters"
+        >
+          <SlidersHorizontal className="mr-1.5 size-4" aria-hidden="true" />
+          Filters
+          {activeCount > 0 && (
+            <span className="bg-primary text-primary-fg ms-1.5 grid size-5 place-items-center rounded-full text-xs font-semibold">
+              {activeCount}
+            </span>
+          )}
+        </Button>
+        <span className="text-fg-muted ms-auto text-sm">
+          {meta.total} {meta.total === 1 ? 'applicant' : 'applicants'}
+        </span>
       </div>
+      {filtersOpen && (
+        <div id="applicant-filters" className="border-border bg-surface rounded-xl border p-4">
+          <div className="mb-1 flex items-center gap-2">
+            <h2 className="text-sm font-semibold">Filters</h2>
+            <button
+              type="button"
+              onClick={() => clearKeys(FILTER_KEYS)}
+              disabled={activeCount === 0}
+              className="focus-visible:focus-ring text-primary ms-auto rounded-sm text-xs font-semibold hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-50"
+            >
+              Clear all
+            </button>
+          </div>
+          <div className="grid gap-x-6 sm:grid-cols-2 lg:grid-cols-3">{filterSections}</div>
+        </div>
+      )}
+      <ActiveFilterChips
+        chips={chips}
+        onRemove={removeChip}
+        onClearAll={() => clearKeys(FILTER_KEYS)}
+      />
+      <DataTable<ApplicantListItem>
+        caption="Applicants"
+        rows={rows}
+        getRowId={(r) => r.id}
+        sort={sort}
+        onSortChange={(s) => update({ sort: `${s.id}:${s.direction}` })}
+        onRowClick={(r) => router.push(`${pathname}/${r.id}`)}
+        empty={
+          <EmptyState
+            icon={Contact}
+            title="No applicants found"
+            description="Try clearing the filters or searching by CNIC or mobile number."
+          />
+        }
+        pagination={{
+          page: meta.page,
+          pageCount: meta.pageCount,
+          pageSize: meta.pageSize,
+          total: meta.total,
+          onPageChange: (p) => update({ page: String(p) }),
+        }}
+        columns={[
+          {
+            id: 'fullName',
+            header: 'Name',
+            sortable: true,
+            cell: (r) => (
+              <div className="grid min-w-0">
+                <span className="truncate font-medium">{r.fullName}</span>
+                <span className="text-fg-subtle numeric truncate text-xs">
+                  {r.cnicMasked}
+                  {r.phoneMasked ? ` · ${r.phoneMasked}` : ''}
+                </span>
+              </div>
+            ),
+          },
+          {
+            id: 'area',
+            header: 'Area',
+            hideBelow: 'md',
+            cell: (r) =>
+              r.areaLabel || r.cityLabel ? (
+                [r.areaLabel, r.cityLabel].filter(Boolean).join(', ')
+              ) : (
+                <span className="text-fg-subtle">No location yet</span>
+              ),
+          },
+          ...(branches.length > 1
+            ? [
+                {
+                  id: 'branch',
+                  header: 'Branch',
+                  hideBelow: 'lg' as const,
+                  cell: (r: ApplicantListItem) =>
+                    r.branchName ?? <span className="text-fg-subtle">Not chosen</span>,
+                },
+              ]
+            : []),
+          {
+            id: 'profileCompleteness',
+            header: 'Profile',
+            sortable: true,
+            hideBelow: 'sm',
+            cell: (r) => <span className="numeric">{r.profileCompleteness}%</span>,
+          },
+          {
+            id: 'identity',
+            header: 'Identity',
+            hideBelow: 'md',
+            cell: (r) => <StatusPill {...IDENTITY_PILL[r.identityStatus]} />,
+          },
+          {
+            id: 'createdAt',
+            header: 'Registered',
+            sortable: true,
+            hideBelow: 'lg',
+            cell: (r) => formatDate(r.createdAt),
+          },
+          {
+            id: 'status',
+            header: 'Status',
+            cell: (r) => <StatusPill {...APPLICANT_STATUS_PILL[r.status]} />,
+          },
+        ]}
+      />
     </div>
   );
 }

@@ -23,7 +23,6 @@ import {
   ActiveFilterChips,
   CheckboxFilterGroup,
   FilterSection,
-  FilterSidebar,
   useFilterParams,
   type ActiveFilterChip,
 } from '../filters';
@@ -76,7 +75,6 @@ interface Props {
 export function JobsTable({ items, pagination, categories, cities, basePath }: Props) {
   const params = useSearchParams();
   const { values, update, toggle, setValue, clearKeys } = useFilterParams();
-  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const selectedStatuses = values('status');
   const selectedTypes = values('jobType');
@@ -107,6 +105,7 @@ export function JobsTable({ items, pagination, categories, cities, basePath }: P
     selectedShifts.length +
     (salaryMin ? 1 : 0) +
     (salaryMax ? 1 : 0);
+  const [filtersOpen, setFiltersOpen] = useState(activeCount > 0);
 
   const labelFor = (options: SelectOption[], value: string) =>
     options.find((o) => o.value === value)?.label ?? value;
@@ -155,7 +154,7 @@ export function JobsTable({ items, pagination, categories, cities, basePath }: P
     update({ salaryMin: salaryMinClean, salaryMax: salaryMaxClean });
   };
 
-  const sidebar = (
+  const filterSections = (
     <>
       <FilterSection title="Status" selectedCount={selectedStatuses.length}>
         <CheckboxFilterGroup
@@ -245,111 +244,114 @@ export function JobsTable({ items, pagination, categories, cities, basePath }: P
   );
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[264px_minmax(0,1fr)] lg:gap-6">
-      <FilterSidebar
-        activeCount={activeCount}
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        onClearAll={() => clearKeys(FILTER_KEYS)}
-      >
-        {sidebar}
-      </FilterSidebar>
-
-      <div className="grid min-w-0 content-start gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            className="lg:hidden"
-            onClick={() => setDrawerOpen(true)}
-            aria-label="Open filters"
-          >
-            <SlidersHorizontal className="mr-1.5 size-4" aria-hidden="true" />
-            Filters
-            {activeCount > 0 && (
-              <span className="bg-primary text-primary-fg ms-1.5 grid size-5 place-items-center rounded-full text-xs font-semibold">
-                {activeCount}
-              </span>
-            )}
-          </Button>
-          <SearchBar
-            className="w-full sm:max-w-xs"
-            defaultValue={params.get('q') ?? ''}
-            onSearch={(q) => setValue('q', q || null)}
-            placeholder="Job title, company or keyword…"
-            label="Search jobs"
-          />
-          <Select
-            aria-label="Sort jobs"
-            wrapperClassName="w-full sm:w-44"
-            value={params.get('sort') ?? 'createdAt:desc'}
-            onChange={(e) => update({ sort: e.target.value })}
-            options={SORT_OPTIONS}
-          />
-          <span className="text-fg-muted ms-auto text-sm">
-            {pagination.total} {pagination.total === 1 ? 'job' : 'jobs'}
-          </span>
-        </div>
-        <ActiveFilterChips
-          chips={chips}
-          onRemove={removeChip}
-          onClearAll={() => clearKeys(FILTER_KEYS)}
+    <div className="grid min-w-0 content-start gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <SearchBar
+          className="w-full sm:max-w-xs"
+          defaultValue={params.get('q') ?? ''}
+          onSearch={(q) => setValue('q', q || null)}
+          placeholder="Job title, company or keyword…"
+          label="Search jobs"
         />
-
-        {items.length === 0 ? (
-          <EmptyState
-            icon={Briefcase}
-            title={
-              activeCount > 0 || params.get('q') ? 'No jobs match these filters' : 'No jobs yet'
-            }
-            description={
-              activeCount > 0 || params.get('q')
-                ? 'Try clearing the filters or searching by a different title or company.'
-                : 'Jobs posted by employers will appear here.'
-            }
-          />
-        ) : (
-          <div className="grid gap-3">
-            {items.map((job) => {
-              const pill = STATUS_BADGE[job.status] ?? { tone: 'neutral' as const };
-              const meta = [
-                job.companyName,
-                job.cityLabel,
-                JOB_TYPE_LABELS[job.jobType as JobType],
-                `${job.vacancies} ${job.vacancies === 1 ? 'vacancy' : 'vacancies'}`,
-                `Posted ${formatDate(job.createdAt)}`,
-              ]
-                .filter(Boolean)
-                .join(' · ');
-              return (
-                <Link
-                  key={job.id}
-                  href={`${basePath}/${job.id}`}
-                  className="border-border bg-surface hover:bg-surface-muted flex items-center justify-between rounded-xl border px-5 py-4 transition-colors"
-                >
-                  <div className="flex items-start gap-3">
-                    <Briefcase className="text-fg-muted mt-0.5 size-5 shrink-0" />
-                    <div>
-                      <p className="text-fg font-medium">{job.title}</p>
-                      <p className="text-fg-muted text-sm">{meta}</p>
-                    </div>
-                  </div>
-                  <Badge tone={pill.tone}>{JOB_STATUS_LABELS[job.status]}</Badge>
-                </Link>
-              );
-            })}
-          </div>
-        )}
-
-        <Pagination
-          page={pagination.page}
-          pageCount={pagination.pageCount}
-          pageSize={pagination.pageSize}
-          total={pagination.total}
-          onPageChange={(p) => update({ page: String(p) })}
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => setFiltersOpen((open) => !open)}
+          aria-expanded={filtersOpen}
+          aria-controls="job-filters"
+        >
+          <SlidersHorizontal className="mr-1.5 size-4" aria-hidden="true" />
+          Filters
+          {activeCount > 0 && (
+            <span className="bg-primary text-primary-fg ms-1.5 grid size-5 place-items-center rounded-full text-xs font-semibold">
+              {activeCount}
+            </span>
+          )}
+        </Button>
+        <Select
+          aria-label="Sort jobs"
+          wrapperClassName="w-full sm:w-44"
+          value={params.get('sort') ?? 'createdAt:desc'}
+          onChange={(e) => update({ sort: e.target.value })}
+          options={SORT_OPTIONS}
         />
+        <span className="text-fg-muted ms-auto text-sm">
+          {pagination.total} {pagination.total === 1 ? 'job' : 'jobs'}
+        </span>
       </div>
+      {filtersOpen && (
+        <div id="job-filters" className="border-border bg-surface rounded-xl border p-4">
+          <div className="mb-1 flex items-center gap-2">
+            <h2 className="text-sm font-semibold">Filters</h2>
+            <button
+              type="button"
+              onClick={() => clearKeys(FILTER_KEYS)}
+              disabled={activeCount === 0}
+              className="focus-visible:focus-ring text-primary ms-auto rounded-sm text-xs font-semibold hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-50"
+            >
+              Clear all
+            </button>
+          </div>
+          <div className="grid gap-x-6 sm:grid-cols-2 lg:grid-cols-3">{filterSections}</div>
+        </div>
+      )}
+      <ActiveFilterChips
+        chips={chips}
+        onRemove={removeChip}
+        onClearAll={() => clearKeys(FILTER_KEYS)}
+      />
+
+      {items.length === 0 ? (
+        <EmptyState
+          icon={Briefcase}
+          title={activeCount > 0 || params.get('q') ? 'No jobs match these filters' : 'No jobs yet'}
+          description={
+            activeCount > 0 || params.get('q')
+              ? 'Try clearing the filters or searching by a different title or company.'
+              : 'Jobs posted by employers will appear here.'
+          }
+        />
+      ) : (
+        <div className="grid gap-3">
+          {items.map((job) => {
+            const pill = STATUS_BADGE[job.status] ?? { tone: 'neutral' as const };
+            const meta = [
+              job.companyName,
+              job.cityLabel,
+              JOB_TYPE_LABELS[job.jobType as JobType],
+              `${job.vacancies} ${job.vacancies === 1 ? 'vacancy' : 'vacancies'}`,
+              `Posted ${formatDate(job.createdAt)}`,
+            ]
+              .filter(Boolean)
+              .join(' · ');
+            return (
+              <Link
+                key={job.id}
+                href={`${basePath}/${job.id}`}
+                className="border-border bg-surface hover:bg-surface-muted flex items-center justify-between rounded-xl border px-5 py-4 transition-colors"
+              >
+                <div className="flex items-start gap-3">
+                  <Briefcase className="text-fg-muted mt-0.5 size-5 shrink-0" />
+                  <div>
+                    <p className="text-fg font-medium">{job.title}</p>
+                    <p className="text-fg-muted text-sm">{meta}</p>
+                  </div>
+                </div>
+                <Badge tone={pill.tone}>{JOB_STATUS_LABELS[job.status]}</Badge>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+
+      <Pagination
+        page={pagination.page}
+        pageCount={pagination.pageCount}
+        pageSize={pagination.pageSize}
+        total={pagination.total}
+        onPageChange={(p) => update({ page: String(p) })}
+      />
     </div>
   );
 }
