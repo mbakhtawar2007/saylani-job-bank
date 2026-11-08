@@ -401,7 +401,7 @@ export async function WelcomePanel({ role }: { role: Role }) {
   if (role === 'SUPER_ADMIN') {
     const [r_all, r_active, r_co_all, r_co_ver, r_staff] = await Promise.all([
       listApplicants(actor, minQ('createdAt')),
-      listApplicants(actor, minQ('createdAt', { status: 'ACTIVE' })),
+      listApplicants(actor, minQ('createdAt', { status: ['ACTIVE'] })),
       listCompanies(actor, minQ('createdAt')),
       listCompanies(actor, minQ('createdAt', { status: 'VERIFIED' })),
       listStaff(actor, minQ('createdAt')),
@@ -473,9 +473,9 @@ export async function WelcomePanel({ role }: { role: Role }) {
   } else if (role === 'BRANCH_ADMIN') {
     const [r_all, r_active, r_draft, r_id_ver] = await Promise.all([
       listApplicants(actor, minQ('createdAt')),
-      listApplicants(actor, minQ('createdAt', { status: 'ACTIVE' })),
-      listApplicants(actor, minQ('createdAt', { status: 'DRAFT' })),
-      listApplicants(actor, minQ('createdAt', { identityStatus: 'VERIFIED' })),
+      listApplicants(actor, minQ('createdAt', { status: ['ACTIVE'] })),
+      listApplicants(actor, minQ('createdAt', { status: ['DRAFT'] })),
+      listApplicants(actor, minQ('createdAt', { identityStatus: ['VERIFIED'] })),
     ]);
     main = {
       icon: Users,
@@ -621,9 +621,9 @@ export async function WelcomePanel({ role }: { role: Role }) {
   } else if (role === 'STAFF') {
     const [r_all, r_active, r_draft, r_id_ver] = await Promise.all([
       listApplicants(actor, minQ('createdAt')),
-      listApplicants(actor, minQ('createdAt', { status: 'ACTIVE' })),
-      listApplicants(actor, minQ('createdAt', { status: 'DRAFT' })),
-      listApplicants(actor, minQ('createdAt', { identityStatus: 'VERIFIED' })),
+      listApplicants(actor, minQ('createdAt', { status: ['ACTIVE'] })),
+      listApplicants(actor, minQ('createdAt', { status: ['DRAFT'] })),
+      listApplicants(actor, minQ('createdAt', { identityStatus: ['VERIFIED'] })),
     ]);
     main = {
       icon: Users,
