@@ -87,7 +87,7 @@ describe('IssueApplicantTokenDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Generate token' }));
 
     await waitFor(() =>
-      expect(screen.getByText(/Enter a Pakistani phone number/)).toBeInTheDocument(),
+      expect(screen.getByText(/Enter a Pakistani mobile number/)).toBeInTheDocument(),
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });
