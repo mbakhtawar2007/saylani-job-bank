@@ -9,7 +9,16 @@ import {
   type CompanyStatus,
   type LegalStructure,
 } from '@jobbank/shared';
-import { ArrowLeft, ExternalLink, Pause, Pencil, Play, PlusCircle, Printer } from 'lucide-react';
+import {
+  ArrowLeft,
+  ClipboardCheck,
+  ExternalLink,
+  Pause,
+  Pencil,
+  Play,
+  PlusCircle,
+  Printer,
+} from 'lucide-react';
 import NextLink from 'next/link';
 import { usePathname } from 'next/navigation';
 import { createPortal } from 'react-dom';
@@ -85,6 +94,17 @@ export function StaffCompanyPanel({
           : pathname.includes('/branch-admin/')
             ? `/branch-admin/jobs/new?companyId=${company.id}`
             : null
+      : null;
+  // Self-verification entry point: a verifier may claim and verify a company
+  // they created themselves — no other verifier is needed — but the detail
+  // page itself has no verify action; the review flow lives on the queue
+  // page. Link there while the company is in an open verification round.
+  const reviewHref =
+    pathname.includes('/verifier/') &&
+    (
+      ['SUBMITTED', 'UNDER_VERIFICATION', 'INFO_REQUESTED', 'RESUBMITTED'] as CompanyStatus[]
+    ).includes(company.status)
+      ? `/verifier/queue/${company.id}`
       : null;
   const [company_, setCompany_] = useState(company);
   const [pending, setPending] = useState<string | null>(null);
@@ -435,6 +455,14 @@ export function StaffCompanyPanel({
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            {reviewHref && (
+              <Link href={reviewHref}>
+                <Button size="sm">
+                  <ClipboardCheck className="mr-1.5 size-4" />
+                  Review &amp; verify
+                </Button>
+              </Link>
+            )}
             {postJobHref && (
               <Link href={postJobHref}>
                 <Button size="sm">
