@@ -1,6 +1,6 @@
 import 'server-only';
 import { schema } from '@jobbank/db';
-import { and, count, desc, eq, gt, isNull } from 'drizzle-orm';
+import { and, count, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
 import { NotFoundError } from '@/domains/shared/errors';
 import type { Actor } from '@/domains/shared/scope';
 import { db, type DbExecutor } from '@/lib/db';
@@ -8,27 +8,43 @@ import { db, type DbExecutor } from '@/lib/db';
 const n = schema.notifications;
 const cm = schema.companyMembers;
 
-export type NotificationType =
-  | 'MATCH_SHORTLISTED'
-  | 'MATCH_HIRED'
-  | 'MATCH_REJECTED'
-  | 'OFFER_ACCEPTED'
-  | 'OFFER_DECLINED'
-  | 'INTERVIEW_SCHEDULED'
-  | 'INTERVIEW_POSTPONED'
-  | 'INTERVIEW_CANCELLED'
-  | 'INTERVIEW_RESCHEDULED'
-  | 'APPLICANT_REFERRED'
-  | 'JOB_REFERRED_TO_APPLICANT'
-  | 'APPLICATION_ON_HOLD'
-  | 'MESSAGE'
+/**
+ * Every notification type the app can still produce. Retired types are NOT
+ * listed here: a row whose type was removed (e.g. JOB_REFERRED, the
+ * job-to-employer referral deleted 2026-11-08) must never render again, so
+ * the read queries below filter to this list. Keep this list and the
+ * createNotification callers in sync — a type produced but not listed here
+ * would silently never be seen.
+ */
+export const KNOWN_NOTIFICATION_TYPES = [
+  'MATCH_SHORTLISTED',
+  'MATCH_HIRED',
+  'MATCH_REJECTED',
+  'OFFER_ACCEPTED',
+  'OFFER_DECLINED',
+  'INTERVIEW_SCHEDULED',
+  'INTERVIEW_POSTPONED',
+  'INTERVIEW_CANCELLED',
+  'INTERVIEW_RESCHEDULED',
+  'APPLICANT_REFERRED',
+  'JOB_REFERRED_TO_APPLICANT',
+  'APPLICATION_ON_HOLD',
+  'MESSAGE',
   // M25 — company-side events. The placement/notification types above were
   // the template: suspend/reinstate/transfer notify the company's employer
   // users, assign-verifier notifies the assigned verifier.
-  | 'COMPANY_SUSPENDED'
-  | 'COMPANY_REINSTATED'
-  | 'VERIFIER_ASSIGNED'
-  | 'COMPANY_TRANSFERRED';
+  'COMPANY_SUSPENDED',
+  'COMPANY_REINSTATED',
+  'VERIFIER_ASSIGNED',
+  'COMPANY_TRANSFERRED',
+] as const;
+
+export type NotificationType = (typeof KNOWN_NOTIFICATION_TYPES)[number];
+
+/** True for types the app still produces; false for retired ones (JOB_REFERRED, …). */
+export function isKnownNotificationType(type: string): type is NotificationType {
+  return (KNOWN_NOTIFICATION_TYPES as readonly string[]).includes(type);
+}
 
 export interface NotificationView {
   id: string;
@@ -100,7 +116,10 @@ export async function listMyNotifications(
   actor: Actor,
   query: ListNotificationsQuery,
 ): Promise<{ items: NotificationView[]; total: number; unread: number }> {
-  const where = eq(n.userId, actor.userId);
+  // Retired types never render: a leftover row (e.g. JOB_REFERRED from the
+  // removed job-to-employer referral) is invisible even before migration
+  // 0039 deletes it, and the counts match what the user actually sees.
+  const where = and(eq(n.userId, actor.userId), inArray(n.type, [...KNOWN_NOTIFICATION_TYPES]));
 
   const [totalRow, unreadRow] = await Promise.all([
     db.select({ total: count() }).from(n).where(where),
@@ -141,7 +160,13 @@ export async function getNewNotificationsSince(
   const rows = await db
     .select()
     .from(n)
-    .where(and(eq(n.userId, userId), gt(n.createdAt, since)))
+    .where(
+      and(
+        eq(n.userId, userId),
+        gt(n.createdAt, since),
+        inArray(n.type, [...KNOWN_NOTIFICATION_TYPES]),
+      ),
+    )
     .orderBy(desc(n.createdAt))
     .limit(20);
   return rows.map((r) => ({

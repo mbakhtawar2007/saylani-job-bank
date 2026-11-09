@@ -274,6 +274,13 @@
       "when": 1794236172766,
       "tag": "0038_remove_applicant_draft_status",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1794246910933,
+      "tag": "0039_delete_retired_job_referred_notifications",
+      "breakpoints": true
     }
   ]
 }

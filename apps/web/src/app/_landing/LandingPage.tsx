@@ -8,12 +8,14 @@ import {
   CheckCircle2,
   DollarSign,
   MapPin,
+  Menu,
   Plus,
   Search,
   Shield,
   Star,
   Upload,
   Users,
+  X,
   Zap,
 } from 'lucide-react';
 import NextLink from 'next/link';
@@ -623,6 +625,7 @@ export default function LandingPage({
   dashboardHref: string;
 }) {
   const [scrolled, setScrolled] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('All');
   const [hoveredCity, setHoveredCity] = useState<string | null>(null);
   const [howTab, setHowTab] = useState<'applicants' | 'employers'>('applicants');
@@ -698,6 +701,55 @@ export default function LandingPage({
 
         .how-tab { transition:all .2s; cursor:pointer; border:none; font-family:inherit; }
         .how-tab:hover { background:${C.surfaceAlt}!important; }
+
+        /* ── Responsive: tablet + phone (desktop styles above are untouched) ── */
+        .landing-menu-btn { display: none; }
+        .landing-mobile-menu { display: none; }
+        @media (min-width: 901px) { .landing-mobile-menu { display: none !important; } }
+        @media (max-width: 1023px) {
+          .landing-hero { grid-template-columns: 1fr !important; min-height: auto !important; }
+          .landing-hero-left { padding: 56px 24px 48px !important; }
+          .landing-hero-right { padding: 8px 24px 72px !important; }
+          .landing-hero-right > div { width: 100% !important; max-width: 480px !important; }
+          .landing-section { padding-left: 24px !important; padding-right: 24px !important; }
+          .landing-footer-top { padding-left: 24px !important; padding-right: 24px !important; }
+          .landing-footer-bottom { padding-left: 24px !important; padding-right: 24px !important; }
+          .landing-grid-2, .landing-grid-features, .landing-grid-about, .landing-grid-faq, .landing-grid-cta { grid-template-columns: 1fr !important; gap: 40px !important; }
+          .landing-grid-3 { grid-template-columns: repeat(2, 1fr) !important; }
+          .landing-grid-4 { grid-template-columns: repeat(2, 1fr) !important; }
+          .landing-grid-footer { grid-template-columns: 1fr 1fr !important; gap: 32px !important; }
+          .landing-flex-head { flex-wrap: wrap !important; gap: 20px !important; }
+          .landing-cta-banner { flex-wrap: wrap !important; gap: 20px !important; padding: 28px 24px !important; }
+          .landing-jobs-head { display: none !important; }
+          .landing-job-row { grid-template-columns: 1fr 1fr !important; row-gap: 12px !important; }
+          .landing-job-row > div:first-child { grid-column: 1 / -1 !important; }
+          .landing-job-row > a:last-child { grid-column: 1 / -1 !important; text-align: center !important; }
+        }
+        @media (max-width: 900px) {
+          .landing-nav { padding: 0 16px !important; }
+          .landing-nav > div:nth-child(2), .landing-nav > div:nth-child(3) { display: none !important; }
+          .landing-menu-btn { display: flex !important; }
+          .landing-mobile-menu { display: block; position: fixed; top: 66px; left: 0; right: 0; z-index: 499; background: #fff; border-bottom: 1px solid rgba(0,0,0,0.08); box-shadow: 0 16px 32px rgba(0,0,0,0.10); padding: 8px 20px 20px; }
+          .landing-mobile-menu .nav-link { display: block; padding: 12px 4px; font-size: 16px; }
+        }
+        @media (max-width: 640px) {
+          .landing-hero-left { padding: 40px 20px !important; }
+          .landing-hero-right { padding: 0 20px 56px !important; }
+          .landing-hero-search { flex-wrap: wrap !important; padding: 12px !important; gap: 12px !important; }
+          .landing-hero-search > a { width: 100% !important; text-align: center !important; justify-content: center !important; }
+          .landing-hero-stats { flex-wrap: wrap !important; gap: 20px !important; }
+          .landing-hero-stats > div:last-child { margin-left: 0 !important; }
+          .landing-section { padding-top: 56px !important; padding-bottom: 56px !important; padding-left: 20px !important; padding-right: 20px !important; }
+          .landing-footer-top { padding: 48px 20px 40px !important; }
+          .landing-footer-bottom { padding: 20px !important; }
+          .landing-grid-3, .landing-grid-4, .landing-grid-footer { grid-template-columns: 1fr !important; }
+          .landing-trust-row { flex-wrap: wrap !important; gap: 12px !important; }
+          .landing-job-row { grid-template-columns: 1fr !important; padding: 18px !important; }
+          .landing-job-row > div:first-child { grid-column: auto !important; }
+          .landing-job-row > a:last-child { grid-column: auto !important; }
+          .landing-cta-banner { padding: 24px 20px !important; }
+          .float-slow { right: 0 !important; }
+        }
       `}</style>
 
       {/* ═══ NAVBAR ═══════════════════════════════════════════════════════ */}
@@ -720,6 +772,7 @@ export default function LandingPage({
         }}
       >
         <div
+          className="landing-nav"
           style={{
             maxWidth: 1200,
             margin: '0 auto',
@@ -800,12 +853,82 @@ export default function LandingPage({
               Sign Up <ArrowRight size={13} />
             </NextLink>
           </div>
+          <button
+            type="button"
+            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((v) => !v)}
+            className="landing-menu-btn"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 40,
+              height: 40,
+              borderRadius: 10,
+              color: C.text,
+              flexShrink: 0,
+            }}
+          >
+            {menuOpen ? <X size={22} /> : <Menu size={22} />}
+          </button>
         </div>
       </nav>
+      {menuOpen && (
+        <div className="landing-mobile-menu">
+          {[
+            { label: 'Home', href: '#home' },
+            { label: 'About Us', href: '#about' },
+            { label: 'How It Works', href: '#how-it-works' },
+            { label: 'Contact', href: '#contact' },
+          ].map((l) => (
+            <a key={l.label} href={l.href} className="nav-link" onClick={() => setMenuOpen(false)}>
+              {l.label}
+            </a>
+          ))}
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <NextLink
+              href="/login"
+              style={{
+                flex: 1,
+                textAlign: 'center',
+                color: C.muted,
+                fontSize: 14,
+                fontWeight: 600,
+                textDecoration: 'none',
+                padding: '11px 16px',
+                borderRadius: 10,
+                border: '1px solid rgba(0,0,0,0.1)',
+              }}
+            >
+              Log In
+            </NextLink>
+            <NextLink
+              href="/register"
+              style={{
+                flex: 1,
+                textAlign: 'center',
+                background: C.dark,
+                color: C.lime,
+                fontSize: 14,
+                fontWeight: 700,
+                padding: '11px 16px',
+                borderRadius: 10,
+                textDecoration: 'none',
+              }}
+            >
+              Sign Up
+            </NextLink>
+          </div>
+        </div>
+      )}
 
       {/* ═══ HERO ═══════════════════════════════════════════════════════════ */}
       <section
         id="home"
+        className="landing-hero"
         style={{
           paddingTop: 66,
           minHeight: '100vh',
@@ -816,6 +939,7 @@ export default function LandingPage({
       >
         {/* LEFT */}
         <div
+          className="landing-hero-left"
           style={{
             background: C.surface,
             display: 'flex',
@@ -893,7 +1017,7 @@ export default function LandingPage({
           </p>
 
           <div
-            className="a3"
+            className="a3 landing-hero-search"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -959,7 +1083,7 @@ export default function LandingPage({
           </div>
 
           <div
-            className="a4"
+            className="a4 landing-hero-stats"
             style={{ display: 'flex', gap: 28, paddingTop: 28, borderTop: `1px solid ${C.border}` }}
           >
             {[['100%', 'Free']].map(([n, l]) => (
@@ -1016,6 +1140,7 @@ export default function LandingPage({
 
         {/* RIGHT — Pakistan map */}
         <div
+          className="landing-hero-right"
           style={{
             background: 'linear-gradient(150deg, #F2FAF5 0%, #E6F4EB 100%)',
             position: 'relative',
@@ -1376,7 +1501,7 @@ export default function LandingPage({
       </section>
 
       {/* ═══ TRUSTED COMPANIES ══════════════════════════════════════════════ */}
-      <section style={{ background: C.surface, padding: '72px 40px' }}>
+      <section className="landing-section" style={{ background: C.surface, padding: '72px 40px' }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 44 }}>
             <h2
@@ -1396,6 +1521,7 @@ export default function LandingPage({
             </p>
           </div>
           <div
+            className="landing-grid-3"
             style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(3, 1fr)',
@@ -1437,7 +1563,10 @@ export default function LandingPage({
               </div>
             ))}
           </div>
-          <div style={{ display: 'flex', gap: 40, justifyContent: 'center' }}>
+          <div
+            className="landing-trust-row"
+            style={{ display: 'flex', gap: 40, justifyContent: 'center' }}
+          >
             {['Direct Hiring Without Brokerage', '100% Pre-Evaluated Talent'].map((t) => (
               <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                 <CheckCircle2 size={15} color={C.primary} strokeWidth={2.5} />
@@ -1449,7 +1578,7 @@ export default function LandingPage({
       </section>
 
       {/* ═══ TWO PATHWAYS ═══════════════════════════════════════════════════ */}
-      <section style={{ background: C.bg, padding: '100px 40px' }}>
+      <section className="landing-section" style={{ background: C.bg, padding: '100px 40px' }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 56 }}>
             <div
@@ -1492,7 +1621,10 @@ export default function LandingPage({
               process simple and effective.
             </p>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+          <div
+            className="landing-grid-2"
+            style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}
+          >
             {/* Job Seeker card — with bg image */}
             <div
               className="path-card"
@@ -1733,9 +1865,14 @@ export default function LandingPage({
       </section>
 
       {/* ═══ SAMPLE JOB LISTINGS (labelled samples, not live data) ══════════ */}
-      <section id="jobs" style={{ background: C.surface, padding: '100px 40px' }}>
+      <section
+        id="jobs"
+        className="landing-section"
+        style={{ background: C.surface, padding: '100px 40px' }}
+      >
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <div
+            className="landing-flex-head"
             style={{
               display: 'flex',
               justifyContent: 'space-between',
@@ -1812,6 +1949,7 @@ export default function LandingPage({
           </div>
 
           <div
+            className="landing-jobs-head"
             style={{
               display: 'grid',
               gridTemplateColumns: '3fr 2fr 1.5fr 1.5fr 1.2fr 140px',
@@ -1840,7 +1978,7 @@ export default function LandingPage({
             {JOBS.filter((j) => activeTab === 'All' || j.type === activeTab).map((job) => (
               <div
                 key={job.title}
-                className="job-row"
+                className="job-row landing-job-row"
                 style={{
                   display: 'grid',
                   gridTemplateColumns: '3fr 2fr 1.5fr 1.5fr 1.2fr 140px',
@@ -1962,9 +2100,10 @@ export default function LandingPage({
       </section>
 
       {/* ═══ FEATURES ═══════════════════════════════════════════════════════ */}
-      <section style={{ background: C.bg, padding: '100px 40px' }}>
+      <section className="landing-section" style={{ background: C.bg, padding: '100px 40px' }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <div
+            className="landing-grid-features"
             style={{
               display: 'grid',
               gridTemplateColumns: '44% 1fr',
@@ -2009,7 +2148,10 @@ export default function LandingPage({
               matching, and Saylani endorsement to help you stand out.
             </p>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20 }}>
+          <div
+            className="landing-grid-4"
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20 }}
+          >
             {FEATURES.map((f, i) => (
               <div
                 key={f.title}
@@ -2077,7 +2219,11 @@ export default function LandingPage({
       </section>
 
       {/* ═══ HOW IT WORKS (tabbed) ══════════════════════════════════════════ */}
-      <section id="how-it-works" style={{ background: C.surface, padding: '100px 40px' }}>
+      <section
+        id="how-it-works"
+        className="landing-section"
+        style={{ background: C.surface, padding: '100px 40px' }}
+      >
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 48 }}>
             <div
@@ -2140,7 +2286,10 @@ export default function LandingPage({
           </div>
 
           {howTab === 'applicants' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20 }}>
+            <div
+              className="landing-grid-4"
+              style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20 }}
+            >
               {STEPS.map((step, i) => (
                 <div
                   key={step.n}
@@ -2206,7 +2355,10 @@ export default function LandingPage({
           )}
 
           {howTab === 'employers' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20 }}>
+            <div
+              className="landing-grid-4"
+              style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20 }}
+            >
               {[
                 {
                   n: '01',
@@ -2297,6 +2449,7 @@ export default function LandingPage({
           )}
 
           <div
+            className="landing-cta-banner"
             style={{
               marginTop: 40,
               background: C.bg,
@@ -2347,8 +2500,13 @@ export default function LandingPage({
       </section>
 
       {/* ═══ ABOUT ══════════════════════════════════════════════════════════ */}
-      <section id="about" style={{ background: C.bg, padding: '100px 40px' }}>
+      <section
+        id="about"
+        className="landing-section"
+        style={{ background: C.bg, padding: '100px 40px' }}
+      >
         <div
+          className="landing-grid-about"
           style={{
             maxWidth: 1200,
             margin: '0 auto',
@@ -2463,8 +2621,9 @@ export default function LandingPage({
       </section>
 
       {/* ═══ FAQ ════════════════════════════════════════════════════════════ */}
-      <section style={{ background: C.surface, padding: '100px 40px' }}>
+      <section className="landing-section" style={{ background: C.surface, padding: '100px 40px' }}>
         <div
+          className="landing-grid-faq"
           style={{
             maxWidth: 1200,
             margin: '0 auto',
@@ -2537,9 +2696,13 @@ export default function LandingPage({
       </section>
 
       {/* ═══ CTA — with phone mockup ════════════════════════════════════════ */}
-      <section style={{ background: C.surface, padding: '0 40px 100px' }}>
+      <section
+        className="landing-section"
+        style={{ background: C.surface, padding: '0 40px 100px' }}
+      >
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <div
+            className="landing-grid-cta"
             style={{
               background: C.dark,
               borderRadius: 36,
@@ -2691,8 +2854,14 @@ export default function LandingPage({
       {/* ═══ FOOTER ═════════════════════════════════════════════════════════ */}
       <footer id="contact" style={{ background: '#060d08' }}>
         {/* Top footer */}
-        <div style={{ padding: '72px 40px 52px', maxWidth: 1200, margin: '0 auto' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '2.6fr 1fr 1fr 1fr', gap: 52 }}>
+        <div
+          className="landing-footer-top"
+          style={{ padding: '72px 40px 52px', maxWidth: 1200, margin: '0 auto' }}
+        >
+          <div
+            className="landing-grid-footer"
+            style={{ display: 'grid', gridTemplateColumns: '2.6fr 1fr 1fr 1fr', gap: 52 }}
+          >
             {/* Brand col */}
             <div>
               <NextLink
@@ -2811,6 +2980,7 @@ export default function LandingPage({
 
         {/* Bottom bar */}
         <div
+          className="landing-footer-bottom"
           style={{
             padding: '24px 40px',
             maxWidth: 1200,

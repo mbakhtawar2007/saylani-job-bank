@@ -98,15 +98,23 @@ const SESSION_COOKIE_NAMES = ['jb.session_token', '__Secure-jb.session_token'];
  * CSRF defence for cookie-authenticated writes.
  *
  * Browsers always send Origin on unsafe (POST/PUT/PATCH/DELETE) requests, and always
- * send Sec-Fetch-Site. So, for unsafe methods:
- * - Sec-Fetch-Site: cross-site → refuse.
+ * send Sec-Fetch-Site. Origin is the authoritative signal — a cross-site page cannot
+ * forge it (it is a forbidden header name), so a request whose Origin is this app is
+ * genuine however Sec-Fetch-Site classifies it. That matters for LAN access: when the
+ * app is reached by its LAN IP (e.g. a phone on http://192.168.0.150:3000) while the
+ * configured app URL is still http://localhost:3000, Chrome can report
+ * Sec-Fetch-Site: cross-site for the same-origin fetch, and blocking on that header
+ * first locked every phone sign-in out with "Cross-site request blocked". So, for
+ * unsafe methods:
  * - Origin present → it must be this app (same-origin or the configured app URL).
- * - Origin absent but Sec-Fetch-Site present → a browser request with its Origin
- *   stripped (proxy) or forged → refuse and log it. A page cannot suppress these
- *   headers: both are forbidden header names, so a cross-site page cannot hide
- *   that the request came from a browser.
- * - Origin absent and Referer present → the Referer origin must be this app
+ *   A matching Origin passes even if Sec-Fetch-Site says cross-site.
+ * - Origin absent and Sec-Fetch-Site: cross-site → refuse.
+ * - Origin absent but Referer present → the Referer origin must be this app
  *   (covers older browsers that send no Origin on same-origin POSTs).
+ * - Origin absent, Referer absent, Sec-Fetch-Site present → a browser request with
+ *   its Origin stripped (proxy) or forged → refuse and log it. A page cannot
+ *   suppress these headers: both are forbidden header names, so a cross-site page
+ *   cannot hide that the request came from a browser.
  * - Neither Origin, Referer nor Sec-Fetch-Site → not a browser at all. The app's
  *   supported non-browser callers (in-process test harnesses, the Playwright
  *   global-setup warm-up, load-test scripts, curl) send no Origin and are allowed
@@ -118,10 +126,6 @@ const SESSION_COOKIE_NAMES = ['jb.session_token', '__Secure-jb.session_token'];
  */
 function assertSameOrigin(request: Request, url: URL, log: Logger): void {
   if (!UNSAFE_METHODS.has(request.method)) return;
-  const fetchSite = request.headers.get('sec-fetch-site');
-  if (fetchSite === 'cross-site') {
-    throw new ForbiddenError('Cross-site request blocked');
-  }
   const allowed = new Set([url.origin]);
   try {
     allowed.add(new URL(env.NEXT_PUBLIC_APP_URL).origin);
@@ -132,6 +136,10 @@ function assertSameOrigin(request: Request, url: URL, log: Logger): void {
   if (origin) {
     if (!allowed.has(origin)) throw new ForbiddenError('Cross-site request blocked');
     return;
+  }
+  const fetchSite = request.headers.get('sec-fetch-site');
+  if (fetchSite === 'cross-site') {
+    throw new ForbiddenError('Cross-site request blocked');
   }
   const referer = request.headers.get('referer');
   if (referer) {

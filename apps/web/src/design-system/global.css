@@ -238,6 +238,13 @@
     -webkit-text-size-adjust: 100%;
   }
 
+  /* Landing + dashboard pages must never scroll sideways on a phone:
+     a single wide element used to push the whole page off-screen. */
+  html,
+  body {
+    overflow-x: hidden;
+  }
+
   body {
     background-color: var(--bg);
     color: var(--fg);

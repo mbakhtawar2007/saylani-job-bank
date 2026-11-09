@@ -85,6 +85,60 @@ describe('apiHandler — auth and roles', () => {
   });
 });
 
+describe('apiHandler — CSRF origin check', () => {
+  const route = apiHandler({
+    auth: 'public',
+    handler: async () => ok({ hello: 'world' }),
+  });
+
+  function postTo(url: string, headers: Record<string, string> = {}) {
+    return new Request(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: '{}',
+    });
+  }
+
+  it('allows a LAN-IP sign-in whose Origin matches the request URL even when Sec-Fetch-Site says cross-site', async () => {
+    const res = await read(
+      await route(
+        postTo('http://192.168.0.150:3000/api/v1/auth/login', {
+          origin: 'http://192.168.0.150:3000',
+          'sec-fetch-site': 'cross-site',
+        }),
+        noParams,
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ data: { hello: 'world' } });
+  });
+
+  it('still blocks a genuinely cross-site Origin', async () => {
+    const res = await read(
+      await route(
+        postTo('http://localhost/api/v1/auth/login', {
+          origin: 'https://evil.example',
+          'sec-fetch-site': 'cross-site',
+        }),
+        noParams,
+      ),
+    );
+    expect(res.status).toBe(403);
+    expect(res.body.error.message).toBe('Cross-site request blocked');
+  });
+
+  it('still blocks an origin-less cross-site request', async () => {
+    const res = await read(
+      await route(
+        postTo('http://localhost/api/v1/auth/login', { 'sec-fetch-site': 'cross-site' }),
+        noParams,
+      ),
+    );
+    expect(res.status).toBe(403);
+    expect(res.body.error.message).toBe('Cross-site request blocked');
+  });
+});
+
 describe('apiHandler — raw responses', () => {
   it('adds correlation id and no-store to raw responses unless the route sets caching', async () => {
     const raw = apiHandler({
