@@ -2,8 +2,8 @@
 // Employer-side interview scheduling, decisions, applicant refusal, and chat.
 
 import { schema } from '@jobbank/db';
-import type { PaginationMeta } from '@jobbank/shared';
-import { and, asc, count, eq, or } from 'drizzle-orm';
+import { ROLE_LABELS, ROLES, type PaginationMeta, type Role } from '@jobbank/shared';
+import { and, asc, count, desc, eq, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
 import { paginationMeta } from '@/domains/shared/pagination';
@@ -22,7 +22,7 @@ import {
 import { jobMachine } from '@/domains/job';
 import { requireReasonCode } from '@/domains/matching';
 import { db } from '@/lib/db';
-import { maskPkMobile } from '@/lib/format/phone';
+import { formatPkMobileDisplay } from '@/lib/format/phone';
 import { createNotification, notifyCompanyEmployers } from '@/domains/notifications';
 import type { RequestContext } from '@/domains/shared/audit';
 import {
@@ -31,7 +31,6 @@ import {
   type ApplicationStatus,
   type PlacementListQuery,
 } from './index';
-import { assertFutureInterviewAt, futureInterviewAtSchema } from './interview-date';
 import { lockAndTransitionApplication } from './machine';
 
 type SignedIn = RequestContext & { actor: Actor };
@@ -41,19 +40,61 @@ const am = schema.applicationMessages;
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
+export interface ReferredBySummary {
+  name: string;
+  roleLabel: string | null;
+  title: string | null;
+  branchName: string | null;
+  referredAt: string;
+}
+
 export interface ApplicantSummary {
   id: string;
   fullName: string;
+  fatherName: string;
+  dateOfBirth: string;
+  gender: string;
+  email: string | null;
+  identityStatus: string;
   cityCode: string | null;
+  addressLine: string | null;
+  areaCode: string | null;
+  /** Full phone, unmasked — the employer contacts the candidate directly. */
   phone: string | null;
+  education: {
+    levelCode: string;
+    institution: string | null;
+    fieldOfStudy: string | null;
+    completionYear: number | null;
+    isCurrent: boolean;
+    grade: string | null;
+  }[];
   skills: { skillCode: string; level: string; years: number }[];
+  languages: { languageCode: string; proficiency: string }[];
+  certifications: {
+    name: string;
+    issuer: string | null;
+    issuedMonth: string | null;
+    expiresMonth: string | null;
+  }[];
+  preferences: {
+    categoryCodes: string[];
+    minSalaryPkr: number | null;
+    shifts: string[];
+    jobTypes: string[];
+    availableFrom: string | null;
+  } | null;
   experience: {
     employerName: string;
     jobTitle: string;
+    categoryCode: string | null;
     startMonth: string;
     endMonth: string | null;
     isCurrent: boolean;
+    description: string | null;
   }[];
+  /** The staff member who referred this candidate to the employer. */
+  referredBy: ReferredBySummary | null;
 }
 
 export interface ApplicationWithApplicant extends ApplicationView {
@@ -71,42 +112,6 @@ export interface MessageView {
 }
 
 // ─── Schemas ──────────────────────────────────────────────────────────────
-
-export const scheduleEmployerInterviewSchema = z.object({
-  interviewAt: futureInterviewAtSchema,
-  interviewLocation: z.string().trim().min(2).max(300).optional(),
-  interviewNote: z.string().trim().max(500).optional(),
-});
-export type ScheduleEmployerInterviewInput = z.infer<typeof scheduleEmployerInterviewSchema>;
-
-export const EMPLOYER_INTERVIEW_UPDATE_STATUSES = [
-  'EMPLOYER_INTERVIEW_SCHEDULED',
-  'EMPLOYER_INTERVIEW_POSTPONED',
-  'EMPLOYER_INTERVIEW_CANCELLED',
-] as const;
-export type EmployerInterviewUpdateStatus = (typeof EMPLOYER_INTERVIEW_UPDATE_STATUSES)[number];
-
-export const updateEmployerInterviewStatusSchema = z
-  .object({
-    status: z.enum(EMPLOYER_INTERVIEW_UPDATE_STATUSES),
-    interviewAt: futureInterviewAtSchema.optional(),
-    interviewLocation: z.string().trim().max(300).optional(),
-    interviewNote: z.string().trim().max(500).optional(),
-  })
-  .superRefine((v, ctx) => {
-    // M19 — rescheduling back to SCHEDULED without a new date would silently
-    // keep the old date; the new date is required.
-    if (v.status === 'EMPLOYER_INTERVIEW_SCHEDULED' && !v.interviewAt) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['interviewAt'],
-        message: 'Provide a new interview date & time when rescheduling',
-      });
-    }
-  });
-export type UpdateEmployerInterviewStatusInput = z.infer<
-  typeof updateEmployerInterviewStatusSchema
->;
 
 export const EMPLOYER_DECISION_OPTIONS = ['HOLD', 'ACCEPTED', 'REJECTED'] as const;
 export type EmployerDecisionOption = (typeof EMPLOYER_DECISION_OPTIONS)[number];
@@ -141,11 +146,79 @@ export type RefuseJobOfferInput = z.infer<typeof refuseJobOfferSchema>;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
-async function getApplicantSummary(applicantId: string): Promise<ApplicantSummary | null> {
+/**
+ * Who referred this candidate to the employer. The referral itself is
+ * audited as `application.referred` with the staff member who sent it —
+ * that is the true referrer, even when a different staff member
+ * shortlisted the candidate first. Falls back to the application creator
+ * (the shortlister) when no referral audit row exists.
+ */
+async function getReferredBy(
+  application: typeof ap.$inferSelect,
+): Promise<ReferredBySummary | null> {
+  const [referral] = await db
+    .select({
+      actorUserId: schema.auditLogs.actorUserId,
+      actorRole: schema.auditLogs.actorRole,
+      branchId: schema.auditLogs.branchId,
+      occurredAt: schema.auditLogs.occurredAt,
+    })
+    .from(schema.auditLogs)
+    .where(
+      and(
+        eq(schema.auditLogs.action, 'application.referred'),
+        eq(schema.auditLogs.entityType, 'application'),
+        eq(schema.auditLogs.entityId, application.id),
+      ),
+    )
+    .orderBy(desc(schema.auditLogs.occurredAt), desc(schema.auditLogs.id))
+    .limit(1);
+
+  const referrerId = referral?.actorUserId ?? application.createdBy;
+  if (!referrerId) return null;
+
+  const [userRow] = await db
+    .select({ name: schema.users.name, title: schema.users.title })
+    .from(schema.users)
+    .where(eq(schema.users.id, referrerId))
+    .limit(1);
+  if (!userRow) return null;
+
+  const branchId = referral?.branchId ?? application.branchId;
+  const [branchRow] = branchId
+    ? await db
+        .select({ name: schema.branches.name })
+        .from(schema.branches)
+        .where(eq(schema.branches.id, branchId))
+        .limit(1)
+    : [undefined];
+
+  const role = referral?.actorRole
+    ? ROLES.find((r: Role) => referral.actorRole?.split(',').includes(r))
+    : undefined;
+
+  return {
+    name: userRow.name,
+    roleLabel: role ? ROLE_LABELS[role] : null,
+    title: userRow.title,
+    branchName: branchRow?.name ?? null,
+    referredAt: (referral?.occurredAt ?? application.updatedAt).toISOString(),
+  };
+}
+
+async function getApplicantSummary(
+  applicantId: string,
+  application: typeof ap.$inferSelect,
+): Promise<ApplicantSummary | null> {
   const [applicantRow] = await db
     .select({
       id: schema.applicants.id,
       fullName: schema.applicants.fullName,
+      fatherName: schema.applicants.fatherName,
+      dateOfBirth: schema.applicants.dateOfBirth,
+      gender: schema.applicants.gender,
+      email: schema.applicants.email,
+      identityStatus: schema.applicants.identityStatus,
       userId: schema.applicants.userId,
     })
     .from(schema.applicants)
@@ -154,9 +227,23 @@ async function getApplicantSummary(applicantId: string): Promise<ApplicantSummar
 
   if (!applicantRow) return null;
 
-  const [address, phone, skills, experience] = await Promise.all([
+  const [
+    address,
+    phone,
+    skills,
+    experience,
+    education,
+    languages,
+    certifications,
+    preferences,
+    referredBy,
+  ] = await Promise.all([
     db
-      .select({ cityCode: schema.applicantAddresses.cityCode })
+      .select({
+        cityCode: schema.applicantAddresses.cityCode,
+        addressLine: schema.applicantAddresses.addressLine,
+        areaCode: schema.applicantAddresses.areaCode,
+      })
       .from(schema.applicantAddresses)
       .where(eq(schema.applicantAddresses.applicantId, applicantId))
       .limit(1),
@@ -177,33 +264,99 @@ async function getApplicantSummary(applicantId: string): Promise<ApplicantSummar
       .select({
         employerName: schema.applicantExperience.employerName,
         jobTitle: schema.applicantExperience.jobTitle,
+        categoryCode: schema.applicantExperience.categoryCode,
         startMonth: schema.applicantExperience.startMonth,
         endMonth: schema.applicantExperience.endMonth,
         isCurrent: schema.applicantExperience.isCurrent,
+        description: schema.applicantExperience.description,
       })
       .from(schema.applicantExperience)
       .where(eq(schema.applicantExperience.applicantId, applicantId))
       .orderBy(asc(schema.applicantExperience.startMonth)),
+    db
+      .select({
+        levelCode: schema.applicantEducation.levelCode,
+        institution: schema.applicantEducation.institution,
+        fieldOfStudy: schema.applicantEducation.fieldOfStudy,
+        completionYear: schema.applicantEducation.completionYear,
+        isCurrent: schema.applicantEducation.isCurrent,
+        grade: schema.applicantEducation.grade,
+      })
+      .from(schema.applicantEducation)
+      .where(eq(schema.applicantEducation.applicantId, applicantId))
+      .orderBy(asc(schema.applicantEducation.sortOrder)),
+    db
+      .select({
+        languageCode: schema.applicantLanguages.languageCode,
+        proficiency: schema.applicantLanguages.proficiency,
+      })
+      .from(schema.applicantLanguages)
+      .where(eq(schema.applicantLanguages.applicantId, applicantId)),
+    db
+      .select({
+        name: schema.applicantCertifications.name,
+        issuer: schema.applicantCertifications.issuer,
+        issuedMonth: schema.applicantCertifications.issuedMonth,
+        expiresMonth: schema.applicantCertifications.expiresMonth,
+      })
+      .from(schema.applicantCertifications)
+      .where(eq(schema.applicantCertifications.applicantId, applicantId))
+      .orderBy(asc(schema.applicantCertifications.sortOrder)),
+    db
+      .select({
+        categoryCodes: schema.applicantPreferences.categoryCodes,
+        minSalaryPkr: schema.applicantPreferences.minSalaryPkr,
+        shifts: schema.applicantPreferences.shifts,
+        jobTypes: schema.applicantPreferences.jobTypes,
+        availableFrom: schema.applicantPreferences.availableFrom,
+      })
+      .from(schema.applicantPreferences)
+      .where(eq(schema.applicantPreferences.applicantId, applicantId))
+      .limit(1),
+    getReferredBy(application),
   ]);
 
   return {
     id: applicantRow.id,
     fullName: applicantRow.fullName,
+    fatherName: applicantRow.fatherName,
+    dateOfBirth: applicantRow.dateOfBirth,
+    gender: applicantRow.gender,
+    email: applicantRow.email,
+    identityStatus: applicantRow.identityStatus,
     cityCode: address[0]?.cityCode ?? null,
-    // M11 (2026-11-08): employers see a masked phone — recognisable, not
-    // callable. The employer's contact path is the in-app application chat
-    // (sendMessage in this file), so masking removes off-platform contact
-    // without removing contact. Staff views do not use this summary, so
-    // staff still see the full number where they need it.
-    phone: phone[0]?.phone ? maskPkMobile(phone[0].phone) : null,
+    addressLine: address[0]?.addressLine ?? null,
+    areaCode: address[0]?.areaCode ?? null,
+    // Full phone, unmasked: the employer contacts the candidate directly.
+    // CNIC is deliberately never selected here — PRD rule: only the
+    // applicant and Job Bank staff ever see it.
+    phone: phone[0]?.phone ? formatPkMobileDisplay(phone[0].phone) : null,
+    education: education.map((e) => ({ ...e })),
     skills: skills.map((s) => ({ skillCode: s.skillCode, level: s.level, years: s.years })),
+    languages: languages.map((l) => ({
+      languageCode: l.languageCode,
+      proficiency: l.proficiency,
+    })),
+    certifications: certifications.map((c) => ({ ...c })),
+    preferences: preferences[0]
+      ? {
+          categoryCodes: preferences[0].categoryCodes,
+          minSalaryPkr: preferences[0].minSalaryPkr,
+          shifts: preferences[0].shifts,
+          jobTypes: preferences[0].jobTypes,
+          availableFrom: preferences[0].availableFrom,
+        }
+      : null,
     experience: experience.map((e) => ({
       employerName: e.employerName,
       jobTitle: e.jobTitle,
+      categoryCode: e.categoryCode,
       startMonth: e.startMonth,
       endMonth: e.endMonth,
       isCurrent: e.isCurrent,
+      description: e.description,
     })),
+    referredBy,
   };
 }
 
@@ -324,214 +477,13 @@ export async function getApplicationForEmployer(
   assertEmployerCanView(row.status, applicationId);
   const [view, applicant] = await Promise.all([
     buildView(row),
-    getApplicantSummary(row.applicantId),
+    getApplicantSummary(row.applicantId, row),
   ]);
   if (!applicant) throw new NotFoundError('Applicant', row.applicantId);
   return { ...view, applicant };
 }
 
 // ─── Commands ─────────────────────────────────────────────────────────────
-
-/** Employer: schedule an employer-side interview for a referred candidate. */
-export async function scheduleEmployerInterview(
-  ctx: SignedIn,
-  applicationId: string,
-  input: ScheduleEmployerInterviewInput,
-): Promise<ApplicationView> {
-  assertPermission(ctx.actor, 'interview:schedule_employer');
-
-  const row = await assertEmployerOwnsApplication(ctx.actor, applicationId);
-
-  const schedulable: ApplicationStatus[] = [
-    'FORWARDED',
-    'EMPLOYER_INTERVIEW_POSTPONED',
-    'EMPLOYER_INTERVIEW_CANCELLED',
-  ];
-  if (!schedulable.includes(row.status))
-    throw new ForbiddenError(
-      'Application must be FORWARDED or have a postponed/cancelled employer interview to schedule',
-    );
-
-  // H11 — service-level backstop: the schema already rejects past dates, but
-  // direct callers bypass it.
-  assertFutureInterviewAt(input.interviewAt);
-
-  const [jobRow] = await db
-    .select({ title: schema.jobs.title })
-    .from(schema.jobs)
-    .where(eq(schema.jobs.id, row.jobId))
-    .limit(1);
-
-  const [companyRow] = await db
-    .select({ name: schema.companies.tradeName, legal: schema.companies.legalName })
-    .from(schema.companies)
-    .where(eq(schema.companies.id, row.companyId))
-    .limit(1);
-
-  const companyName = companyRow?.name ?? companyRow?.legal ?? '';
-  const jobTitle = jobRow?.title ?? '';
-  const interviewDate = new Date(input.interviewAt);
-
-  const view = await runCommand(ctx, async ({ tx, audit }) => {
-    const { to } = await lockAndTransitionApplication(
-      tx,
-      applicationId,
-      'SCHEDULE_EMPLOYER_INTERVIEW',
-    );
-    const [updated] = await tx
-      .update(ap)
-      .set({
-        status: to,
-        employerInterviewAt: interviewDate,
-        employerInterviewLocation: input.interviewLocation ?? null,
-        employerInterviewNote: input.interviewNote ?? null,
-        employerScheduledBy: ctx.actor.userId,
-        updatedAt: new Date(),
-      })
-      .where(eq(ap.id, applicationId))
-      .returning();
-
-    audit({
-      action: 'application.employer_interview_scheduled',
-      entityType: 'application',
-      entityId: applicationId,
-      branchId: row.branchId,
-    });
-    return updated!;
-  }).then(buildView);
-
-  // Notify applicant
-  const [applicantRow] = await db
-    .select({ userId: schema.applicants.userId })
-    .from(schema.applicants)
-    .where(eq(schema.applicants.id, row.applicantId))
-    .limit(1);
-
-  if (applicantRow) {
-    void createNotification(db, {
-      userId: applicantRow.userId,
-      type: 'INTERVIEW_SCHEDULED',
-      title: `Interview scheduled — ${jobTitle}`,
-      body: `Your interview with ${companyName} is on ${interviewDate.toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' })}${input.interviewLocation ? ` at ${input.interviewLocation}` : ''}. Scheduled by the employer via Job Bank.`,
-      data: { applicationId, jobTitle, companyName },
-    }).catch(() => null);
-  }
-
-  return view;
-}
-
-/** Employer: update the status of an employer-side interview. */
-export async function updateEmployerInterviewStatus(
-  ctx: SignedIn,
-  applicationId: string,
-  input: UpdateEmployerInterviewStatusInput,
-): Promise<ApplicationView> {
-  assertPermission(ctx.actor, 'interview:schedule_employer');
-
-  const row = await assertEmployerOwnsApplication(ctx.actor, applicationId);
-
-  const updatable: ApplicationStatus[] = [
-    'EMPLOYER_INTERVIEW_SCHEDULED',
-    'EMPLOYER_INTERVIEW_POSTPONED',
-    'EMPLOYER_INTERVIEW_CANCELLED',
-  ];
-  if (!updatable.includes(row.status))
-    throw new ForbiddenError('Can only update status for applications with an employer interview');
-
-  // H11 — a supplied new date must be in the future.
-  if (input.status === 'EMPLOYER_INTERVIEW_SCHEDULED' && input.interviewAt) {
-    assertFutureInterviewAt(input.interviewAt);
-  }
-  // M19 — service-level backstop for the schema rule above: rescheduling
-  // without a new date must not silently keep the old date.
-  if (input.status === 'EMPLOYER_INTERVIEW_SCHEDULED' && !input.interviewAt) {
-    throw new ValidationError([
-      { path: 'interviewAt', message: 'Provide a new interview date & time when rescheduling' },
-    ]);
-  }
-
-  const patch: Partial<typeof ap.$inferInsert> = {
-    status: input.status,
-    updatedAt: new Date(),
-  };
-  if (input.status === 'EMPLOYER_INTERVIEW_SCHEDULED') {
-    if (input.interviewAt) patch.employerInterviewAt = new Date(input.interviewAt);
-    if (input.interviewLocation !== undefined)
-      patch.employerInterviewLocation = input.interviewLocation;
-    if (input.interviewNote !== undefined) patch.employerInterviewNote = input.interviewNote;
-  }
-
-  const view = await runCommand(ctx, async ({ tx, audit }) => {
-    const event =
-      input.status === 'EMPLOYER_INTERVIEW_SCHEDULED'
-        ? 'RESCHEDULE_EMPLOYER_INTERVIEW'
-        : input.status === 'EMPLOYER_INTERVIEW_POSTPONED'
-          ? 'POSTPONE_EMPLOYER_INTERVIEW'
-          : 'CANCEL_EMPLOYER_INTERVIEW';
-    const { to } = await lockAndTransitionApplication(tx, applicationId, event);
-    patch.status = to;
-    const [updated] = await tx.update(ap).set(patch).where(eq(ap.id, applicationId)).returning();
-    audit({
-      action: 'application.employer_interview_status_updated',
-      entityType: 'application',
-      entityId: applicationId,
-      branchId: row.branchId,
-      metadata: { status: input.status },
-    });
-    return updated!;
-  }).then(buildView);
-
-  // Notify applicant
-  const [applicantRow] = await db
-    .select({ userId: schema.applicants.userId })
-    .from(schema.applicants)
-    .where(eq(schema.applicants.id, row.applicantId))
-    .limit(1);
-
-  if (applicantRow) {
-    const [jobRow] = await db
-      .select({ title: schema.jobs.title })
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, row.jobId))
-      .limit(1);
-    const jobTitle = jobRow?.title ?? '';
-
-    type NotifType = 'INTERVIEW_POSTPONED' | 'INTERVIEW_CANCELLED' | 'INTERVIEW_RESCHEDULED';
-    const notifType: NotifType =
-      input.status === 'EMPLOYER_INTERVIEW_POSTPONED'
-        ? 'INTERVIEW_POSTPONED'
-        : input.status === 'EMPLOYER_INTERVIEW_CANCELLED'
-          ? 'INTERVIEW_CANCELLED'
-          : 'INTERVIEW_RESCHEDULED';
-
-    const copy: Record<NotifType, { title: string; body: string }> = {
-      INTERVIEW_POSTPONED: {
-        title: `Employer interview postponed — ${jobTitle}`,
-        body: 'Your employer interview has been postponed. They will contact you with a new time.',
-      },
-      INTERVIEW_CANCELLED: {
-        title: `Employer interview cancelled — ${jobTitle}`,
-        body: 'Your scheduled employer interview has been cancelled.',
-      },
-      INTERVIEW_RESCHEDULED: {
-        title: `Employer interview rescheduled — ${jobTitle}`,
-        body: view.employerInterviewAt
-          ? `Your employer interview is now on ${new Date(view.employerInterviewAt).toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' })}${view.employerInterviewLocation ? ` at ${view.employerInterviewLocation}` : ''}.`
-          : 'Your employer interview has been rescheduled.',
-      },
-    };
-
-    void createNotification(db, {
-      userId: applicantRow.userId,
-      type: notifType,
-      title: copy[notifType].title,
-      body: copy[notifType].body,
-      data: { applicationId, jobTitle },
-    }).catch(() => null);
-  }
-
-  return view;
-}
 
 /** Employer: record a hiring decision (HOLD / ACCEPTED / REJECTED). */
 export async function recordEmployerDecision(

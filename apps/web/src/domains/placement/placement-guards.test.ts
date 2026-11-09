@@ -12,8 +12,6 @@ import {
   assertEmployerCanView,
   recordEmployerDecisionSchema,
   refuseJobOfferSchema,
-  scheduleEmployerInterviewSchema,
-  updateEmployerInterviewStatusSchema,
 } from './employer';
 
 // H11 — interviews must be in the future (5-minute grace for clock skew).
@@ -39,20 +37,6 @@ describe('H11 future interview dates', () => {
         interviewAt: future,
       }).success,
     ).toBe(true);
-  });
-
-  it('employer schedule schema rejects a past interviewAt', () => {
-    expect(scheduleEmployerInterviewSchema.safeParse({ interviewAt: past }).success).toBe(false);
-    expect(scheduleEmployerInterviewSchema.safeParse({ interviewAt: future }).success).toBe(true);
-  });
-
-  it('employer update schema rejects a past interviewAt when one is supplied', () => {
-    expect(
-      updateEmployerInterviewStatusSchema.safeParse({
-        status: 'EMPLOYER_INTERVIEW_SCHEDULED',
-        interviewAt: past,
-      }).success,
-    ).toBe(false);
   });
 
   it('a date a minute ago passes (clock-skew grace)', () => {
@@ -132,7 +116,7 @@ describe('M19/H19 decision + reschedule + refusal guards', () => {
     expect(recordEmployerDecisionSchema.safeParse({ decision: 'ACCEPTED' }).success).toBe(true);
   });
 
-  it('rescheduling back to SCHEDULED requires a new interviewAt (staff + employer)', () => {
+  it('rescheduling back to SCHEDULED requires a new interviewAt (staff)', () => {
     expect(updateInterviewStatusSchema.safeParse({ status: 'INTERVIEW_SCHEDULED' }).success).toBe(
       false,
     );
@@ -143,16 +127,6 @@ describe('M19/H19 decision + reschedule + refusal guards', () => {
     expect(updateInterviewStatusSchema.safeParse({ status: 'INTERVIEW_POSTPONED' }).success).toBe(
       true,
     );
-    expect(
-      updateEmployerInterviewStatusSchema.safeParse({ status: 'EMPLOYER_INTERVIEW_SCHEDULED' })
-        .success,
-    ).toBe(false);
-    expect(
-      updateEmployerInterviewStatusSchema.safeParse({
-        status: 'EMPLOYER_INTERVIEW_SCHEDULED',
-        interviewAt: future,
-      }).success,
-    ).toBe(true);
   });
 
   it('refusing an offer needs a REFUSAL_REASON code, not free text', () => {

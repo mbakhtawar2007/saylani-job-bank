@@ -50,23 +50,25 @@ export default async function EmployerReferralDetailPage({
 
   const applicantItems = [
     { label: 'Name', value: applicant.fullName },
-    { label: 'City', value: applicant.cityCode ?? '—' },
+    { label: "Father's name", value: applicant.fatherName },
+    { label: 'Gender', value: applicant.gender },
+    {
+      label: 'Date of birth',
+      value: new Date(applicant.dateOfBirth).toLocaleDateString('en-PK', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      }),
+    },
+    { label: 'Email', value: applicant.email ?? '—' },
     { label: 'Phone', value: applicant.phone ?? '—' },
+    { label: 'City', value: applicant.cityCode ?? '—' },
+    {
+      label: 'Address',
+      value: [applicant.addressLine, applicant.areaCode].filter(Boolean).join(', ') || '—',
+    },
+    { label: 'Identity status', value: applicant.identityStatus },
   ];
-
-  const interviewItems = app.employerInterviewAt
-    ? [
-        {
-          label: 'Date & Time',
-          value: new Date(app.employerInterviewAt).toLocaleString('en-PK', {
-            dateStyle: 'full',
-            timeStyle: 'short',
-          }),
-        },
-        { label: 'Location', value: app.employerInterviewLocation ?? '—' },
-        ...(app.employerInterviewNote ? [{ label: 'Note', value: app.employerInterviewNote }] : []),
-      ]
-    : [];
 
   return (
     <div className="grid w-full gap-6">
@@ -128,21 +130,114 @@ export default async function EmployerReferralDetailPage({
                       <span className="text-fg-muted ml-2 text-xs">
                         {e.startMonth} — {e.isCurrent ? 'Present' : (e.endMonth ?? '?')}
                       </span>
+                      {e.description && (
+                        <p className="text-fg-muted mt-0.5 text-xs">{e.description}</p>
+                      )}
                     </div>
                   ))}
                 </div>
               </div>
             )}
+
+            {applicant.education.length > 0 && (
+              <div className="mt-4">
+                <p className="text-fg-muted mb-2 text-sm font-medium">Education</p>
+                <div className="grid gap-2">
+                  {applicant.education.map((e, i) => (
+                    <div key={i} className="text-sm">
+                      <span className="font-medium">{e.levelCode}</span>
+                      {e.fieldOfStudy && <span> — {e.fieldOfStudy}</span>}
+                      {e.institution && <span className="text-fg-muted"> · {e.institution}</span>}
+                      <span className="text-fg-muted ml-2 text-xs">
+                        {e.isCurrent ? 'In progress' : (e.completionYear ?? '')}
+                        {e.grade ? ` · ${e.grade}` : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {applicant.languages.length > 0 && (
+              <div className="mt-4">
+                <p className="text-fg-muted mb-2 text-sm font-medium">Languages</p>
+                <div className="flex flex-wrap gap-2">
+                  {applicant.languages.map((l) => (
+                    <Badge key={l.languageCode} tone="neutral">
+                      {l.languageCode} · {l.proficiency}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {applicant.certifications.length > 0 && (
+              <div className="mt-4">
+                <p className="text-fg-muted mb-2 text-sm font-medium">Certifications</p>
+                <div className="grid gap-2">
+                  {applicant.certifications.map((c, i) => (
+                    <div key={i} className="text-sm">
+                      <span className="font-medium">{c.name}</span>
+                      {c.issuer && <span className="text-fg-muted"> · {c.issuer}</span>}
+                      {(c.issuedMonth || c.expiresMonth) && (
+                        <span className="text-fg-muted ml-2 text-xs">
+                          {c.issuedMonth ?? '?'} — {c.expiresMonth ?? 'no expiry'}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {applicant.preferences && (
+              <div className="mt-4">
+                <p className="text-fg-muted mb-2 text-sm font-medium">Job Preferences</p>
+                <KeyValue
+                  columns={1}
+                  items={[
+                    {
+                      label: 'Minimum salary',
+                      value:
+                        applicant.preferences.minSalaryPkr != null
+                          ? `Rs ${applicant.preferences.minSalaryPkr.toLocaleString('en-PK')}`
+                          : '—',
+                    },
+                    {
+                      label: 'Preferred shifts',
+                      value: applicant.preferences.shifts.join(', ') || '—',
+                    },
+                    {
+                      label: 'Preferred job types',
+                      value: applicant.preferences.jobTypes.join(', ') || '—',
+                    },
+                    {
+                      label: 'Available from',
+                      value: applicant.preferences.availableFrom
+                        ? new Date(applicant.preferences.availableFrom).toLocaleDateString(
+                            'en-PK',
+                            { day: 'numeric', month: 'short', year: 'numeric' },
+                          )
+                        : '—',
+                    },
+                    {
+                      label: 'Preferred categories',
+                      value: applicant.preferences.categoryCodes.join(', ') || '—',
+                    },
+                  ]}
+                />
+              </div>
+            )}
           </section>
 
-          {/* Interview details */}
-          {interviewItems.length > 0 && (
+          {/* Staff referral note */}
+          {app.note && (
             <section
               className="rounded-xl border p-5"
               style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
             >
-              <h2 className="text-fg mb-4 text-base font-semibold">Scheduled Interview</h2>
-              <KeyValue items={interviewItems} columns={1} />
+              <h2 className="text-fg mb-3 text-base font-semibold">Referral Note</h2>
+              <p className="text-sm">{app.note}</p>
             </section>
           )}
 
@@ -200,11 +295,43 @@ export default async function EmployerReferralDetailPage({
             <EmployerReferralActions
               applicationId={app.id}
               status={app.status}
-              employerInterviewAt={app.employerInterviewAt}
-              employerInterviewLocation={app.employerInterviewLocation}
               companyName={app.companyName}
               jobTitle={app.jobTitle}
             />
+          </section>
+
+          {/* Referred by */}
+          <section
+            className="rounded-xl border p-5"
+            style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
+          >
+            <h2 className="text-fg mb-4 text-base font-semibold">Referred By</h2>
+            {applicant.referredBy ? (
+              <KeyValue
+                columns={1}
+                items={[
+                  { label: 'Name', value: applicant.referredBy.name },
+                  {
+                    label: 'Role',
+                    value:
+                      [applicant.referredBy.roleLabel, applicant.referredBy.title]
+                        .filter(Boolean)
+                        .join(' · ') || '—',
+                  },
+                  { label: 'Branch', value: applicant.referredBy.branchName ?? '—' },
+                  {
+                    label: 'Referred on',
+                    value: new Date(applicant.referredBy.referredAt).toLocaleDateString('en-PK', {
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric',
+                    }),
+                  },
+                ]}
+              />
+            ) : (
+              <p className="text-fg-muted text-sm">Not recorded</p>
+            )}
           </section>
 
           {/* Application timeline */}

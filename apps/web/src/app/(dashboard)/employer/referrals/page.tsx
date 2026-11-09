@@ -4,7 +4,7 @@ import { ValidationError } from '@/domains/shared/errors';
 import { parseListQuery } from '@/domains/shared/pagination';
 import { Badge, Button } from '@/components/atoms';
 import { EmptyState } from '@/components/molecules';
-import { Calendar, Users } from 'lucide-react';
+import { Users } from 'lucide-react';
 import NextLink from 'next/link';
 
 export const metadata = { title: 'Referrals — Saylani Job Bank' };
@@ -111,7 +111,6 @@ export default async function EmployerReferralsPage({
                       >
                         <th className="px-4 py-3 font-semibold">Applicant ID</th>
                         <th className="px-4 py-3 font-semibold">Status</th>
-                        <th className="px-4 py-3 font-semibold">Interview</th>
                         <th className="px-4 py-3 font-semibold">Last Updated</th>
                         <th className="px-4 py-3"></th>
                       </tr>
@@ -130,20 +129,6 @@ export default async function EmployerReferralsPage({
                             <Badge tone={STATUS_BADGE[app.status]?.tone ?? 'neutral'}>
                               {STATUS_LABELS[app.status] ?? app.status}
                             </Badge>
-                          </td>
-                          <td className="px-4 py-3">
-                            {app.employerInterviewAt ? (
-                              <span className="flex items-center gap-1 text-xs">
-                                <Calendar className="size-3.5" />
-                                {new Date(app.employerInterviewAt).toLocaleDateString('en-PK', {
-                                  day: 'numeric',
-                                  month: 'short',
-                                  year: 'numeric',
-                                })}
-                              </span>
-                            ) : (
-                              <span className="text-fg-muted text-xs">—</span>
-                            )}
                           </td>
                           <td className="px-4 py-3 text-xs opacity-70">
                             {new Date(app.updatedAt).toLocaleDateString('en-PK', {

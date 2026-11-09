@@ -39,7 +39,6 @@ export const PERMISSIONS = {
   'match_case:refer': 'Refer eligible candidates to employers',
 
   'interview:schedule_jobbank': 'Schedule and record Job Bank interviews',
-  'interview:schedule_employer': 'Schedule and record employer interviews',
 
   'decision:employer': 'Hold / select / reject referred candidates',
   'decision:applicant': 'Accept / refuse / counteroffer own offers',
@@ -140,7 +139,6 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'job:read',
     'job:manage_own',
     'match_case:read',
-    'interview:schedule_employer',
     'decision:employer',
     'blacklist:request',
   ],
