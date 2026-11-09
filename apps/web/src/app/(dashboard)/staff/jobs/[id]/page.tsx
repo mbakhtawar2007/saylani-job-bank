@@ -1,5 +1,7 @@
 import { requireRole } from '@/domains/auth';
 import { getJobDetail, listJobApplicantReferrals, listReferrableApplicants } from '@/domains/job';
+import { listReferredCandidatesForJob } from '@/domains/placement';
+import { ReferApplicantToEmployerPanel } from '../../../_components/jobs/ReferApplicantToEmployerPanel';
 import { ReferJobToApplicantPanel } from '../../../_components/jobs/ReferJobToApplicantPanel';
 import { masterDataLabels } from '@/domains/settings';
 import { NotFoundError } from '@/domains/shared/errors';
@@ -146,10 +148,11 @@ export default async function StaffJobDetailPage({ params }: { params: Promise<{
   const { id } = await params;
 
   try {
-    const [job, applicantReferrals, referrableApplicants] = await Promise.all([
+    const [job, applicantReferrals, referrableApplicants, candidateReferrals] = await Promise.all([
       getJobDetail(actor, id),
       listJobApplicantReferrals(actor, id),
       listReferrableApplicants(actor),
+      listReferredCandidatesForJob(actor, id),
     ]);
     const pill = STATUS_BADGE[job.status];
 
@@ -210,6 +213,16 @@ export default async function StaffJobDetailPage({ params }: { params: Promise<{
             label: t.identityStatus === 'UNVERIFIED' ? `${t.fullName} (unverified)` : t.fullName,
           }))}
           initialReferrals={applicantReferrals}
+        />
+
+        <ReferApplicantToEmployerPanel
+          jobId={job.id}
+          jobTitle={job.title}
+          targets={referrableApplicants.map((t) => ({
+            value: t.id,
+            label: t.identityStatus === 'UNVERIFIED' ? `${t.fullName} (unverified)` : t.fullName,
+          }))}
+          initialReferrals={candidateReferrals}
         />
 
         {/* ── Core details ───────────────────────────────────────── */}

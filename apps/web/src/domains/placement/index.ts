@@ -1,7 +1,7 @@
 'server-only';
 import { schema } from '@jobbank/db';
 import type { PaginationMeta } from '@jobbank/shared';
-import { and, count, desc, eq } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
@@ -524,6 +524,185 @@ export async function referApplicantToEmployer(
   return view;
 }
 
+// ─── Direct refer from the staff job page ─────────────────────────────────
+
+/**
+ * A candidate already referred to the employer for one job (staff view on
+ * the job detail page): the application row plus the applicant's name.
+ * `referredAt` is the application's last update — the moment it moved to
+ * FORWARDED, or a later employer-side step.
+ */
+export interface JobCandidateReferralView {
+  applicationId: string;
+  applicantId: string;
+  applicantName: string;
+  status: ApplicationStatus;
+  referredAt: string;
+}
+
+export const referApplicantToEmployerForJobSchema = z.object({
+  applicantId: z.uuid(),
+  note: z.string().trim().max(500).optional(),
+});
+export type ReferApplicantToEmployerForJobInput = z.infer<
+  typeof referApplicantToEmployerForJobSchema
+>;
+
+/**
+ * Statuses an application can be in once the employer can see it. Mirrors
+ * EMPLOYER_VISIBLE_STATUSES in ./employer.
+ */
+const REFERRED_STATUSES: ApplicationStatus[] = [
+  'FORWARDED',
+  'EMPLOYER_INTERVIEW_SCHEDULED',
+  'EMPLOYER_INTERVIEW_POSTPONED',
+  'EMPLOYER_INTERVIEW_CANCELLED',
+  'ON_HOLD',
+  'OFFER_EXTENDED',
+  'EMPLOYER_REJECTED',
+  'APPLICANT_REFUSED',
+  'HIRED',
+];
+
+/**
+ * Who staff may refer to an employer from the job page (2026-11-10): the
+ * same interim "filhal" rule as job→applicant referrals — any profile that
+ * is not RESTRICTED, with an identity VERIFIED or still UNVERIFIED. Mirrors
+ * isReferrableApplicant in the job domain; keep both in step when the rule
+ * is re-tightened.
+ */
+export function isDirectReferrableApplicant(row: {
+  status: string;
+  identityStatus: string;
+}): boolean {
+  return (
+    row.status !== 'RESTRICTED' &&
+    (row.identityStatus === 'VERIFIED' || row.identityStatus === 'UNVERIFIED')
+  );
+}
+
+/**
+ * Staff / Branch Admin: refer an applicant to the employer for a job,
+ * straight from the staff job detail page — one step, no detour through
+ * the applicant detail page.
+ *
+ * If the applicant is already shortlisted / interviewed for this job, this
+ * just forwards the existing application via referApplicantToEmployer
+ * (same machine transition, same notifications). Otherwise it creates the
+ * application and forwards it in one transaction, audited as both a
+ * shortlist and a referral, so the history reads the same as the two-step
+ * flow. The employer then sees the candidate on /employer/referrals.
+ */
+export async function referApplicantToEmployerForJob(
+  ctx: SignedIn,
+  jobId: string,
+  input: ReferApplicantToEmployerForJobInput,
+): Promise<ApplicationView> {
+  assertPermission(ctx.actor, 'match_case:manage');
+  assertPermission(ctx.actor, 'match_case:refer');
+
+  const [jobRow] = await db
+    .select({
+      id: schema.jobs.id,
+      title: schema.jobs.title,
+      companyId: schema.jobs.companyId,
+      branchId: schema.jobs.branchId,
+      status: schema.jobs.status,
+    })
+    .from(schema.jobs)
+    .where(eq(schema.jobs.id, jobId));
+  if (!jobRow) throw new NotFoundError('Job', jobId);
+  await assertCityAccess(ctx.actor, jobRow.branchId, {
+    entityType: 'job',
+    entityId: jobRow.id,
+  });
+  if (jobRow.status !== 'OPEN')
+    throw new ForbiddenError('Only OPEN jobs can receive referred candidates');
+
+  const [companyRow] = await db
+    .select({ status: schema.companies.status })
+    .from(schema.companies)
+    .where(eq(schema.companies.id, jobRow.companyId));
+  if (companyRow?.status !== 'VERIFIED')
+    throw new ForbiddenError('Only verified companies can receive referred candidates');
+
+  const [applicantRow] = await db
+    .select({
+      id: schema.applicants.id,
+      userId: schema.applicants.userId,
+      fullName: schema.applicants.fullName,
+      branchId: schema.applicants.branchId,
+      status: schema.applicants.status,
+      identityStatus: schema.applicants.identityStatus,
+    })
+    .from(schema.applicants)
+    .where(eq(schema.applicants.id, input.applicantId));
+  if (!applicantRow) throw new NotFoundError('Applicant', input.applicantId);
+  if (!isDirectReferrableApplicant(applicantRow))
+    throw new ForbiddenError('Candidates cannot be referred from restricted or rejected profiles');
+  await assertCityAccess(ctx.actor, applicantRow.branchId, {
+    entityType: 'applicant',
+    entityId: applicantRow.id,
+  });
+
+  const [existing] = await db
+    .select()
+    .from(ap)
+    .where(and(eq(ap.applicantId, input.applicantId), eq(ap.jobId, jobId)));
+  if (existing) {
+    if (
+      existing.status === 'SHORTLISTED' ||
+      existing.status === 'INTERVIEW_SCHEDULED' ||
+      existing.status === 'INTERVIEW_POSTPONED'
+    ) {
+      return referApplicantToEmployer(ctx, existing.id, { note: input.note });
+    }
+    if (REFERRED_STATUSES.includes(existing.status))
+      throw new ConflictError(
+        'This applicant has already been referred to the employer for this job',
+      );
+    throw new ForbiddenError('Application must be shortlisted or interviewed to refer');
+  }
+
+  // No application yet: shortlist + refer in one transaction, so the
+  // employer's view and the audit trail match the two-step flow exactly.
+  const view = await runCommand(ctx, async ({ tx, audit }) => {
+    const [row] = await tx
+      .insert(ap)
+      .values({
+        applicantId: input.applicantId,
+        jobId: jobRow.id,
+        branchId: jobRow.branchId,
+        createdBy: ctx.actor.userId,
+        note: input.note ?? null,
+        status: 'FORWARDED',
+      })
+      .returning();
+
+    audit({
+      action: 'application.shortlist',
+      entityType: 'application',
+      entityId: row!.id,
+      branchId: jobRow.branchId,
+    });
+    audit({
+      action: 'application.referred',
+      entityType: 'application',
+      entityId: row!.id,
+      branchId: jobRow.branchId,
+      metadata: { jobId: jobRow.id },
+    });
+    return row!;
+  }).then(buildView);
+
+  // Notify applicant and employer users (best-effort, post-commit).
+  void notifyReferral(ctx, input.applicantId, jobRow.id, view).catch((err) =>
+    ctx.log.error('referral notification failed', { applicationId: view.id, err }),
+  );
+
+  return view;
+}
+
 async function notifyReferral(
   ctx: SignedIn,
   applicantId: string,
@@ -610,6 +789,50 @@ export async function listApplicationsForApplicant(
   const items = await Promise.all(rows.map(buildView));
   if (!query) return items;
   return { items, pagination: paginationMeta(query, totalRow?.total ?? 0) };
+}
+
+/**
+ * Staff view for the job detail page: every candidate already referred to
+ * the employer for this job (FORWARDED onward), newest referral first.
+ */
+export async function listReferredCandidatesForJob(
+  actor: Actor,
+  jobId: string,
+): Promise<JobCandidateReferralView[]> {
+  assertPermission(actor, 'match_case:read');
+  // Same staff-only, city-scoped guard as listApplicationsForApplicant.
+  assertRole(actor, 'STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN');
+  const [jobRow] = await db
+    .select({ branchId: schema.jobs.branchId })
+    .from(schema.jobs)
+    .where(eq(schema.jobs.id, jobId))
+    .limit(1);
+  if (!jobRow) throw new NotFoundError('Job', jobId);
+  await assertCityAccess(actor, jobRow.branchId, { entityType: 'job', entityId: jobId });
+
+  const rows = await db
+    .select()
+    .from(ap)
+    .where(and(eq(ap.jobId, jobId), or(...REFERRED_STATUSES.map((s) => eq(ap.status, s)))))
+    .orderBy(desc(ap.updatedAt));
+  if (rows.length === 0) return [];
+  const applicants = await db
+    .select({ id: schema.applicants.id, fullName: schema.applicants.fullName })
+    .from(schema.applicants)
+    .where(
+      inArray(
+        schema.applicants.id,
+        rows.map((r) => r.applicantId),
+      ),
+    );
+  const byId = new Map(applicants.map((a) => [a.id, a]));
+  return rows.map((row) => ({
+    applicationId: row.id,
+    applicantId: row.applicantId,
+    applicantName: byId.get(row.applicantId)?.fullName ?? 'Unknown applicant',
+    status: row.status as ApplicationStatus,
+    referredAt: row.updatedAt.toISOString(),
+  }));
 }
 
 /** List applications visible to the signed-in applicant (their own). */
