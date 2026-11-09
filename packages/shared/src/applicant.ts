@@ -4,16 +4,18 @@ import { pkMobileSchema } from './phone';
 
 /**
  * Applicant domain contracts (M6), shared by the API and the UI.
- * Owner decisions (2026-10-02): auto-activation once personal details, location + branch and
- * the required documents are in; identity verification is a separate staff check; minimum
+ * Owner decisions (2026-10-02): identity verification is a separate staff check; minimum
  * age 18; father's/husband's name required; CNIC stored in full but never sent to employers.
+ * The DRAFT status was removed 2026-11-09 (user decision): a profile is ACTIVE from
+ * creation, even while personal details, location or documents are still missing.
+ * Completeness is now informational (percent + missing sections) and only gates
+ * coming back from INACTIVE/RESTRICTED via REACTIVATE.
  */
 
-export const APPLICANT_STATUSES = ['DRAFT', 'ACTIVE', 'INACTIVE', 'RESTRICTED'] as const;
+export const APPLICANT_STATUSES = ['ACTIVE', 'INACTIVE', 'RESTRICTED'] as const;
 export type ApplicantStatus = (typeof APPLICANT_STATUSES)[number];
 
 export const APPLICANT_STATUS_LABELS: Record<ApplicantStatus, string> = {
-  DRAFT: 'Profile incomplete',
   ACTIVE: 'Active',
   INACTIVE: 'Inactive',
   RESTRICTED: 'Restricted',
@@ -596,7 +598,7 @@ export const PROFILE_SECTIONS = [
 ] as const;
 export type ProfileSectionId = (typeof PROFILE_SECTIONS)[number]['id'];
 
-/** Sections that must be done before a DRAFT profile becomes ACTIVE (owner decision 1a). */
+/** Sections that count a profile as complete (owner decision 1a). Completeness is informational now that profiles are ACTIVE from creation; it still gates REACTIVATE from INACTIVE/RESTRICTED. */
 export const ACTIVATION_SECTIONS: readonly ProfileSectionId[] = [
   'personal',
   'location',

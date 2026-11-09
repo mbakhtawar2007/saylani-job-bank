@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { isReferrableApplicant, referJobToApplicantSchema } from './applicant-referrals';
 
-// Referrable applicant (workflow §5, interim rule 2026-11-09): the profile
-// is live (ACTIVE) and the identity is VERIFIED or still UNVERIFIED.
-// DRAFT / INACTIVE / REJECTED are still not referrable.
+// Referrable applicant (workflow §5, interim rule 2026-11-09): any profile
+// that is not RESTRICTED — ACTIVE or INACTIVE — with an identity that is
+// VERIFIED or still UNVERIFIED. Only RESTRICTED profiles and REJECTED
+// identities are not referrable.
 describe('isReferrableApplicant', () => {
   it('ACTIVE + VERIFIED is referrable', () => {
     expect(isReferrableApplicant({ status: 'ACTIVE', identityStatus: 'VERIFIED' })).toBe(true);
@@ -13,16 +14,16 @@ describe('isReferrableApplicant', () => {
     expect(isReferrableApplicant({ status: 'ACTIVE', identityStatus: 'UNVERIFIED' })).toBe(true);
   });
 
-  it('a DRAFT profile is not referrable even with a VERIFIED identity', () => {
-    expect(isReferrableApplicant({ status: 'DRAFT', identityStatus: 'VERIFIED' })).toBe(false);
+  it('an INACTIVE profile is referrable for now (interim rule)', () => {
+    expect(isReferrableApplicant({ status: 'INACTIVE', identityStatus: 'VERIFIED' })).toBe(true);
+  });
+
+  it('a RESTRICTED profile is not referrable', () => {
+    expect(isReferrableApplicant({ status: 'RESTRICTED', identityStatus: 'VERIFIED' })).toBe(false);
   });
 
   it('an ACTIVE profile with a REJECTED identity is not referrable', () => {
     expect(isReferrableApplicant({ status: 'ACTIVE', identityStatus: 'REJECTED' })).toBe(false);
-  });
-
-  it('an INACTIVE profile is not referrable', () => {
-    expect(isReferrableApplicant({ status: 'INACTIVE', identityStatus: 'VERIFIED' })).toBe(false);
   });
 });
 

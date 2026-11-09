@@ -267,6 +267,13 @@
       "when": 1794141306000,
       "tag": "0037_job_matches_vacancy_filled",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1794236172766,
+      "tag": "0038_remove_applicant_draft_status",
+      "breakpoints": true
     }
   ]
 }

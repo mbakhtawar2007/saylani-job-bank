@@ -164,7 +164,7 @@ export default async function ApplicantJobsPage() {
       </div>
 
       {/* ── Profile incomplete warning ────────────────────────────── */}
-      {profile.status === 'DRAFT' && (
+      {profile.completeness.activationMissing.length > 0 && (
         <div
           className="rounded-xl px-4 py-3 text-sm"
           style={{ background: 'var(--warning-soft)', color: 'var(--warning-soft-fg)' }}

@@ -57,7 +57,7 @@ export const applicants = pgTable(
     gender: text({ enum: GENDERS }).notNull(),
     /** Optional contact email (the `users` row only has a placeholder). */
     email: text(),
-    status: text({ enum: APPLICANT_STATUSES }).notNull().default('DRAFT'),
+    status: text({ enum: APPLICANT_STATUSES }).notNull().default('ACTIVE'),
     /** Why staff deactivated the profile (shown to staff). */
     statusReason: text(),
     /** When the first-counter paper form was verified and signed (null until then). */
@@ -87,10 +87,9 @@ export const applicants = pgTable(
     ),
     check('applicants_gender_valid', sql`${t.gender} in (${list(GENDERS)})`),
     check('applicants_completeness_range', sql`${t.profileCompleteness} between 0 and 100`),
-    check(
-      'applicants_active_needs_branch',
-      sql`${t.status} = 'DRAFT' or ${t.branchId} is not null`,
-    ),
+    // No branch check: a fresh self-registration has no branch until the
+    // location step assigns one (the old applicants_active_needs_branch
+    // check only ever exempted DRAFT profiles, and DRAFT is gone).
   ],
 );
 

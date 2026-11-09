@@ -10,7 +10,6 @@ import type { Tone } from '@/design-system/tokens';
 type Pill = { label: string; tone: Tone };
 
 export const APPLICANT_STATUS_PILL: Record<ApplicantStatus, Pill> = {
-  DRAFT: { label: APPLICANT_STATUS_LABELS.DRAFT, tone: 'warning' },
   ACTIVE: { label: APPLICANT_STATUS_LABELS.ACTIVE, tone: 'success' },
   INACTIVE: { label: APPLICANT_STATUS_LABELS.INACTIVE, tone: 'neutral' },
   RESTRICTED: { label: APPLICANT_STATUS_LABELS.RESTRICTED, tone: 'danger' },

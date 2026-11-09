@@ -1485,8 +1485,7 @@ export function RegisterApplicantDialog({
                       </Button>
                       {verifiedSigned && (
                         <p role="status" className="text-sm text-[#9fe4c0]">
-                          Verification and signature recorded. The applicant remains in DRAFT
-                          status.
+                          Verification and signature recorded. The applicant profile is active.
                         </p>
                       )}
                     </div>

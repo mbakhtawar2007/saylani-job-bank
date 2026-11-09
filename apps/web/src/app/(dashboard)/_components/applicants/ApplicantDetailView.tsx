@@ -947,9 +947,9 @@ export function ApplicantDetailView({
           Deactivated by staff: {applicant.statusReason}
         </p>
       )}
-      {applicant.status === 'DRAFT' && (
+      {applicant.completeness.activationMissing.length > 0 && (
         <p className="bg-warning-soft text-warning-soft-fg rounded-lg px-4 py-3 text-sm">
-          Profile not live yet. Still missing:{' '}
+          Profile incomplete. Still missing:{' '}
           {applicant.completeness.sections
             .filter((s) => applicant.completeness.activationMissing.includes(s.id))
             .map((s) => s.label.toLowerCase())

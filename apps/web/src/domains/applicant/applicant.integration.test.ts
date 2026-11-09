@@ -124,7 +124,7 @@ describe('staff-assisted applicant registration', () => {
     expect(response.status).toBe(403);
   });
 
-  it('creates a DRAFT applicant and audits the staff member who created it', async () => {
+  it('creates an ACTIVE applicant and audits the staff member who created it', async () => {
     const body = { ...personal(), phone: randomPhone(), branchId: khi };
     const response = await call(staffRegister, '/api/v1/applicants', {
       method: 'POST',
@@ -133,7 +133,7 @@ describe('staff-assisted applicant registration', () => {
     });
 
     expect(response.status).toBe(201);
-    expect(response.body.data.status).toBe('DRAFT');
+    expect(response.body.data.status).toBe('ACTIVE');
     expect(response.body.data.createdByStaff).toMatchObject({
       name: expect.any(String),
       roleLabel: 'Job Bank Staff',
@@ -161,7 +161,7 @@ describe('staff-assisted applicant registration', () => {
         ),
       );
 
-    expect(applicant).toMatchObject({ status: 'DRAFT', branchId: khi });
+    expect(applicant).toMatchObject({ status: 'ACTIVE', branchId: khi });
     expect(applicantRole?.roleCode).toBe('APPLICANT');
     // Revised process: registration issues no token — the form's QR encodes the
     // applicant ID instead. The token is issued only if a later step needs one.
@@ -173,7 +173,7 @@ describe('staff-assisted applicant registration', () => {
     });
   });
 
-  it('marks a DRAFT applicant verified & signed and audits it', async () => {
+  it('marks an applicant verified & signed and audits it', async () => {
     const created = await createStaffApplicant(khi);
     expect(created.status).toBe(201);
     const applicantId = created.body.data.id as string;
@@ -267,7 +267,7 @@ const latestAudit = async (action: string, entityId: string) =>
   )[0];
 
 describe('applicant registration', () => {
-  it('starts a DRAFT profile from the phone account and names the account', async () => {
+  it('starts an ACTIVE profile from the phone account and names the account', async () => {
     const jar = await signInApplicant(randomPhone());
     expect((await call(getMe, '/api/v1/applicants/me', { jar })).status).toBe(404);
 
@@ -283,7 +283,7 @@ describe('applicant registration', () => {
     });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect(res.body.data).toMatchObject({
-      status: 'DRAFT',
+      status: 'ACTIVE',
       identityStatus: 'UNVERIFIED',
       personal: { fullName: 'Ayesha Khan', cnic: body.cnic, email: null },
       completeness: { percent: 20, activationMissing: ['location', 'documents'] },
@@ -512,15 +512,19 @@ describe('documents and activation', () => {
     expect(confirmGhost.status).toBe(409);
   });
 
-  it('activates automatically once both CNIC sides are uploaded, then locks the branch', async () => {
+  it('is ACTIVE from registration and locks the branch once location is set', async () => {
     const { jar, profile } = await registered();
+    expect(profile.status).toBe('ACTIVE');
+    expect(profile.activatedAt).not.toBeNull();
+    expect(profile.branchLocked).toBe(false);
     await call(putLocation, '/api/v1/applicants/me/location', {
       method: 'PUT',
       body: location(khi),
       jar,
     });
     const front = await upload(jar, 'CNIC_FRONT');
-    expect(front.profile.status).toBe('DRAFT');
+    expect(front.profile.status).toBe('ACTIVE');
+    expect(front.profile.branchLocked).toBe(true);
 
     // A re-upload replaces the old front image instead of adding a second one.
     const front2 = await upload(jar, 'CNIC_FRONT');
@@ -531,7 +535,6 @@ describe('documents and activation', () => {
     const back = await upload(jar, 'CNIC_BACK');
     expect(back.profile).toMatchObject({ status: 'ACTIVE', branchLocked: true });
     expect(back.profile.activatedAt).not.toBeNull();
-    expect(await latestAudit('applicant.activate', profile.id)).toBeDefined();
 
     const moveBranch = await call(putLocation, '/api/v1/applicants/me/location', {
       method: 'PUT',
@@ -643,8 +646,8 @@ describe('staff access', () => {
     expect(ids(await find('areaCode=LAHORE_JOHAR_TOWN'))).not.toContain(id);
 
     // Several values for one filter (sidebar checkboxes): any ticked value matches.
-    // The new profile is DRAFT or ACTIVE, never INACTIVE or RESTRICTED.
-    expect(ids(await find('status=DRAFT&status=ACTIVE'))).toContain(id);
+    // The new profile is ACTIVE, never INACTIVE or RESTRICTED.
+    expect(ids(await find('status=ACTIVE'))).toContain(id);
     expect(ids(await find('status=INACTIVE&status=RESTRICTED'))).not.toContain(id);
     expect(ids(await find('cityCode=KARACHI&cityCode=LAHORE'))).toContain(id);
 

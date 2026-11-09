@@ -96,7 +96,6 @@ type ActivityItem = {
 /* ─── Recent activity: built from real rows, never invented ──────────── */
 const APPLICANT_ACTIVITY_STATUS: Record<string, ActivityItem['status']> = {
   ACTIVE: 'success',
-  DRAFT: 'pending',
   INACTIVE: 'info',
 };
 
@@ -333,10 +332,9 @@ export async function WelcomePanel({ role }: { role: Role }) {
     chartValues = await monthlyApplicantCounts(actor, year);
     chartLabel = 'Monthly Registrations';
   } else if (role === 'BRANCH_ADMIN') {
-    const [r_all, r_active, r_draft, r_id_ver] = await Promise.all([
+    const [r_all, r_active, r_id_ver] = await Promise.all([
       listApplicants(actor, minQ('createdAt')),
       listApplicants(actor, minQ('createdAt', { status: ['ACTIVE'] })),
-      listApplicants(actor, minQ('createdAt', { status: ['DRAFT'] })),
       listApplicants(actor, minQ('createdAt', { identityStatus: ['VERIFIED'] })),
     ]);
     main = {
@@ -347,7 +345,6 @@ export async function WelcomePanel({ role }: { role: Role }) {
       subTitle: 'By Status',
       subItems: [
         { icon: CheckCircle2, label: 'Active', value: fmt(r_active.meta.total), status: 'active' },
-        { icon: Clock, label: 'Draft', value: fmt(r_draft.meta.total), status: 'active' },
         {
           icon: ShieldCheck,
           label: 'ID Verified',
@@ -525,10 +522,9 @@ export async function WelcomePanel({ role }: { role: Role }) {
     // the signed-in verifier's own decisions, not the branch total.
     chartLabel = 'Verifications Done';
   } else if (role === 'STAFF') {
-    const [r_all, r_active, r_draft, r_id_ver] = await Promise.all([
+    const [r_all, r_active, r_id_ver] = await Promise.all([
       listApplicants(actor, minQ('createdAt')),
       listApplicants(actor, minQ('createdAt', { status: ['ACTIVE'] })),
-      listApplicants(actor, minQ('createdAt', { status: ['DRAFT'] })),
       listApplicants(actor, minQ('createdAt', { identityStatus: ['VERIFIED'] })),
     ]);
     main = {
@@ -540,7 +536,6 @@ export async function WelcomePanel({ role }: { role: Role }) {
       subItems: [
         { icon: Users, label: 'Total', value: fmt(r_all.meta.total), status: 'active' },
         { icon: CheckCircle2, label: 'Active', value: fmt(r_active.meta.total), status: 'active' },
-        { icon: Clock, label: 'Draft', value: fmt(r_draft.meta.total), status: 'active' },
         {
           icon: ShieldCheck,
           label: 'ID Verified',
@@ -581,13 +576,6 @@ export async function WelcomePanel({ role }: { role: Role }) {
           current: r_id_ver.meta.total,
           total: Math.max(r_all.meta.total, 1),
           color: '#1a5fac',
-        },
-        {
-          icon: Clock,
-          label: 'Draft Profiles',
-          current: r_draft.meta.total,
-          total: Math.max(r_all.meta.total, 1),
-          color: '#b45309',
         },
       ],
     };

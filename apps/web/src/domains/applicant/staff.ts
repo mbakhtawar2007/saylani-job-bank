@@ -363,7 +363,7 @@ async function scopedApplicant(actor: Actor, applicantId: string): Promise<Appli
   return row;
 }
 
-/** Staff creates a complete DRAFT applicant profile for a person at the branch. */
+/** Staff creates an applicant profile for a person at the branch. It is ACTIVE from creation (no DRAFT status since 2026-11-09). */
 export async function staffRegisterApplicant(
   ctx: SignedIn,
   input: StaffRegisterApplicantInput,
@@ -415,6 +415,7 @@ export async function staffRegisterApplicant(
           gender: input.gender,
           email: input.email ?? null,
           additionalNotes: input.additionalNotes ?? null,
+          activatedAt: new Date(),
         })
         .returning();
       applicantId = row!.id;
@@ -582,9 +583,8 @@ export async function staffRegisterApplicant(
         },
         metadata: { createdBy: ctx.actor.userId, tokenId: input.tokenId ?? null },
       });
-      // Recompute completeness and activate a complete profile in the same step:
-      // without this, a complete staff-created profile stayed DRAFT until the
-      // applicant's next self-service edit triggered refreshProfileState.
+      // Recompute completeness in the same step (profiles are ACTIVE from
+      // creation; there is no activation step any more).
       await refreshProfileState(cmd, row!.id);
     });
 
@@ -634,17 +634,16 @@ export async function staffRegisterApplicant(
 }
 
 /**
- * Records the first-counter paper review without advancing the applicant's DRAFT status.
+ * Records the first-counter paper review.
  *
  * Deliberate asymmetry with companies, kept as a product decision: for companies the
  * verified-and-signed mark GATES the next step (markCompanyRegistrationVerifiedSigned
  * submits the DRAFT to the verifier queue in the same step). For applicants it is
- * record-only evidence of the paper review — it does NOT gate activation. Applicants
- * can also self-register and activate on completeness alone (refreshProfileState),
- * so a blanket verified-signed activation guard would strand every self-service
- * applicant in DRAFT with no paper form to sign. Nothing in the codebase gates
- * applicant activation or matching on registrationVerifiedSignedAt; the timestamp
- * is the audit evidence that the first-counter review happened.
+ * record-only evidence of the paper review — it does NOT gate anything. Nothing in
+ * the codebase gates applicant activation or matching on
+ * registrationVerifiedSignedAt; the timestamp is the audit evidence that the
+ * first-counter review happened. (The old DRAFT-only gate is gone with the
+ * DRAFT status itself, removed 2026-11-09.)
  */
 export async function markApplicantRegistrationVerifiedSigned(
   ctx: SignedIn,
@@ -662,9 +661,6 @@ export async function markApplicantRegistrationVerifiedSigned(
   const verifiedAt = new Date();
   await runCommand(ctx, async ({ tx, audit }) => {
     const row = await loadApplicant(tx, applicantId, { forUpdate: true });
-    if (row.status !== 'DRAFT') {
-      throw new ConflictError('Only a draft applicant can be marked verified and signed.');
-    }
     if (row.registrationVerifiedSignedAt) {
       throw new ConflictError('This registration form was already marked verified and signed.');
     }

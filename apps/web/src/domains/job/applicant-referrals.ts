@@ -1,6 +1,6 @@
 import 'server-only';
 import { schema } from '@jobbank/db';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { createNotification } from '@/domains/notifications';
 import { runCommand } from '@/domains/shared/audit';
@@ -54,15 +54,16 @@ export type ReferJobToApplicantInput = z.infer<typeof referJobToApplicantSchema>
 
 /**
  * Who staff may refer a job to, for now (user decision 2026-11-09, interim
- * "filhal" rule): the profile is live (ACTIVE) and the identity is VERIFIED
- * or still UNVERIFIED. A DRAFT profile was never activated, a REJECTED
- * identity failed its check, and an INACTIVE profile is not live — none of
- * those three may be referred. Re-tighten to VERIFIED-only when the user
- * says so; the check lives in this one function.
+ * "filhal" rule): any profile that is not RESTRICTED — ACTIVE or INACTIVE —
+ * with an identity that is VERIFIED or still UNVERIFIED. (The DRAFT status
+ * was removed 2026-11-09, so there is no draft case any more.)
+ * A RESTRICTED profile (admin-imposed) or a REJECTED identity may not be
+ * referred. The check lives in this one function; listReferrableApplicants
+ * mirrors it in SQL below.
  */
 export function isReferrableApplicant(row: { status: string; identityStatus: string }): boolean {
   return (
-    row.status === 'ACTIVE' &&
+    row.status !== 'RESTRICTED' &&
     (row.identityStatus === 'VERIFIED' || row.identityStatus === 'UNVERIFIED')
   );
 }
@@ -71,7 +72,8 @@ export function isReferrableApplicant(row: { status: string; identityStatus: str
 
 /**
  * Staff shares an open job with a specific applicant in their city scope
- * (verified or, for now, unverified — see isReferrableApplicant).
+ * (any non-rejected profile, verified or unverified for now — see
+ * isReferrableApplicant).
  * Idempotent: referring the same job to the same applicant twice
  * returns the first referral instead of a duplicate row (the unique index
  * is the backstop, not the guard).
@@ -98,7 +100,7 @@ export async function referJobToApplicant(
     .where(eq(ap.id, input.applicantId));
   if (!applicant) throw new NotFoundError('Applicant', input.applicantId);
   if (!isReferrableApplicant(applicant))
-    throw new ForbiddenError('Jobs can only be referred to active applicants');
+    throw new ForbiddenError('Jobs cannot be referred to restricted or rejected applicants');
   await assertCityAccess(ctx.actor, applicant.branchId, {
     entityType: 'applicant',
     entityId: applicant.id,
@@ -200,7 +202,7 @@ export async function listReferrableApplicants(actor: Actor): Promise<Referrable
     .from(ap)
     .where(
       and(
-        eq(ap.status, 'ACTIVE'),
+        ne(ap.status, 'RESTRICTED'),
         inArray(ap.identityStatus, ['VERIFIED', 'UNVERIFIED']),
         scope ?? undefined,
       ),

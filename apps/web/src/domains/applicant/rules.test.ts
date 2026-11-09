@@ -62,16 +62,14 @@ describe('profile completeness', () => {
 });
 
 describe('applicant status machine', () => {
-  it('activates only when nothing is missing, and only from DRAFT', () => {
+  it('has no DRAFT state and no ACTIVATE transition: profiles are ACTIVE from creation (removed 2026-11-09)', () => {
+    expect(applicantMachine.states).toEqual(['ACTIVE', 'INACTIVE', 'RESTRICTED']);
     expect(
-      applicantMachine.check('DRAFT', 'ACTIVATE', { activationMissing: ['documents'] }, 'system'),
-    ).toMatchObject({ ok: false, message: expect.stringContaining('CNIC front and back') });
+      applicantMachine.availableEvents('ACTIVE', { activationMissing: [] }, ['APPLICANT']),
+    ).toEqual(['DEACTIVATE']);
     expect(
-      applicantMachine.check('DRAFT', 'ACTIVATE', { activationMissing: [] }, 'system'),
-    ).toEqual({ ok: true, to: 'ACTIVE' });
-    expect(
-      applicantMachine.check('ACTIVE', 'ACTIVATE', { activationMissing: [] }, 'system').ok,
-    ).toBe(false);
+      applicantMachine.availableEvents('INACTIVE', { activationMissing: [] }, ['APPLICANT']),
+    ).toEqual(['REACTIVATE']);
   });
 
   it('lets the applicant or staff pause and resume, but not employers or the system', () => {
@@ -84,12 +82,12 @@ describe('applicant status machine', () => {
     expect(applicantMachine.check('ACTIVE', 'DEACTIVATE', ctx, 'system').ok).toBe(false);
   });
 
-  it('restricts from any state, and only admins lift it (M31)', () => {
+  it('restricts from ACTIVE or INACTIVE, and only admins lift it (M31)', () => {
     const ctx = { activationMissing: [] };
     expect(applicantMachine.transition('ACTIVE', 'RESTRICT', ctx, ['BRANCH_ADMIN'])).toBe(
       'RESTRICTED',
     );
-    expect(applicantMachine.transition('DRAFT', 'RESTRICT', ctx, ['SUPER_ADMIN'])).toBe(
+    expect(applicantMachine.transition('INACTIVE', 'RESTRICT', ctx, ['SUPER_ADMIN'])).toBe(
       'RESTRICTED',
     );
     expect(applicantMachine.check('RESTRICTED', 'RESTRICT', ctx, ['STAFF']).ok).toBe(false);
@@ -120,14 +118,13 @@ describe('applicant status machine', () => {
     );
   });
 
-  it('demotes an ACTIVE profile back to DRAFT, fired by the system (M31)', () => {
-    const ctx = { activationMissing: [] };
-    expect(applicantMachine.check('ACTIVE', 'DEMOTE', ctx, 'system')).toEqual({
-      ok: true,
-      to: 'DRAFT',
-    });
-    expect(applicantMachine.check('DRAFT', 'DEMOTE', ctx, 'system').ok).toBe(false);
-    expect(applicantMachine.check('INACTIVE', 'DEMOTE', ctx, 'system').ok).toBe(false);
+  it('has no DEMOTE transition: losing completeness no longer sends a profile back (removed 2026-11-09)', () => {
+    const ctx = { activationMissing: ['documents' as const] };
+    expect(applicantMachine.availableEvents('ACTIVE', ctx, 'system')).toEqual([]);
+    expect(applicantMachine.availableEvents('ACTIVE', ctx, ['SUPER_ADMIN'])).toEqual([
+      'DEACTIVATE',
+      'RESTRICT',
+    ]);
   });
 });
 

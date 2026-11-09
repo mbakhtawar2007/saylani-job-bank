@@ -21,7 +21,6 @@ import type { CommandScope, RequestContext } from '@/domains/shared/audit';
 import { NotFoundError } from '@/domains/shared/errors';
 import type { Actor } from '@/domains/shared/scope';
 import { db, type DbExecutor } from '@/lib/db';
-import { applicantMachine } from './machine';
 
 export type SignedIn = RequestContext & { actor: Actor };
 
@@ -148,7 +147,8 @@ const toMonth = (value: string | null) => (value ? value.slice(0, 7) : null);
 export const fromMonth = (value: string | null) => (value ? `${value}-01` : null);
 
 export const identityLocked = (row: ApplicantRow) => row.identityStatus === 'VERIFIED';
-export const branchLocked = (row: ApplicantRow) => row.status !== 'DRAFT';
+/** Only staff can move a profile to another branch once one is set. */
+export const branchLocked = (row: ApplicantRow) => row.branchId !== null;
 
 // ─── Loading ───────────────────────────────────────────────────────────
 
@@ -324,66 +324,23 @@ async function loadCompletenessInputs(
 }
 
 /**
- * Re-computes completeness after a change and activates a DRAFT profile as soon as the
- * activation requirements are met (owner decision: automatic, no staff step). Call at the
- * end of every command that changes the profile. It also demotes an ACTIVE profile back
- * to DRAFT when its completeness regresses (M31): a profile that lost its location or
- * required documents must not stay ACTIVE and matchable.
+ * Re-computes completeness after a change and stores the percent. Profiles
+ * are ACTIVE from creation (the DRAFT status was removed 2026-11-09), so
+ * there is no activation or demotion here any more: losing a location or a
+ * required document only lowers the completeness percent. Call at the end
+ * of every command that changes the profile.
  */
 export async function refreshProfileState(
   cmd: CommandScope,
   applicantId: string,
 ): Promise<{ status: ApplicantStatus; completeness: Completeness }> {
-  const { tx, audit } = cmd;
+  const { tx } = cmd;
   const row = await loadApplicant(tx, applicantId);
   const completeness = await completenessFor(tx, row);
-  const changes: Partial<typeof a.$inferInsert> = {};
   if (completeness.percent !== row.profileCompleteness) {
-    changes.profileCompleteness = completeness.percent;
+    await tx.update(a).set({ profileCompleteness: completeness.percent }).where(eq(a.id, row.id));
   }
-  let status = row.status;
-  const activation = applicantMachine.check(
-    row.status,
-    'ACTIVATE',
-    { activationMissing: completeness.activationMissing },
-    'system',
-  );
-  if (activation.ok) {
-    status = activation.to;
-    changes.status = status;
-    changes.activatedAt = new Date();
-    audit({
-      action: 'applicant.activate',
-      entityType: 'applicant',
-      entityId: row.id,
-      branchId: row.branchId,
-      before: { status: row.status },
-      after: { status },
-    });
-  } else if (row.status === 'ACTIVE' && completeness.activationMissing.length > 0) {
-    const demotion = applicantMachine.check(
-      row.status,
-      'DEMOTE',
-      { activationMissing: completeness.activationMissing },
-      'system',
-    );
-    if (demotion.ok) {
-      status = demotion.to;
-      changes.status = status;
-      changes.activatedAt = null;
-      audit({
-        action: 'applicant.auto_draft',
-        entityType: 'applicant',
-        entityId: row.id,
-        branchId: row.branchId,
-        before: { status: row.status },
-        after: { status },
-        metadata: { missing: completeness.activationMissing },
-      });
-    }
-  }
-  if (Object.keys(changes).length > 0) await tx.update(a).set(changes).where(eq(a.id, row.id));
-  return { status, completeness };
+  return { status: row.status, completeness };
 }
 
 // ─── Full profile ──────────────────────────────────────────────────────

@@ -286,7 +286,7 @@ export default async function ApplicantHomePage() {
         ))}
 
       {/* ── Status alerts ────────────────────────────────────── */}
-      {profile.status === 'DRAFT' && missingForActivation.length > 0 && (
+      {missingForActivation.length > 0 && (
         <section
           aria-label="Profile incomplete"
           className="grid gap-3 rounded-2xl px-5 py-4 text-sm"
@@ -296,8 +296,8 @@ export default async function ApplicantHomePage() {
             border: '1px solid rgba(180,83,9,0.15)',
           }}
         >
-          <p className="font-semibold">Your profile is not live yet.</p>
-          <p>Complete these sections to start getting matched with jobs:</p>
+          <p className="font-semibold">Your profile is incomplete.</p>
+          <p>Complete these sections to finish setting up your profile:</p>
           <ul className="grid list-disc gap-1 pl-4">
             {missingForActivation.map((s) => (
               <li key={s.id}>

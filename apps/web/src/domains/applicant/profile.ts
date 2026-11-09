@@ -123,7 +123,7 @@ export async function assertEmailFree(
   }
 }
 
-/** Step 1 of the wizard: creates the DRAFT profile for the signed-in phone account. */
+/** Step 1 of the wizard: creates the profile for the signed-in phone account. It is ACTIVE from creation (no DRAFT status since 2026-11-09), even before the location step assigns a branch. */
 export async function registerApplicant(
   ctx: SignedIn,
   input: RegisterApplicantInput,
@@ -148,6 +148,7 @@ export async function registerApplicant(
           dateOfBirth: input.dateOfBirth,
           gender: input.gender,
           email: input.email ?? null,
+          activatedAt: new Date(),
         })
         .returning();
       // The account was created by phone sign-in with a placeholder name.
@@ -474,9 +475,6 @@ export async function setMyStatus(
   assertPermission(ctx.actor, 'applicant:self');
   const current = await requireOwnApplicant(db, ctx.actor);
   if (current.status === status) return buildProfile(db, current);
-  if (current.status === 'DRAFT') {
-    throw new ConflictError('Finish setting up your profile first');
-  }
   await runCommand(ctx, async ({ tx, audit }) => {
     const row = await requireOwnApplicant(tx, ctx.actor, { forUpdate: true });
     const event = status === 'INACTIVE' ? 'DEACTIVATE' : 'REACTIVATE';
