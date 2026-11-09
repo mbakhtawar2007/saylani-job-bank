@@ -28,11 +28,12 @@ export interface JobApplicantReferralView {
   referredAt: string;
 }
 
-/** A verified applicant the staff member may refer this job to. */
+/** An applicant the staff member may refer this job to. */
 export interface ReferrableApplicant {
   id: string;
   fullName: string;
   branchId: string | null;
+  identityStatus: string;
 }
 
 /** A job as the applicant sees it: only jobs staff referred to them. */
@@ -52,19 +53,26 @@ export type ReferJobToApplicantInput = z.infer<typeof referJobToApplicantSchema>
 // ─── Rules (pure, unit-tested) ────────────────────────────────────────────
 
 /**
- * A "verified applicant" for referral: the profile is live (ACTIVE) and the
- * staff identity check passed (identityStatus VERIFIED). A DRAFT profile was
- * never activated, and an UNVERIFIED / REJECTED identity was never checked.
+ * Who staff may refer a job to, for now (user decision 2026-11-09, interim
+ * "filhal" rule): the profile is live (ACTIVE) and the identity is VERIFIED
+ * or still UNVERIFIED. A DRAFT profile was never activated, a REJECTED
+ * identity failed its check, and an INACTIVE profile is not live — none of
+ * those three may be referred. Re-tighten to VERIFIED-only when the user
+ * says so; the check lives in this one function.
  */
 export function isReferrableApplicant(row: { status: string; identityStatus: string }): boolean {
-  return row.status === 'ACTIVE' && row.identityStatus === 'VERIFIED';
+  return (
+    row.status === 'ACTIVE' &&
+    (row.identityStatus === 'VERIFIED' || row.identityStatus === 'UNVERIFIED')
+  );
 }
 
 // ─── Staff: refer a job to an applicant ───────────────────────────────────
 
 /**
- * Staff shares an open job with a specific verified applicant in their city
- * scope. Idempotent: referring the same job to the same applicant twice
+ * Staff shares an open job with a specific applicant in their city scope
+ * (verified or, for now, unverified — see isReferrableApplicant).
+ * Idempotent: referring the same job to the same applicant twice
  * returns the first referral instead of a duplicate row (the unique index
  * is the backstop, not the guard).
  */
@@ -90,7 +98,7 @@ export async function referJobToApplicant(
     .where(eq(ap.id, input.applicantId));
   if (!applicant) throw new NotFoundError('Applicant', input.applicantId);
   if (!isReferrableApplicant(applicant))
-    throw new ForbiddenError('Jobs can only be referred to verified applicants');
+    throw new ForbiddenError('Jobs can only be referred to active applicants');
   await assertCityAccess(ctx.actor, applicant.branchId, {
     entityType: 'applicant',
     entityId: applicant.id,
@@ -178,14 +186,25 @@ async function buildReferralView(
   };
 }
 
-/** Verified applicants in the staff member's city scope, for the refer picker. */
+/** Applicants in the staff member's city scope, for the refer picker. */
 export async function listReferrableApplicants(actor: Actor): Promise<ReferrableApplicant[]> {
   assertPermission(actor, 'job:refer');
   const scope = cityScope(actor, ap.branchId);
   const rows = await db
-    .select({ id: ap.id, fullName: ap.fullName, branchId: ap.branchId })
+    .select({
+      id: ap.id,
+      fullName: ap.fullName,
+      branchId: ap.branchId,
+      identityStatus: ap.identityStatus,
+    })
     .from(ap)
-    .where(and(eq(ap.status, 'ACTIVE'), eq(ap.identityStatus, 'VERIFIED'), scope ?? undefined))
+    .where(
+      and(
+        eq(ap.status, 'ACTIVE'),
+        inArray(ap.identityStatus, ['VERIFIED', 'UNVERIFIED']),
+        scope ?? undefined,
+      ),
+    )
     .orderBy(asc(ap.fullName));
   return rows;
 }

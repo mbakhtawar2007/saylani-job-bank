@@ -25,6 +25,8 @@ export {
   employerRestrictedUpdateFields,
   isEmployerRestrictedJobStatus,
   jobEditability,
+  mayBypassEmployerJobRestrictions,
+  STAFF_JOB_BYPASS_ROLES,
   type JobEditability,
   type JobStatusTransition,
 } from './rules';

@@ -1,15 +1,49 @@
-"""Internal HTTP API called by the Next.js app (and for ops/debug)."""
+"""Internal HTTP API called by the Next.js app (and for ops/debug).
+
+Every route on this router is gated by a shared-secret Bearer token
+(MATCHING_API_TOKEN, >= 32 chars). The web app never calls this API — it
+drives matching through the DB outbox — so no web caller needs the token.
+"""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Request
+import secrets
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
+from .config import get_settings
 from .repository import read_latest_matches
 from .service import run_job_match
 from .types import MatchRunReport
 
-router = APIRouter(prefix="/internal/matches", tags=["matching"])
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+async def require_internal_token(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+) -> None:
+    """Shared-secret gate for /internal routes: no/short token means off (503)."""
+    expected = get_settings().api_token
+    if not expected or len(expected) < 32:
+        raise HTTPException(
+            status_code=503, detail="Internal API authentication is not configured"
+        )
+    if not credentials or not secrets.compare_digest(credentials.credentials, expected):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid internal API credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+router = APIRouter(
+    prefix="/internal/matches",
+    tags=["matching"],
+    dependencies=[Depends(require_internal_token)],
+)
 
 
 class RunRequest(BaseModel):

@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   index,
   integer,
@@ -74,6 +75,15 @@ export const jobMatches = pgTable(
     /** Master-data REFUSAL_REASON code — required when applicant_response = DECLINED. */
     refusalReasonCode: text('refusal_reason_code'),
     respondedAt: timestamp('responded_at', { withTimezone: true }),
+    /**
+     * C3/H19 (2026-11-08): true when this match's HIRED decision filled a
+     * vacancy (see syncMatchHire). The decline path frees the vacancy only
+     * when this flag is set — it is the proof that *this* match filled it,
+     * not a placement accept that happened first (syncMatchHire returns
+     * false then, and the flag stays false). Consumed (set false) when the
+     * vacancy is freed, so a decline can never free twice.
+     */
+    vacancyFilled: boolean('vacancy_filled').notNull().default(false),
     summary: text('summary').notNull(),
     generatedAt: timestamp('generated_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

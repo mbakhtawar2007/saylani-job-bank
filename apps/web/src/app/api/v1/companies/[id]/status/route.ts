@@ -6,6 +6,9 @@ import { z } from 'zod';
 /** PATCH /api/v1/companies/{id}/status — Branch Admin suspends or reinstates a company. */
 export const PATCH = apiHandler({
   permission: 'company:suspend',
+  // L10: a retried suspend/reinstate must not double-apply. The panel sends
+  // a fresh key per submit (see StaffCompanyPanel).
+  idempotent: true,
   params: z.object({ id: z.uuid() }),
   body: companyStatusSchema,
   handler: async ({ ctx, actor, params, body }) => {

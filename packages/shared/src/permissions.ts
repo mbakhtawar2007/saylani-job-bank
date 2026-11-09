@@ -31,8 +31,8 @@ export const PERMISSIONS = {
   'job:read': 'View jobs',
   'job:manage': 'Post and manage jobs for branch companies',
   'job:manage_own': "Post and manage own company's jobs",
-  /** Staff shares a job (vacancy) with a specific employer company. */
-  'job:refer': 'Refer jobs to employers',
+  /** Staff shares a job (vacancy) with a specific applicant. */
+  'job:refer': 'Refer jobs to applicants',
 
   'match_case:read': 'View match cases',
   'match_case:manage': 'Create, review and progress match cases',

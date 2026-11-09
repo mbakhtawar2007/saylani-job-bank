@@ -31,3 +31,15 @@ export function formatPkMobileDisplay(e164: string): string {
   const national = toNationalMobileDigits(e164);
   return national ? `+92 ${formatPkMobileNational(national)}` : e164;
 }
+
+/**
+ * M11 — mask a Pakistani mobile for employer display: "+923001234567" →
+ * "+92300***4567" (first 6 chars kept, middle masked, last 4 kept). The
+ * employer can still recognise the number but cannot call or message the
+ * candidate off-platform; contact runs through the in-app application chat
+ * (see placement/employer.ts sendMessage). Same shape as the log mask in
+ * lib/sms/mask.ts, kept here so display code does not import from sms.
+ */
+export function maskPkMobile(e164: string): string {
+  return e164.length > 8 ? `${e164.slice(0, 6)}***${e164.slice(-4)}` : '***';
+}

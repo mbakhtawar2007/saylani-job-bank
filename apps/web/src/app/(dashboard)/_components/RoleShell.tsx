@@ -9,6 +9,8 @@ import { DashboardLayout } from '@/components/templates';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import type { SelectOption } from '@/components/atoms';
 import { IssueApplicantTokenDialog } from './applicants/IssueApplicantTokenDialog';
+import { ApplicantTokenLookupDialog } from './applicants/ApplicantTokenLookupDialog';
+import { RegisterApplicantDialog } from './applicants/RegisterApplicantDialog';
 import { RegisterCompanyDialog } from './companies/RegisterCompanyDialog';
 import { navigationFor } from './navigation';
 import { useSignOut } from './SignOutButton';
@@ -69,9 +71,14 @@ export function RoleShell({
           <div className="grid gap-2">
             {registrationBranches && (
               // Token-only first counter (2026-11-07 reversal): the sidebar
-              // issues a numbered token from a CNIC + name. The full
-              // RegisterApplicantDialog is kept for the later step.
-              <IssueApplicantTokenDialog branches={registrationBranches} placement="sidebar" />
+              // issues a numbered token from a CNIC + name. Step 2 (2026-11-08)
+              // adds the lookup/reprint dialog and the full registration dialog
+              // that completes a token — the later step is now reachable.
+              <>
+                <IssueApplicantTokenDialog branches={registrationBranches} placement="sidebar" />
+                <ApplicantTokenLookupDialog branches={registrationBranches} placement="sidebar" />
+                <RegisterApplicantDialog branches={registrationBranches} placement="sidebar" />
+              </>
             )}
             {companyRegistrationBranches && (
               <RegisterCompanyDialog branches={companyRegistrationBranches} placement="sidebar" />

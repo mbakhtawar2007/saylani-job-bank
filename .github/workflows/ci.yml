@@ -19,7 +19,12 @@ jobs:
         image: postgis/postgis:16-3.4
         env:
           POSTGRES_USER: jobbank
-          POSTGRES_PASSWORD: jobbank
+          # No hardcoded password: service containers start before any step
+          # runs, so no step can generate a secret for them — instead every
+          # credential in this job derives from github.run_id, unique per
+          # run and never committed. The provision step below uses the same
+          # values, so the app, migrator and role setup all agree.
+          POSTGRES_PASSWORD: ci-pg-${{ github.run_id }}
           POSTGRES_DB: jobbank
         ports: ['5433:5432']
         options: >-
@@ -27,12 +32,12 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 20
 
     env:
-      DATABASE_URL: postgres://app_rw:app_rw@localhost:5433/jobbank
-      DATABASE_MIGRATOR_URL: postgres://jobbank:jobbank@localhost:5433/jobbank
+      DATABASE_URL: postgres://app_rw:ci-app-${{ github.run_id }}@localhost:5433/jobbank
+      DATABASE_MIGRATOR_URL: postgres://jobbank:ci-pg-${{ github.run_id }}@localhost:5433/jobbank
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       S3_ENDPOINT: http://localhost:8333
-      S3_ACCESS_KEY_ID: ci
-      S3_SECRET_ACCESS_KEY: ci
+      S3_ACCESS_KEY_ID: ci-${{ github.run_id }}
+      S3_SECRET_ACCESS_KEY: ci-${{ github.run_id }}
       S3_BUCKET: jobbank-documents
       S3_FORCE_PATH_STYLE: 'true'
 
@@ -64,10 +69,11 @@ jobs:
           echo "BETTER_AUTH_SECRET=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
 
       # Mirrors the pg-init-roles config in docker-compose.yml (service containers can't take it).
+      # Same per-run passwords as the service/job env above (github.run_id).
       - name: Provision database roles
         run: |
-          PGPASSWORD=jobbank psql -h localhost -p 5433 -U jobbank -d jobbank -v ON_ERROR_STOP=1 <<'SQL'
-          CREATE ROLE app_rw LOGIN PASSWORD 'app_rw';
+          PGPASSWORD=ci-pg-${{ github.run_id }} psql -h localhost -p 5433 -U jobbank -d jobbank -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE app_rw LOGIN PASSWORD 'ci-app-${{ github.run_id }}';
           GRANT CONNECT ON DATABASE jobbank TO app_rw;
           CREATE DATABASE jobbank_test OWNER jobbank;
           GRANT CONNECT ON DATABASE jobbank_test TO app_rw;

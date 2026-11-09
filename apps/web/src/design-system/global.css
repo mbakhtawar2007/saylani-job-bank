@@ -115,6 +115,12 @@
   line-height: 1.05;
 }
 
+/* N6: four-digit token numbers (1000–9999) shrink so the slip layout holds. */
+.token-slip__number-value--wide {
+  font-size: 44px;
+  letter-spacing: -1px;
+}
+
 .token-slip__rows {
   margin-top: 9px;
 }

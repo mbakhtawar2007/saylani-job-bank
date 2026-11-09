@@ -205,7 +205,10 @@ export default async function StaffJobDetailPage({ params }: { params: Promise<{
 
         <ReferJobToApplicantPanel
           jobId={job.id}
-          targets={referrableApplicants.map((t) => ({ value: t.id, label: t.fullName }))}
+          targets={referrableApplicants.map((t) => ({
+            value: t.id,
+            label: t.identityStatus === 'UNVERIFIED' ? `${t.fullName} (unverified)` : t.fullName,
+          }))}
           initialReferrals={applicantReferrals}
         />
 

@@ -62,7 +62,6 @@ export {
   resubmitOnboardedCompany,
   setOnboardedCompanyHeadOffice,
   staffOnboardCompany,
-  staffRegisterCompany,
   suspendCompany,
   transferCompany,
   type CompanyListItem,

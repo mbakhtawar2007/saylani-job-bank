@@ -2,14 +2,24 @@ import 'server-only';
 import { schema } from '@jobbank/db';
 import {
   karachiDay,
+  karachiDayEnd,
+  MAX_TOKEN_NUMBER,
+  parseTokenCode,
   tokenCodeFor,
   type ApplicantTokenView,
+  type CancelApplicantTokenInput,
   type IssueApplicantTokenInput,
+  type TokenLookupQuery,
 } from '@jobbank/shared';
-import { and, desc, eq, max } from 'drizzle-orm';
+import { and, asc, desc, eq, max } from 'drizzle-orm';
 import { getBranchContact } from '@/domains/branch';
-import { runCommand } from '@/domains/shared/audit';
-import { ConflictError, ValidationError, isUniqueViolation } from '@/domains/shared/errors';
+import { runCommand, type AuditEntry, type CommandScope } from '@/domains/shared/audit';
+import {
+  ConflictError,
+  NotFoundError,
+  ValidationError,
+  isUniqueViolation,
+} from '@/domains/shared/errors';
 import { assertBranchAccess, assertPermission, isSuperAdmin } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
 import { cnicTakenError } from './profile';
@@ -23,9 +33,25 @@ const tokens = schema.branchApplicantTokens;
  * number is a daily sequence per branch, starting at 1. The full
  * registration happens at a later step and links back through `applicantId`
  * on the token row.
+ *
+ * Step 2 (2026-11-08): tokens now expire at the end of their Pakistan day
+ * (`expires_at`, migration 0035), can be looked up and reprinted, can be
+ * cancelled (which frees the CNIC for a new token the same day), and are
+ * completed — ISSUED → COMPLETED with the applicant linked — by the full
+ * registration in the same transaction.
  */
 
+/** Retries for the daily-number race (N2): 10 attempts, then a 409 to retry. */
+const TOKEN_ISSUE_ATTEMPTS = 10;
+
 export type { ApplicantTokenView };
+
+/** `issueApplicantToken` result: `reissued` is true when an existing token was handed back. */
+export interface IssueApplicantTokenResult {
+  view: ApplicantTokenView;
+  /** True when the caller got a token issued earlier (same CNIC, same day). */
+  reissued: boolean;
+}
 
 function toView(
   row: typeof tokens.$inferSelect,
@@ -42,6 +68,8 @@ function toView(
     applicantName: row.applicantName,
     phone: row.phone,
     issuedAt: row.issuedAt.toISOString(),
+    expiresAt: row.expiresAt.toISOString(),
+    expired: row.expiresAt.getTime() <= Date.now(),
     status: row.status,
     applicantId: row.applicantId,
   };
@@ -51,7 +79,7 @@ function toView(
 export async function issueApplicantToken(
   ctx: SignedIn,
   input: IssueApplicantTokenInput,
-): Promise<ApplicantTokenView> {
+): Promise<IssueApplicantTokenResult> {
   assertPermission(ctx.actor, 'applicant:manage');
   if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, input.branchId);
 
@@ -68,7 +96,12 @@ export async function issueApplicantToken(
   const owner = await cnicOwner(db, input.cnic);
   if (owner) throw await cnicTakenError(db, owner);
 
-  const today = karachiDay();
+  // N3: one instant drives the whole issue — the Pakistan day, `issued_at`
+  // and `expires_at` can never disagree across a midnight rollover.
+  const now = new Date();
+  const today = karachiDay(now);
+  const expiresAt = karachiDayEnd(now);
+
   // Same person, same branch, same day: hand back the token already issued
   // instead of a duplicate (e.g. the slip was lost, or the counter double-clicked).
   const [existing] = await db
@@ -106,9 +139,9 @@ export async function issueApplicantToken(
         });
         return row!;
       });
-      return toView(updated, branch);
+      return { view: toView(updated, branch), reissued: true };
     }
-    return toView(existing, branch);
+    return { view: toView(existing, branch), reissued: true };
   }
 
   // Two counters can issue at the same moment: the unique indexes are the guard —
@@ -116,7 +149,12 @@ export async function issueApplicantToken(
   // (branch, day, cnic) WHERE status = 'ISSUED' (migration 0031) for the same-CNIC
   // dedupe (H22). On a collision, retry with the next number — or hand back the
   // token that won the race.
-  for (let attempt = 0; attempt < 5; attempt++) {
+  // N2: the retry budget is 10 attempts (was 5). MAX() still counts CANCELLED
+  // rows, deliberately: the (branch, day, number) unique index is unconditional,
+  // so reusing a cancelled number would collide on insert. A cancelled token
+  // burns one number out of 9999 — a harmless queue gap, not a leak worth an
+  // index rebuild.
+  for (let attempt = 0; attempt < TOKEN_ISSUE_ATTEMPTS; attempt++) {
     try {
       const row = await runCommand(ctx, async ({ tx, audit }) => {
         const recheckedOwner = await cnicOwner(tx, input.cnic);
@@ -127,6 +165,11 @@ export async function issueApplicantToken(
           .from(tokens)
           .where(and(eq(tokens.branchId, input.branchId), eq(tokens.registrationDay, today)));
         const tokenNumber = (highest?.value ?? 0) + 1;
+        if (tokenNumber > MAX_TOKEN_NUMBER) {
+          throw new ConflictError(
+            'No more token numbers are available for this branch today. Please ask a Super Admin.',
+          );
+        }
 
         const [created] = await tx
           .insert(tokens)
@@ -138,6 +181,8 @@ export async function issueApplicantToken(
             applicantName: input.applicantName,
             phone: input.phone,
             issuedBy: ctx.actor.userId,
+            issuedAt: now,
+            expiresAt,
           })
           .returning();
         if (!created) throw new Error('Token could not be saved.');
@@ -157,11 +202,11 @@ export async function issueApplicantToken(
         });
         return created;
       });
-      return toView(row, branch);
+      return { view: toView(row, branch), reissued: false };
     } catch (error) {
       if (
         isUniqueViolation(error, 'branch_applicant_tokens_branch_day_number_unique') &&
-        attempt < 4
+        attempt < TOKEN_ISSUE_ATTEMPTS - 1
       ) {
         continue;
       }
@@ -181,10 +226,175 @@ export async function issueApplicantToken(
           )
           .orderBy(desc(tokens.issuedAt))
           .limit(1);
-        if (winner) return toView(winner, branch);
+        if (winner) return { view: toView(winner, branch), reissued: true };
       }
       throw error;
     }
   }
   throw new ConflictError('Could not issue a token. Please try again.');
+}
+
+// ─── Lookup / reprint ──────────────────────────────────────────────────
+
+/**
+ * Staff token lookup (step 2): by token code (`KHI-GULSHAN-007`), by CNIC +
+ * branch (+ day, default today), or the whole branch-day list. Always
+ * branch-scoped; Super Admins may look up any branch. A token code has no
+ * day in it, so the code lookup returns the most recent token with that
+ * branch + number. Returns an array (0 or 1 rows for the single lookups) so
+ * the list and single shapes stay one contract.
+ */
+export async function lookupApplicantTokens(
+  ctx: SignedIn,
+  query: TokenLookupQuery,
+): Promise<ApplicantTokenView[]> {
+  assertPermission(ctx.actor, 'applicant:manage');
+
+  if (query.tokenCode) {
+    const parsed = parseTokenCode(query.tokenCode.trim());
+    if (!parsed) {
+      throw new ValidationError([
+        { path: 'tokenCode', message: 'Enter a token code like KHI-GULSHAN-007' },
+      ]);
+    }
+    const [branchRow] = await db
+      .select({ id: schema.branches.id })
+      .from(schema.branches)
+      .where(eq(schema.branches.code, parsed.branchCode));
+    if (!branchRow) throw new NotFoundError('Token');
+    if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, branchRow.id);
+    const branch = await getBranchContact(branchRow.id);
+    if (!branch) throw new NotFoundError('Token');
+    const [row] = await db
+      .select()
+      .from(tokens)
+      .where(and(eq(tokens.branchId, branch.id), eq(tokens.tokenNumber, parsed.tokenNumber)))
+      .orderBy(desc(tokens.registrationDay), desc(tokens.issuedAt))
+      .limit(1);
+    return row ? [toView(row, branch)] : [];
+  }
+
+  const branchId = query.branchId!;
+  if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, branchId);
+  const branch = await getBranchContact(branchId);
+  if (!branch) {
+    throw new ValidationError([{ path: 'branchId', message: 'Choose a branch' }]);
+  }
+  const day = query.day ?? karachiDay();
+
+  if (query.cnic) {
+    const cnic = query.cnic.replace(/[\s-]/g, '');
+    const [row] = await db
+      .select()
+      .from(tokens)
+      .where(
+        and(eq(tokens.branchId, branchId), eq(tokens.registrationDay, day), eq(tokens.cnic, cnic)),
+      )
+      .orderBy(desc(tokens.issuedAt))
+      .limit(1);
+    return row ? [toView(row, branch)] : [];
+  }
+
+  const rows = await db
+    .select()
+    .from(tokens)
+    .where(and(eq(tokens.branchId, branchId), eq(tokens.registrationDay, day)))
+    .orderBy(asc(tokens.tokenNumber))
+    .limit(100);
+  return rows.map((row) => toView(row, branch));
+}
+
+// ─── Cancel / complete ─────────────────────────────────────────────────
+
+/**
+ * Cancel an ISSUED token (N5): the person left, or the slip details were
+ * wrong and the counter wants a clean re-issue. A CANCELLED token does not
+ * block a new token for the same CNIC the same day — the 0031 partial unique
+ * index only covers ISSUED rows, so the next issue is a fresh number.
+ * COMPLETED tokens can never be cancelled (the applicant already exists).
+ */
+export async function cancelApplicantToken(
+  ctx: SignedIn,
+  tokenId: string,
+  input: CancelApplicantTokenInput = {},
+): Promise<ApplicantTokenView> {
+  assertPermission(ctx.actor, 'applicant:manage');
+  const [existing] = await db.select().from(tokens).where(eq(tokens.id, tokenId));
+  if (!existing) throw new NotFoundError('Token');
+  if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, existing.branchId);
+  if (existing.status !== 'ISSUED') {
+    throw new ConflictError(
+      `Only an issued token can be cancelled (this one is ${existing.status}).`,
+    );
+  }
+  const branch = await getBranchContact(existing.branchId);
+  if (!branch) throw new NotFoundError('Token');
+  const updated = await runCommand(ctx, async ({ tx, audit }) => {
+    const [row] = await tx
+      .update(tokens)
+      .set({ status: 'CANCELLED' })
+      .where(and(eq(tokens.id, tokenId), eq(tokens.status, 'ISSUED')))
+      .returning();
+    if (!row) {
+      throw new ConflictError('This token was already completed or cancelled.');
+    }
+    audit({
+      action: 'applicant.token_cancelled',
+      entityType: 'applicant_token',
+      entityId: tokenId,
+      branchId: existing.branchId,
+      before: { status: 'ISSUED' },
+      after: { status: 'CANCELLED' },
+      reason: input.reason,
+      metadata: { tokenNumber: existing.tokenNumber },
+    });
+    return row;
+  });
+  return toView(updated, branch);
+}
+
+/**
+ * Complete a token inside an already-open transaction — called by
+ * `staffRegisterApplicant` after the applicant row is created, so the
+ * ISSUED → COMPLETED transition and the registration commit or roll back
+ * together. The token must be ISSUED, unexpired, for this branch and CNIC;
+ * anything else is a 409 and the whole registration fails.
+ */
+export async function completeTokenForRegistration(
+  tx: CommandScope['tx'],
+  audit: (entry: AuditEntry) => void,
+  args: { tokenId: string; applicantId: string; branchId: string; cnic: string; now?: Date },
+): Promise<void> {
+  const now = args.now ?? new Date();
+  const [row] = await tx.select().from(tokens).where(eq(tokens.id, args.tokenId));
+  if (!row) throw new NotFoundError('Token');
+  if (row.branchId !== args.branchId) {
+    throw new ConflictError('This token was issued at a different branch.');
+  }
+  if (row.cnic !== args.cnic) {
+    throw new ConflictError('This token was issued for a different CNIC.');
+  }
+  if (row.status !== 'ISSUED') {
+    throw new ConflictError(`This token is already ${row.status}.`);
+  }
+  if (row.expiresAt.getTime() <= now.getTime()) {
+    throw new ConflictError('This token expired at the end of its issue day. Issue a new token.');
+  }
+  const [updated] = await tx
+    .update(tokens)
+    .set({ status: 'COMPLETED', applicantId: args.applicantId })
+    .where(and(eq(tokens.id, args.tokenId), eq(tokens.status, 'ISSUED')))
+    .returning();
+  if (!updated) {
+    throw new ConflictError('This token was already completed or cancelled.');
+  }
+  audit({
+    action: 'applicant.token_completed',
+    entityType: 'applicant_token',
+    entityId: args.tokenId,
+    branchId: args.branchId,
+    before: { status: 'ISSUED', applicantId: null },
+    after: { status: 'COMPLETED', applicantId: args.applicantId },
+    metadata: { tokenNumber: row.tokenNumber },
+  });
 }

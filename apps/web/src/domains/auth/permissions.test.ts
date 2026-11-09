@@ -31,6 +31,10 @@ describe('permission matrix encodes the PRD rules', () => {
   it('verifiers manage companies and post jobs for them', () => {
     expect(holders('company:manage')).toEqual(['SUPER_ADMIN', 'BRANCH_ADMIN', 'VERIFIER']);
     expect(holders('job:manage')).toEqual(['BRANCH_ADMIN', 'VERIFIER', 'STAFF']);
+    // N20: Super Admin bypasses the employer field restrictions via an
+    // explicit role bypass (domains/job/rules.ts), NOT via `job:manage` —
+    // SA holds no operator permissions, so this must stay false.
+    expect(ROLE_PERMISSIONS.SUPER_ADMIN).not.toContain('job:manage');
     expect(ROLE_PERMISSIONS.VERIFIER).toContain('job:read');
     // A verifier creates companies and jobs, but never refers candidates or
     // suspends companies — those stay with staff and branch admins.

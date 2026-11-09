@@ -9,7 +9,7 @@ import type { JobApplicantReferralView } from '@/domains/job';
 
 interface Props {
   jobId: string;
-  /** Verified applicants in this staff member's city scope. */
+  /** Applicants in this staff member's city scope (verified + unverified, for now). */
   targets: SelectOption[];
   initialReferrals: JobApplicantReferralView[];
 }
@@ -23,7 +23,8 @@ function formatDate(iso: string) {
 }
 
 /**
- * Staff refers this job to a verified applicant. The applicant sees the job
+ * Staff refers this job to an applicant (verified or, for now, unverified).
+ * The applicant sees the job
  * on their Jobs page from the moment the referral is made — and only then.
  */
 export function ReferJobToApplicantPanel({ jobId, targets, initialReferrals }: Props) {
@@ -79,7 +80,7 @@ export function ReferJobToApplicantPanel({ jobId, targets, initialReferrals }: P
       </p>
 
       {targets.length === 0 ? (
-        <p className="text-fg-muted text-sm">No verified applicants in your scope yet.</p>
+        <p className="text-fg-muted text-sm">No applicants in your scope yet.</p>
       ) : (
         <form className="grid gap-4" onSubmit={submit} noValidate>
           {alert && (
@@ -90,7 +91,11 @@ export function ReferJobToApplicantPanel({ jobId, targets, initialReferrals }: P
               {alert}
             </p>
           )}
-          <FormField label="Applicant" required hint="Only verified applicants are listed">
+          <FormField
+            label="Applicant"
+            required
+            hint="Verified and unverified applicants are listed for now"
+          >
             <Select
               value={applicantId}
               onChange={(event) => setApplicantId(event.target.value)}

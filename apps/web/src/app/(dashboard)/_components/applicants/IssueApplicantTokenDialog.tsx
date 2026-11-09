@@ -46,6 +46,10 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
     if (next) {
       setToken(null);
       resetForm();
+    } else {
+      // N8: closing the dialog clears the token, so the print portal does not
+      // stay mounted with a stale slip after the window is gone.
+      setToken(null);
     }
   };
 
@@ -60,9 +64,12 @@ export function IssueApplicantTokenDialog({ branches, placement = 'default' }: P
     setErrors({});
     setLoading(true);
     try {
+      // N7: a fresh Idempotency-Key per issue, so a double-click or a retried
+      // request replays the same issue instead of issuing twice.
       const { data } = await apiFetch<ApplicantTokenView>('/api/v1/applicants/tokens', {
         method: 'POST',
         body: parsed.data,
+        idempotencyKey: crypto.randomUUID(),
       });
       setToken(data);
     } catch (error) {

@@ -69,12 +69,11 @@ describe('profile sections', () => {
     ).rejects.toEqual(violates('applicant_experience_dates'));
   });
 
-  it('never lets an applicant ask for more than the 10 km maximum', async () => {
-    await expect(
-      app.client`INSERT INTO applicant_preferences (applicant_id, willing_radius_m) VALUES (${applicantId}, 10001)`,
-    ).rejects.toEqual(violates('applicant_preferences_radius'));
-  });
-
+  // N13 (2026-11-08): the 10 km ceiling used to be tested here against
+  // applicant_preferences.willing_radius_m, but that column is dead — the
+  // radius lives in match_radius_policies since M5, and its ceiling is
+  // covered by 'never allows a radius beyond 10 km' in
+  // settings-tables.integration.test.ts. Migration 0036 drops the column.
   it('indexes the home pin for distance queries', async () => {
     const [index] = await app.client`
       SELECT indexdef FROM pg_indexes WHERE indexname = 'applicant_addresses_location_gix'`;

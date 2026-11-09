@@ -16,6 +16,9 @@ export const GET = apiHandler({
 /** PATCH /api/v1/companies/{id} — Super Admin corrects locked company details. */
 export const PATCH = apiHandler({
   permission: 'company:manage',
+  // L10: a retried correction must not double-apply. The panel sends a fresh
+  // key per submit (see StaffCompanyPanel).
+  idempotent: true,
   params,
   body: correctCompanySchema,
   output: companyViewSchema,

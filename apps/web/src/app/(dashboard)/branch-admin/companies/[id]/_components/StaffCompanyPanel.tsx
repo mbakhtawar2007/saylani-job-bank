@@ -164,12 +164,25 @@ export function StaffCompanyPanel({
   async function changeStatus(status: 'SUSPENDED' | 'VERIFIED', note?: string) {
     setPending(status);
     setError(null);
+    // L10: the status route requires an Idempotency-Key — one fresh key per
+    // submit, so a retried click replays instead of double-applying.
+    // Found while wiring it: the call used to send `note`, but the route
+    // requires `reason` (min 5 chars), so every suspend/reinstate from this
+    // panel 422'd. Suspend needs a typed reason; reinstate records a fixed
+    // one — there is no note field on the reinstate button.
+    const reason = status === 'SUSPENDED' ? (note ?? '').trim() : 'Company reinstated';
+    if (reason.length < 5) {
+      setError('Add a reason for this change (at least 5 characters) — it is recorded.');
+      setPending(null);
+      return;
+    }
     try {
       const { data: saved } = await apiFetch<CompanyView>(
         `/api/v1/companies/${company_.id}/status`,
         {
           method: 'PATCH',
-          body: { status, note: note ?? null },
+          body: { status, reason },
+          idempotencyKey: crypto.randomUUID(),
         },
       );
       setCompany_(saved);
@@ -382,6 +395,10 @@ export function StaffCompanyPanel({
       const { data: saved } = await apiFetch<CompanyView>(`/api/v1/companies/${company_.id}`, {
         method: 'PATCH',
         body: { ...changes, reason: correctReason.trim() },
+        // L10: the correct-details route requires an Idempotency-Key — one
+        // fresh key per submit, so a retried correction replays instead of
+        // double-applying.
+        idempotencyKey: crypto.randomUUID(),
       });
       setCompany_(saved);
       setShowCorrectForm(false);
@@ -603,7 +620,7 @@ export function StaffCompanyPanel({
       {showSuspendForm && (
         <div className="border-border bg-surface grid gap-3 rounded-xl border p-5">
           <h2 className="text-fg font-semibold">Suspend company</h2>
-          <FormField label="Reason for suspension (optional — shown to the employer)">
+          <FormField label="Reason for suspension (required — shown to the employer, recorded in the audit log)">
             <Textarea
               rows={2}
               value={suspendNote}

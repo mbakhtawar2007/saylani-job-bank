@@ -1,4 +1,4 @@
-import type { JobRequirementsInput, JobStatus, UpdateJobInput } from '@jobbank/shared';
+import type { JobRequirementsInput, JobStatus, Role, UpdateJobInput } from '@jobbank/shared';
 
 export type JobEditability = 'editable' | 'read_only';
 
@@ -66,37 +66,63 @@ export function isEmployerRestrictedJobStatus(status: JobStatus): boolean {
 }
 
 /**
+ * Roles that bypass the employer field restrictions on a published job
+ * (N20 decision, 2026-11-08). The bypass used to be permission-based
+ * (`hasPermission(actor, 'job:manage')`), which wrongly INCLUDED verifiers
+ * — VERIFIER holds `job:manage` for posting jobs via staffCreateJob — and
+ * wrongly EXCLUDED Super Admin, who holds neither `job:manage` nor
+ * `job:manage_own` and was therefore treated as an employer by the
+ * allowlist. The bypass is now role-based: STAFF and BRANCH_ADMIN run the
+ * Job Bank side of a posting, and SUPER_ADMIN is never treated as an
+ * employer. VERIFIER is explicitly NOT in the bypass: verifier job-posting
+ * is intended (7296e68), but the restricted-field bypass for verifiers was
+ * never decided, so a verifier stays restricted here unless they also hold
+ * STAFF, BRANCH_ADMIN or SUPER_ADMIN. SUPER_ADMIN gets this explicit
+ * bypass instead of being granted `job:manage`: the repo's established
+ * pattern is explicit SA bypasses (see scope.ts), SA deliberately holds no
+ * operator permissions, and granting `job:manage` would also open
+ * staffCreateJob and every other `job:manage`-gated staff path to SA.
+ */
+export const STAFF_JOB_BYPASS_ROLES: readonly Role[] = ['STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN'];
+
+/** True when the actor's roles bypass the employer field restrictions. */
+export function mayBypassEmployerJobRestrictions(roles: readonly Role[]): boolean {
+  return roles.some((role) => STAFF_JOB_BYPASS_ROLES.includes(role));
+}
+
+/**
  * Restricted PATCH fields the input actually carries, for an employer
- * editing a job in the given status. Empty when the actor is staff
- * (`job:manage` holders edit everything) or the job is still DRAFT.
+ * editing a job in the given status. Empty when the actor holds a bypass
+ * role (STAFF, BRANCH_ADMIN or SUPER_ADMIN — see
+ * mayBypassEmployerJobRestrictions) or the job is still DRAFT.
  * Pure and DB-free so the allowlist is unit-testable without a database.
  */
 export function employerRestrictedUpdateFields(
-  isStaff: boolean,
+  roles: readonly Role[],
   status: JobStatus,
   input: UpdateJobInput,
 ): (keyof UpdateJobInput)[] {
-  if (isStaff || !isEmployerRestrictedJobStatus(status)) return [];
+  if (mayBypassEmployerJobRestrictions(roles) || !isEmployerRestrictedJobStatus(status)) return [];
   return EMPLOYER_RESTRICTED_JOB_FIELDS.filter((field) => input[field] !== undefined);
 }
 
 /** Same allowlist for the requirements sub-resource (PUT replaces the row). */
 export function employerRestrictedRequirementsFields(
-  isStaff: boolean,
+  roles: readonly Role[],
   status: JobStatus,
   input: JobRequirementsInput,
 ): (keyof JobRequirementsInput)[] {
-  if (isStaff || !isEmployerRestrictedJobStatus(status)) return [];
+  if (mayBypassEmployerJobRestrictions(roles) || !isEmployerRestrictedJobStatus(status)) return [];
   return EMPLOYER_RESTRICTED_REQUIREMENTS_FIELDS.filter((field) => input[field] !== undefined);
 }
 
 /**
  * Whether the actor may replace the job's location or skills list outright.
  * Both are restricted once the job is OPEN (location drives city scope,
- * skills drive matching); only staff may change them then.
+ * skills drive matching); only bypass-role holders may change them then.
  */
-export function employerMayEditJobSubResource(isStaff: boolean, status: JobStatus): boolean {
-  return isStaff || !isEmployerRestrictedJobStatus(status);
+export function employerMayEditJobSubResource(roles: readonly Role[], status: JobStatus): boolean {
+  return mayBypassEmployerJobRestrictions(roles) || !isEmployerRestrictedJobStatus(status);
 }
 
 /** Transitions the employer is allowed to trigger. */

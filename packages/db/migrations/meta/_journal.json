@@ -246,6 +246,27 @@
       "when": 1794137955988,
       "tag": "0034_drop_job_referrals",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1794140482656,
+      "tag": "0035_branch_applicant_tokens_expires_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1794141305000,
+      "tag": "0036_drop_applicant_preferences_willing_radius_m",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794141306000,
+      "tag": "0037_job_matches_vacancy_filled",
+      "breakpoints": true
     }
   ]
 }

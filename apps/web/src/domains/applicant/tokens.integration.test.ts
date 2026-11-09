@@ -1,11 +1,12 @@
 import { schema } from '@jobbank/db';
 import { and, eq } from 'drizzle-orm';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { POST as issueToken } from '@/app/api/v1/applicants/tokens/route';
+import { GET as lookupTokens, POST as issueToken } from '@/app/api/v1/applicants/tokens/route';
+import { POST as cancelToken } from '@/app/api/v1/applicants/tokens/[id]/cancel/route';
 import { POST as staffRegister } from '@/app/api/v1/applicants/route';
 import { resetMemoryRateLimits } from '@/domains/shared/rate-limit';
 import { db } from '@/lib/db';
-import { call, randomPhone, signIn, type Jar } from '@/test/api-client';
+import { call, owner, randomPhone, signIn, type Jar } from '@/test/api-client';
 
 const randomCnic = () => `42${String(Math.floor(Math.random() * 1e11)).padStart(11, '0')}`;
 
@@ -32,8 +33,14 @@ async function issue(branchId: string, cnic: string, jar = staffJar) {
   return call(issueToken, '/api/v1/applicants/tokens', {
     method: 'POST',
     body: { branchId, cnic, applicantName: 'Ahmed Raza', phone: randomPhone() },
+    // N7: the route is idempotent — every issue carries a fresh key.
+    headers: { 'idempotency-key': crypto.randomUUID() },
     jar,
   });
+}
+
+async function lookup(path: string, jar = staffJar) {
+  return call(lookupTokens, `/api/v1/applicants/tokens${path}`, { jar });
 }
 
 describe('first-counter applicant tokens', () => {
@@ -54,14 +61,17 @@ describe('first-counter applicant tokens', () => {
     expect(second.status, JSON.stringify(second.body)).toBe(201);
     expect(second.body.data.tokenNumber).toBe(2);
     expect(second.body.data.tokenCode).toBe('KHI-GULSHAN-002');
+    // N11: every token carries its end-of-day expiry.
+    expect(second.body.data.expiresAt).toEqual(expect.any(String));
+    expect(second.body.data.expired).toBe(false);
   });
 
-  it('returns the same token when the same CNIC is issued twice in a day', async () => {
+  it('returns the same token with 200 (not 201) when the same CNIC is issued twice in a day', async () => {
     const cnic = randomCnic();
     const first = await issue(khi, cnic);
     expect(first.status).toBe(201);
     const again = await issue(khi, cnic);
-    expect(again.status).toBe(201);
+    expect(again.status).toBe(200);
     expect(again.body.data.id).toBe(first.body.data.id);
     expect(again.body.data.tokenNumber).toBe(first.body.data.tokenNumber);
   });
@@ -108,5 +118,142 @@ describe('first-counter applicant tokens', () => {
         ),
       );
     expect(audit).toMatchObject({ branchId: khi });
+  });
+
+  it('looks a token up by code, by CNIC + branch, and as a branch-day list', async () => {
+    const cnic = randomCnic();
+    const issued = await issue(khi, cnic);
+    expect(issued.status).toBe(201);
+    const code = issued.body.data.tokenCode as string;
+
+    const byCode = await lookup(`?tokenCode=${code}`);
+    expect(byCode.status).toBe(200);
+    expect(byCode.body.data).toHaveLength(1);
+    expect(byCode.body.data[0]).toMatchObject({ tokenCode: code, status: 'ISSUED' });
+
+    const byCnic = await lookup(`?cnic=${cnic}&branchId=${khi}`);
+    expect(byCnic.status).toBe(200);
+    expect(byCnic.body.data).toHaveLength(1);
+    expect(byCnic.body.data[0].id).toBe(issued.body.data.id);
+
+    const list = await lookup(`?branchId=${khi}`);
+    expect(list.status).toBe(200);
+    expect(list.body.data.map((t: { tokenCode: string }) => t.tokenCode)).toContain(code);
+
+    const missing = await lookup('?tokenCode=KHI-GULSHAN-9999');
+    expect(missing.status).toBe(200);
+    expect(missing.body.data).toHaveLength(0);
+  });
+
+  it('cancelling a token frees the CNIC for a new token the same day (N5)', async () => {
+    const cnic = randomCnic();
+    const first = await issue(khi, cnic);
+    expect(first.status).toBe(201);
+
+    const cancelled = await call(
+      cancelToken,
+      `/api/v1/applicants/tokens/${first.body.data.id}/cancel`,
+      {
+        method: 'POST',
+        body: {},
+        headers: { 'idempotency-key': crypto.randomUUID() },
+        params: { id: first.body.data.id as string },
+        jar: staffJar,
+      },
+    );
+    expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(200);
+    expect(cancelled.body.data.status).toBe('CANCELLED');
+
+    const again = await issue(khi, cnic);
+    expect(again.status).toBe(201);
+    expect(again.body.data.id).not.toBe(first.body.data.id);
+    expect(again.body.data.tokenNumber).toBe(first.body.data.tokenNumber + 1);
+
+    const cancelCompleted = await call(
+      cancelToken,
+      `/api/v1/applicants/tokens/${first.body.data.id}/cancel`,
+      {
+        method: 'POST',
+        body: {},
+        headers: { 'idempotency-key': crypto.randomUUID() },
+        params: { id: first.body.data.id as string },
+        jar: staffJar,
+      },
+    );
+    expect(cancelCompleted.status).toBe(409);
+  });
+
+  it('completes the token when the full registration names it, and refuses a second use', async () => {
+    const cnic = randomCnic();
+    const issued = await issue(khi, cnic);
+    expect(issued.status).toBe(201);
+
+    const registered = await call(staffRegister, '/api/v1/applicants', {
+      method: 'POST',
+      body: {
+        fullName: 'Ahmed Raza',
+        fatherName: 'Imran Raza',
+        cnic,
+        dateOfBirth: '1998-04-12',
+        gender: 'MALE',
+        email: '',
+        phone: issued.body.data.phone,
+        branchId: khi,
+        tokenId: issued.body.data.id,
+      },
+      jar: staffJar,
+    });
+    expect(registered.status, JSON.stringify(registered.body)).toBe(201);
+
+    const after = await lookup(`?tokenCode=${issued.body.data.tokenCode}`);
+    expect(after.body.data[0]).toMatchObject({
+      status: 'COMPLETED',
+      applicantId: registered.body.data.id,
+    });
+
+    // The same token cannot complete a second registration.
+    const second = await call(staffRegister, '/api/v1/applicants', {
+      method: 'POST',
+      body: {
+        fullName: 'Bilal Ahmed',
+        fatherName: 'Imran Ahmed',
+        cnic: randomCnic(),
+        dateOfBirth: '1998-04-12',
+        gender: 'MALE',
+        email: '',
+        phone: randomPhone(),
+        branchId: khi,
+        tokenId: issued.body.data.id,
+      },
+      jar: staffJar,
+    });
+    expect(second.status).toBe(409);
+  });
+
+  it('shows an expired token as expired, and refuses to complete it', async () => {
+    const cnic = randomCnic();
+    const issued = await issue(khi, cnic);
+    expect(issued.status).toBe(201);
+    await owner`UPDATE branch_applicant_tokens SET expires_at = now() - interval '1 hour' WHERE id = ${issued.body.data.id}`;
+
+    const found = await lookup(`?tokenCode=${issued.body.data.tokenCode}`);
+    expect(found.body.data[0]).toMatchObject({ status: 'ISSUED', expired: true });
+
+    const registered = await call(staffRegister, '/api/v1/applicants', {
+      method: 'POST',
+      body: {
+        fullName: 'Ahmed Raza',
+        fatherName: 'Imran Raza',
+        cnic,
+        dateOfBirth: '1998-04-12',
+        gender: 'MALE',
+        email: '',
+        phone: issued.body.data.phone,
+        branchId: khi,
+        tokenId: issued.body.data.id,
+      },
+      jar: staffJar,
+    });
+    expect(registered.status).toBe(409);
   });
 });

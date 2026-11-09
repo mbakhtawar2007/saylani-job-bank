@@ -17,9 +17,8 @@ const consoleSender: SmsSender = {
       if (devOutbox.length > 50) devOutbox.shift();
     }
     if (process.env.NODE_ENV === 'development') {
-      // Deliberately printed in full: this sender only exists for local development,
-      // and getSmsSender() refuses it outright in production.
-      console.info(`\n📱 [dev SMS → ${maskPhoneForLog(to)}] ${message}\n`);
+      // Log only that a challenge was issued, never the message body or code.
+      console.info(`📱 [dev SMS → ${maskPhoneForLog(to)}] challenge issued`);
     }
   },
 };

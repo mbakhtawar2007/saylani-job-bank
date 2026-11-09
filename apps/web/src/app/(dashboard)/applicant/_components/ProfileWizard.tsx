@@ -23,7 +23,6 @@ export function ProfileWizard({
   initialStep,
   lists,
   documentTypes,
-  maxRadiusM,
   onReturnToOverview,
   onProfileUpdate,
 }: {

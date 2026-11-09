@@ -9,7 +9,6 @@ import {
   isResubmitNoteSufficient,
   type CompanyStatus,
   type OnboardedCompanyHeadOfficeInput,
-  type RegisterCompanyInput,
   type Role,
   type StaffOnboardCompanyInput,
   type UpdateCompanyInput,
@@ -32,6 +31,7 @@ import {
 } from 'drizzle-orm';
 import { z } from 'zod';
 import { getBranchContact } from '@/domains/branch';
+import { createNotification, notifyCompanyEmployers } from '@/domains/notifications';
 import { assertActiveMasterData, masterDataLabels } from '@/domains/settings';
 import { runCommand } from '@/domains/shared/audit';
 import {
@@ -59,10 +59,12 @@ import {
   c,
   changedSinceInfoRequest,
   contacts,
+  currentDocuments,
   loadCompany,
   locs,
   openVerification,
   recordTransition,
+  requiredDocumentTypes,
   submissionMissing,
   ver,
   verificationDueOn,
@@ -269,7 +271,18 @@ export async function suspendCompany(
       metadata: { reason: input.reason },
     });
   });
-  return getCompanyDetail(ctx.actor, companyId);
+  const view = await getCompanyDetail(ctx.actor, companyId);
+  // M25 — the company's employer users must hear their company was
+  // suspended (until now only the audit log recorded it). Best-effort,
+  // post-commit, following the placement notification pattern.
+  void notifyCompanyEmployers(db, companyId, ({ userId }) => ({
+    userId,
+    type: 'COMPANY_SUSPENDED',
+    title: `Company suspended — ${view.details.legalName}`,
+    body: `Your company ${view.details.legalName} has been suspended. Reason: ${input.reason}`,
+    data: { companyId, reason: input.reason },
+  })).catch((err) => ctx.log.error('company suspend notification failed', { companyId, err }));
+  return view;
 }
 
 export async function reinstateCompany(
@@ -293,7 +306,16 @@ export async function reinstateCompany(
       metadata: { reason: input.reason },
     });
   });
-  return getCompanyDetail(ctx.actor, companyId);
+  const view = await getCompanyDetail(ctx.actor, companyId);
+  // M25 — same as suspend: the employer users hear the company is live again.
+  void notifyCompanyEmployers(db, companyId, ({ userId }) => ({
+    userId,
+    type: 'COMPANY_REINSTATED',
+    title: `Company reinstated — ${view.details.legalName}`,
+    body: `Your company ${view.details.legalName} has been reinstated and can post jobs again.`,
+    data: { companyId, reason: input.reason },
+  })).catch((err) => ctx.log.error('company reinstate notification failed', { companyId, err }));
+  return view;
 }
 
 // ─── Super Admin ───────────────────────────────────────────────────────
@@ -347,6 +369,15 @@ export async function assignVerifier(
       metadata: { reason: input.reason },
     });
   });
+  // M25 — the assigned verifier hears about the new case (until now only
+  // the queue showed it, and only if they looked). Best-effort, post-commit.
+  void createNotification(db, {
+    userId: input.verifierId,
+    type: 'VERIFIER_ASSIGNED',
+    title: `Verification assigned — ${company.legalName}`,
+    body: `You have been assigned to verify ${company.legalName}. Reason: ${input.reason}`,
+    data: { companyId, verifierId: input.verifierId, reason: input.reason },
+  }).catch((err) => ctx.log.error('assign verifier notification failed', { companyId, err }));
   return getCompanyDetail(ctx.actor, companyId);
 }
 
@@ -361,6 +392,10 @@ export async function transferCompany(
   // company:manage is also held by verifiers since their scope grew; a
   // verifier must never be able to move a company to another branch.
   assertRole(ctx.actor, 'SUPER_ADMIN', 'BRANCH_ADMIN');
+  // M25: set inside the transaction when the move lands, read after commit
+  // for the employer notification below. Stays null for a no-op transfer
+  // (same branch) or a failed one, so nothing is notified then.
+  let transferredTo: string | null = null;
   await runCommand(ctx, async ({ tx, audit }) => {
     const row = await loadCompany(tx, companyId, { forUpdate: true });
     // Scope BEFORE the move (see correctCompanyDetails): only a company in
@@ -384,6 +419,7 @@ export async function transferCompany(
     // Move the company. No open round can exist here (blocked above), so
     // there is no assigned verifier to strand.
     await tx.update(c).set({ branchId: input.branchId }).where(eq(c.id, row.id));
+    transferredTo = branch.name;
     audit({
       action: 'company.transfer',
       entityType: 'company',
@@ -394,60 +430,31 @@ export async function transferCompany(
       metadata: { reason: input.reason },
     });
   });
-  return getCompanyDetail(ctx.actor, companyId);
-}
-
-/** Branch Admin or Super Admin registers a company on behalf of an employer. */
-export async function staffRegisterCompany(
-  ctx: SignedIn,
-  input: RegisterCompanyInput & { branchId: string },
-): Promise<CompanyView> {
-  assertPermission(ctx.actor, 'company:manage');
-  // company:manage is also held by verifiers since their scope grew; direct
-  // registration must stay with Branch Admin and Super Admin — verifiers
-  // register companies through the field-visit onboarding flow instead.
-  assertRole(ctx.actor, 'SUPER_ADMIN', 'BRANCH_ADMIN');
-  if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, input.branchId);
-
-  const { branchId, ...companyInput } = input;
-  // H10: the employer and onboard paths both require an active INDUSTRY
-  // code; the staff path must not accept a dead or invented one either.
-  await assertActiveMasterData(db, 'INDUSTRY', [companyInput.industryCode], () => 'industryCode');
-  const [existing] = await db
-    .select({ id: c.id })
-    .from(c)
-    .where(and(eq(c.ntn, companyInput.ntn), sql`${c.status} not in ('DRAFT', 'REJECTED')`));
-  if (existing) throw ntnTaken();
-
-  let createdId: string | null = null;
-  try {
-    await runCommand(ctx, async ({ tx, audit }) => {
-      // Re-check inside the transaction: a live company with this NTN may have
-      // appeared after the read above (see assertNtnFree).
-      await assertNtnFree(tx, companyInput.ntn);
-      const [row] = await tx
-        .insert(c)
-        .values({ ...companyInput, branchId, createdBy: ctx.actor.userId })
-        .returning();
-      createdId = row!.id;
-      audit({
-        action: 'company.register',
-        entityType: 'company',
-        entityId: row!.id,
-        branchId,
-        after: { ...companyInput, branchId },
-      });
-    });
-  } catch (error) {
-    if (isUniqueViolation(error, ACTIVE_NTN_CONSTRAINT)) throw ntnTaken();
-    throw error;
+  const view = await getCompanyDetail(ctx.actor, companyId);
+  // M25 — the company's employer users hear their branch changed (until now
+  // only the audit log recorded it). Best-effort, post-commit.
+  if (transferredTo) {
+    const branchName = transferredTo;
+    void notifyCompanyEmployers(db, companyId, ({ userId }) => ({
+      userId,
+      type: 'COMPANY_TRANSFERRED',
+      title: `Company moved — ${view.details.legalName}`,
+      body: `Your company ${view.details.legalName} is now served by the ${branchName} branch.`,
+      data: { companyId, branchId: input.branchId, branchName, reason: input.reason },
+    })).catch((err) => ctx.log.error('company transfer notification failed', { companyId, err }));
   }
-
-  const [row] = await db.select().from(c).where(eq(c.id, createdId!));
-  return buildCompanyView(db, row!);
+  return view;
 }
 
 // ─── Field-visit onboarding ────────────────────────────────────────────
+
+/*
+ * F9/N16 (2026-11-08): staffRegisterCompany is deleted. It created a bare
+ * DRAFT with no outreach record, no Review & Print and no verified-signed
+ * flow — and the verifier gate rejects such companies, so they could never
+ * reach VERIFIED. Companies are registered only through
+ * staffOnboardCompany below (field visit, company:onboard).
+ */
 
 export interface CompanyOnboardingNotes {
   headOfficeAddress: string | null;
@@ -574,12 +581,54 @@ export async function staffOnboardCompany(
     .where(and(eq(c.ntn, companyInput.ntn), sql`${c.status} not in ('DRAFT', 'REJECTED')`));
   if (existing) throw ntnTaken();
 
+  // F4: a second DRAFT for the same NTN used to be created silently — a
+  // double-submit, or a second visit to a company already onboarded as a
+  // draft, produced two DRAFT rows for one NTN. Return the existing DRAFT
+  // for resumption instead: the dialog opens it, and the visit's Review &
+  // Print / verified-signed flow continues from there. The submitted details
+  // are NOT merged over the draft — the draft is the record, and corrections
+  // go through the company panel. A REJECTED company is not resumed (owner
+  // decision 4: it may be re-registered fresh). A live duplicate still 409s
+  // NTN_TAKEN above.
+  const [draft] = await db
+    .select({ id: c.id, branchId: c.branchId })
+    .from(c)
+    .where(and(eq(c.ntn, companyInput.ntn), eq(c.status, 'DRAFT')));
+  if (draft) {
+    if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, draft.branchId);
+    const [draftRow] = await db.select().from(c).where(eq(c.id, draft.id));
+    const view = await buildCompanyView(db, draftRow!);
+    const onboarding = await getCompanyOnboarding(ctx.actor, draftRow!.id);
+    return { ...view, onboarding: onboarding! };
+  }
+
   let createdId: string | null = null;
+  let resumedId: string | null = null;
   try {
     await runCommand(ctx, async ({ tx, audit }) => {
       // Re-check inside the transaction: a live company with this NTN may have
       // appeared after the read above (see assertNtnFree).
       await assertNtnFree(tx, companyInput.ntn);
+      // F4 (race): a DRAFT for this NTN may have appeared after the read
+      // above — a concurrent onboard, or the same double-submit. Resume it
+      // instead of inserting a second DRAFT; the resumption is audited, and
+      // runCommand requires an audit entry, so the no-op write still records
+      // one. Same branch rule as the pre-check above.
+      const [racyDraft] = await tx
+        .select({ id: c.id, branchId: c.branchId })
+        .from(c)
+        .where(and(eq(c.ntn, companyInput.ntn), eq(c.status, 'DRAFT')));
+      if (racyDraft) {
+        if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, racyDraft.branchId);
+        resumedId = racyDraft.id;
+        audit({
+          action: 'company.register_resumed',
+          entityType: 'company',
+          entityId: racyDraft.id,
+          branchId: racyDraft.branchId,
+        });
+        return;
+      }
       const [row] = await tx
         .insert(c)
         .values({ ...companyInput, branchId, createdBy: ctx.actor.userId })
@@ -627,7 +676,12 @@ export async function staffOnboardCompany(
     throw error;
   }
 
-  const [row] = await db.select().from(c).where(eq(c.id, createdId!));
+  // F4: either a fresh row was created, or the in-transaction re-check
+  // resumed a DRAFT that appeared concurrently. Exactly one of them is set.
+  const [row] = await db
+    .select()
+    .from(c)
+    .where(eq(c.id, (resumedId ?? createdId)!));
   const view = await buildCompanyView(db, row!);
   const onboarding = await getCompanyOnboarding(ctx.actor, row!.id);
   return { ...view, onboarding: onboarding! };
@@ -636,8 +690,11 @@ export async function staffOnboardCompany(
 /**
  * Records the first-counter paper review (company representative + staff signatures) and
  * sends the DRAFT company to the verifier queue in the same step. Staff submission needs
- * only what the field visit guarantees — a main contact and a branch. The head office and
- * documents are checked by the verifier, who can request them if they are missing.
+ * what the field visit guarantees — a main contact, a branch, and at least one required
+ * document uploaded (N15: a document-less company used to reach the verifier, who then
+ * 409'd at VERIFY instead). The head office and full document acceptance are still the
+ * verifier's checks: the VERIFY guard requires every required document accepted, and the
+ * verifier can request anything missing.
  * Verifiers onboard and submit companies the same way; the marker must be
  * someone other than the onboarder (M9 — no self-attestation).
  */
@@ -694,6 +751,29 @@ export async function markCompanyRegistrationVerifiedSigned(
       const missing: string[] = [];
       if (!contactRows.some((r) => r.isPrimary)) missing.push('a main contact person');
       if (!row.branchId) missing.push('a branch');
+      // N15: require at least one required document before the company can
+      // enter the verifier queue. Same building blocks as the verifier's
+      // VERIFY completeness guard (requiredDocumentTypes /
+      // currentDocuments, see submissionMissing / documentsNotAccepted in
+      // repository.ts) — but only the ≥1 floor, not the full set: a
+      // confirmed upload is reviewStatus PENDING until the verifier
+      // reviews it, so ACCEPTED cannot be required here, and the VERIFY
+      // guard still requires EVERY required document accepted. A
+      // rejected-only upload does not count (same rule submissionMissing
+      // uses: a rejected document must be replaced).
+      const [required, current] = await Promise.all([
+        requiredDocumentTypes(tx, row.legalStructure),
+        currentDocuments(tx, row.id),
+      ]);
+      const hasRequiredDocument = required.some((type) =>
+        current.some((doc) => doc.typeCode === type.code && doc.reviewStatus !== 'REJECTED'),
+      );
+      if (required.length > 0 && !hasRequiredDocument) {
+        throw new ConflictError(
+          'Upload at least one required document before marking the registration form verified and signed.',
+          { reason: 'DOCUMENTS_MISSING' },
+        );
+      }
       const to = companyMachine.transition(
         row.status,
         'SUBMIT',

@@ -91,8 +91,16 @@ export async function enforceRateLimit(
  * of getting a free pass. In production the app always sits behind its proxies, so
  * the shared bucket is only reached by requests that bypassed them.
  *
- * NOTE: domains/auth/service.ts still has its own local rateLimitByIp that skips
- * when ctx.ip is null. Switch it to this helper to close the auth endpoints too.
+ * N17 (2026-11-08): this used to be a NOTE saying domains/auth/service.ts
+ * still had its own local rateLimitByIp that skipped when ctx.ip was null.
+ * That is stale — auth/service.ts now routes its IP limits through this
+ * helper (rateLimitByIp → enforceRateLimitByIp), so a null IP lands in the
+ * shared 'untrusted' bucket on those endpoints. Remaining `if (ctx.ip)`
+ * skips live elsewhere, not here: employer-signup.ts (signup-code-ip,
+ * signup-ip), two-factor.ts (2fa-confirm-ip) and account-tokens.ts
+ * (invite-accept-ip, password-reset-ip, password-reset-confirm-ip) still
+ * skip limiting when no IP is known — switch those to this helper too
+ * before calling the null-IP hole closed app-wide.
  */
 export async function enforceRateLimitByIp(
   ip: string | null,

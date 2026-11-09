@@ -38,6 +38,8 @@ pnpm db:seed              # idempotent seed
 pnpm dev                  # http://localhost:3000
 ```
 
+> Migrating a database that already has applicant tokens (it ran 0028–0030 before 0031)? Run the 0031 duplicate pre-check first — `scripts/ci/precheck-0031-duplicates.sql`. It must return 0 rows before 0031 is applied; the file carries the resolution steps if it does not.
+
 ### Local services
 
 | Service | Address |

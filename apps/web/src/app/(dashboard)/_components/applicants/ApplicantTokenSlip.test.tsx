@@ -15,6 +15,9 @@ const token: ApplicantTokenView = {
   phone: '+923001234567',
   // 19:39:20 PKT on 2026-11-07.
   issuedAt: '2026-11-07T14:39:20.000Z',
+  // End of the 2026-11-07 Pakistan day.
+  expiresAt: '2026-11-07T19:00:00.000Z',
+  expired: false,
   status: 'ISSUED',
   applicantId: null,
 };

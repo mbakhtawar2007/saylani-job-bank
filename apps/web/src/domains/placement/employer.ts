@@ -22,6 +22,7 @@ import {
 import { jobMachine } from '@/domains/job';
 import { requireReasonCode } from '@/domains/matching';
 import { db } from '@/lib/db';
+import { maskPkMobile } from '@/lib/format/phone';
 import { createNotification, notifyCompanyEmployers } from '@/domains/notifications';
 import type { RequestContext } from '@/domains/shared/audit';
 import {
@@ -189,7 +190,12 @@ async function getApplicantSummary(applicantId: string): Promise<ApplicantSummar
     id: applicantRow.id,
     fullName: applicantRow.fullName,
     cityCode: address[0]?.cityCode ?? null,
-    phone: phone[0]?.phone ?? null,
+    // M11 (2026-11-08): employers see a masked phone — recognisable, not
+    // callable. The employer's contact path is the in-app application chat
+    // (sendMessage in this file), so masking removes off-platform contact
+    // without removing contact. Staff views do not use this summary, so
+    // staff still see the full number where they need it.
+    phone: phone[0]?.phone ? maskPkMobile(phone[0].phone) : null,
     skills: skills.map((s) => ({ skillCode: s.skillCode, level: s.level, years: s.years })),
     experience: experience.map((e) => ({
       employerName: e.employerName,
@@ -656,6 +662,11 @@ export async function refuseJobOffer(
   if (row.status !== 'OFFER_EXTENDED')
     throw new ConflictError('Only OFFER_EXTENDED applications can be refused');
 
+  // C3 — no vacancy to free here: a placement offer fills its vacancy only
+  // when the applicant ACCEPTS (acceptJobOffer), so a refusal of an
+  // OFFER_EXTENDED application never filled one. The rollback lives in the
+  // match decline path (respondToJobOffer → freeVacancyForDeclinedMatchOffer),
+  // where the match-HIRED decision fills the vacancy up front.
   // H19 — the refusal reason must be an active master-data REFUSAL_REASON
   // code, the same validation respondToJobOffer applies (the machine's
   // APPLICANT_REFUSE transition already guards the terminal-state flip).

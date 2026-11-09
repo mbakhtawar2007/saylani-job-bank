@@ -460,6 +460,15 @@ describe('employer match decisions (hire / reject)', () => {
 
   it('a declined match offer drops out of the hires chart (C3)', async () => {
     const f = await seedFixture();
+    // An application row exists, so the decline can mirror onto it (H19):
+    // the match HIRED syncs it to HIRED, the decline mirrors it back.
+    await db.insert(apn).values({
+      applicantId: f.applicantId,
+      jobId: f.jobId,
+      branchId: KHI,
+      createdBy: employerUserId,
+      status: 'SHORTLISTED',
+    });
     const { year, month } = currentPktYearMonth();
     const before = await countHiresByMonth(employerActor(), year);
 
@@ -473,6 +482,22 @@ describe('employer match decisions (hire / reject)', () => {
       reasonCode: 'BETTER_OFFER',
     });
     expect(declined.status, JSON.stringify(declined.body)).toBe(200);
+
+    // C3: the vacancy this match filled is freed — the job re-opens …
+    const [job] = await db
+      .select({ status: j.status, vacanciesFilled: j.vacanciesFilled })
+      .from(j)
+      .where(eq(j.id, f.jobId));
+    expect(job!.vacanciesFilled).toBe(0);
+    expect(job!.status).toBe('OPEN');
+
+    // … H19: … and the placement application mirrors back to refused,
+    // because placement owns the offer truth.
+    const [application] = await db
+      .select()
+      .from(apn)
+      .where(and(eq(apn.jobId, f.jobId), eq(apn.applicantId, f.applicantId)));
+    expect(application!.status).toBe('APPLICANT_REFUSED');
 
     const after = await countHiresByMonth(employerActor(), year);
     expect(after[month - 1]! - before[month - 1]!).toBe(0);

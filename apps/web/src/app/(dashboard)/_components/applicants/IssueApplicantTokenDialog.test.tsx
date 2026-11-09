@@ -24,6 +24,8 @@ const token: ApplicantTokenView = {
   applicantName: 'Ahmed Raza',
   phone: '+923001234567',
   issuedAt: '2026-11-07T14:39:20.000Z',
+  expiresAt: '2026-11-07T19:00:00.000Z',
+  expired: false,
   status: 'ISSUED',
   applicantId: null,
 };
@@ -76,6 +78,33 @@ describe('IssueApplicantTokenDialog', () => {
       applicantName: 'Ahmed Raza',
       phone: '+923001234567',
     });
+    // N7: the issue carries a fresh Idempotency-Key header.
+    expect(fetchMock.mock.lastCall![1].headers['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('clears the slip when the dialog closes, so no stale slip stays mounted (N8)', async () => {
+    fetchMock.mockResolvedValue(json(201, { data: token }));
+    await open();
+
+    await userEvent.type(screen.getByLabelText(/CNIC number/), '4210112345671');
+    await userEvent.type(screen.getByLabelText(/Applicant name/), 'Ahmed Raza');
+    await userEvent.type(screen.getByLabelText('Phone number'), '3001234567');
+    await userEvent.click(screen.getByRole('button', { name: 'Generate token' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Print token' })).toBeInTheDocument(),
+    );
+
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Print token' })).not.toBeInTheDocument(),
+    );
+
+    // Reopening shows the blank form, not the old slip.
+    await userEvent.click(screen.getByRole('button', { name: 'Issue token' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Generate token' })).toBeInTheDocument(),
+    );
+    expect(screen.queryByText('01')).not.toBeInTheDocument();
   });
 
   it('shows a field error for an invalid phone number', async () => {

@@ -348,6 +348,13 @@ export const branchApplicantTokens = pgTable(
     applicantId: uuid().references(() => applicants.id, { onDelete: 'set null' }),
     issuedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
     issuedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    /**
+     * End of the issue day in Pakistan time (migration 0035). Derived from the
+     * same instant as `issuedAt` so a midnight rollover can never split the
+     * two (N3). An ISSUED token past this instant is expired: it no longer
+     * completes and never blocks a new token (dedup is per-day anyway).
+     */
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
     ...timestamps,
   },
   (t) => [
@@ -366,6 +373,9 @@ export const branchApplicantTokens = pgTable(
       .where(sql`"status" = 'ISSUED'`),
     index('branch_applicant_tokens_cnic_idx').on(t.cnic),
     check('branch_applicant_tokens_number_positive', sql`${t.tokenNumber} > 0`),
+    // N6 cap (MAX_TOKEN_NUMBER in @jobbank/shared): no 5-digit token numbers.
+    check('branch_applicant_tokens_number_max', sql`${t.tokenNumber} <= 9999`),
+    check('branch_applicant_tokens_expires_after_issued', sql`${t.expiresAt} > ${t.issuedAt}`),
     check('branch_applicant_tokens_cnic_format', sql`${t.cnic} ~ '^[1-9][0-9]{12}$'`),
     check(
       'branch_applicant_tokens_status_valid',

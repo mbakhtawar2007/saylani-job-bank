@@ -98,6 +98,14 @@ export async function myBranchOptions(actor: Actor, point: GeoPoint): Promise<Br
  * like the staff-invite email check. (A DB unique index would close the
  * concurrent-submit race; that needs a schema change outside this fix.)
  * Emails are lowercased by the zod schema, so an exact match is enough.
+ *
+ * Decision (2026-11-08): do NOT add that unique index. One email address
+ * routinely belongs to a whole household — a parent or sibling registers
+ * several family members from a single shared inbox, and a unique index
+ * would block every registration after the first. The app-level check above
+ * is the deliberate trade-off: it stops accidental duplicates in normal use
+ * while a shared family email still registers. Revisit only if duplicate
+ * emails become an abuse vector rather than a family pattern.
  */
 export async function assertEmailFree(
   executor: DbExecutor,

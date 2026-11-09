@@ -3,12 +3,14 @@ import {
   createJobSchema,
   jobLocationSchema,
   jobSkillsSchema,
+  type Role,
   updateJobSchema,
 } from '@jobbank/shared';
 import { jobMachine } from './machine';
 import {
   EMPLOYER_OPEN_JOB_FIELDS,
   EMPLOYER_RESTRICTED_JOB_FIELDS,
+  EMPLOYER_RESTRICTED_REQUIREMENTS_FIELDS,
   employerMayEditJobSubResource,
   employerRestrictedRequirementsFields,
   employerRestrictedUpdateFields,
@@ -214,8 +216,16 @@ describe('job machine FORCE_CLOSE', () => {
 // saveJobRequirements / saveJobSkills (profile.ts, needs a DB); the
 // allowlist itself is pure (rules.ts) and is pinned here DB-free.
 describe('employer field restrictions', () => {
-  const EMPLOYER = false; // isStaff = false
-  const STAFF = true; // isStaff = true (a `job:manage` holder)
+  // N20: the bypass is role-based, not permission-based. EMPLOYER is the
+  // restricted actor; STAFF / BRANCH_ADMIN / SUPER_ADMIN bypass; VERIFIER
+  // does NOT bypass (it holds `job:manage` for posting, but the
+  // restricted-field bypass was never decided for verifiers).
+  const EMPLOYER: readonly Role[] = ['EMPLOYER'];
+  const STAFF: readonly Role[] = ['STAFF'];
+  const BRANCH_ADMIN: readonly Role[] = ['BRANCH_ADMIN'];
+  const VERIFIER: readonly Role[] = ['VERIFIER'];
+  const SUPER_ADMIN: readonly Role[] = ['SUPER_ADMIN'];
+  const EMPLOYER_VERIFIER: readonly Role[] = ['EMPLOYER', 'VERIFIER'];
 
   const fullUpdate = {
     title: 'Driver',
@@ -295,6 +305,20 @@ describe('employer field restrictions', () => {
     expect(employerRestrictedUpdateFields(STAFF, 'PAUSED', fullUpdate)).toEqual([]);
   });
 
+  it('N20: branch admin and Super Admin bypass; verifier does not', () => {
+    expect(employerRestrictedUpdateFields(BRANCH_ADMIN, 'OPEN', fullUpdate)).toEqual([]);
+    expect(employerRestrictedUpdateFields(SUPER_ADMIN, 'OPEN', fullUpdate)).toEqual([]);
+    // A verifier holds `job:manage` (for posting via staffCreateJob) but
+    // that must not bypass the restricted-field allowlist.
+    expect(employerRestrictedUpdateFields(VERIFIER, 'OPEN', fullUpdate)).toEqual([
+      ...EMPLOYER_RESTRICTED_JOB_FIELDS,
+    ]);
+    // ... and neither does a dual EMPLOYER + VERIFIER account.
+    expect(employerRestrictedUpdateFields(EMPLOYER_VERIFIER, 'OPEN', fullUpdate)).toEqual([
+      ...EMPLOYER_RESTRICTED_JOB_FIELDS,
+    ]);
+  });
+
   it('only OPEN and PAUSED count as restricted statuses', () => {
     expect(isEmployerRestrictedJobStatus('DRAFT')).toBe(false);
     expect(isEmployerRestrictedJobStatus('OPEN')).toBe(true);
@@ -330,6 +354,11 @@ describe('employer field restrictions', () => {
     };
     expect(employerRestrictedRequirementsFields(EMPLOYER, 'DRAFT', full)).toEqual([]);
     expect(employerRestrictedRequirementsFields(STAFF, 'OPEN', full)).toEqual([]);
+    expect(employerRestrictedRequirementsFields(SUPER_ADMIN, 'OPEN', full)).toEqual([]);
+    // N20: a verifier does not bypass the requirements allowlist either.
+    expect(employerRestrictedRequirementsFields(VERIFIER, 'OPEN', full)).toEqual([
+      ...EMPLOYER_RESTRICTED_REQUIREMENTS_FIELDS,
+    ]);
   });
 
   it('location and skills: employer blocked once OPEN, allowed in DRAFT; staff always allowed', () => {
@@ -338,6 +367,9 @@ describe('employer field restrictions', () => {
     expect(employerMayEditJobSubResource(EMPLOYER, 'DRAFT')).toBe(true);
     expect(employerMayEditJobSubResource(STAFF, 'OPEN')).toBe(true);
     expect(employerMayEditJobSubResource(STAFF, 'DRAFT')).toBe(true);
+    // N20: Super Admin bypasses; a verifier does not.
+    expect(employerMayEditJobSubResource(SUPER_ADMIN, 'OPEN')).toBe(true);
+    expect(employerMayEditJobSubResource(VERIFIER, 'OPEN')).toBe(false);
   });
 
   it('the company is never changeable via the employer PATCH: companyId is stripped', () => {

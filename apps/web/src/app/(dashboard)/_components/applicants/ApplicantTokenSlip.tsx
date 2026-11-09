@@ -14,6 +14,14 @@ import { formatPkMobileDisplay } from '@/lib/format/phone';
  * Values are the live token: the big number is the day's token number,
  * zero-padded to two digits; the Applicant ID row shows the token code,
  * because there is no applicant record yet at token time.
+ *
+ * N9 (2026-11-08): the full CNIC is on the slip by design. This is a
+ * counter queue ticket, not a record: the bearer paper slip must identify
+ * its holder when staff call the number, and the CNIC is the only
+ * identifier collected at token time (there is no applicant record yet).
+ * Trade-off accepted: anyone holding the slip can read the CNIC, so slips
+ * should be treated as single-day bearer tokens and not retained. No
+ * consent checkbox — the CNIC is required to issue the token at all.
  */
 export function ApplicantTokenSlip({ token }: { token: ApplicantTokenView }) {
   const date = new Intl.DateTimeFormat('en-GB', {
@@ -57,7 +65,15 @@ export function ApplicantTokenSlip({ token }: { token: ApplicantTokenView }) {
         <hr className="token-slip__divider" />
         <div className="token-slip__number">
           <p className="token-slip__number-label">TOKEN NUMBER</p>
-          <p className="token-slip__number-value">{String(token.tokenNumber).padStart(2, '0')}</p>
+          <p
+            className={
+              token.tokenNumber >= 1000
+                ? 'token-slip__number-value token-slip__number-value--wide'
+                : 'token-slip__number-value'
+            }
+          >
+            {String(token.tokenNumber).padStart(2, '0')}
+          </p>
         </div>
         <dl className="token-slip__rows">
           <div className="token-slip__row">

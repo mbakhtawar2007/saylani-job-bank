@@ -19,7 +19,8 @@ export type ApplicationEvent =
   | 'EMPLOYER_DECIDE_ACCEPT'
   | 'EMPLOYER_DECIDE_REJECT'
   | 'APPLICANT_REFUSE'
-  | 'APPLICANT_ACCEPT';
+  | 'APPLICANT_ACCEPT'
+  | 'OFFER_DECLINED_AFTER_HIRE';
 
 const INTERVIEW_STATES: readonly ApplicationStatus[] = [
   'INTERVIEW_SCHEDULED',
@@ -55,7 +56,12 @@ export const applicationMachine = defineMachine<
 >({
   name: 'application',
   states: schema.APPLICATION_STATUSES,
-  terminal: ['HIRED', 'REJECTED', 'EMPLOYER_REJECTED', 'APPLICANT_REFUSED'],
+  // H19 (2026-11-08): HIRED is no longer terminal — a match-HIRED
+  // application whose applicant declines the match offer mirrors back to
+  // APPLICANT_REFUSED (OFFER_DECLINED_AFTER_HIRE), because placement owns
+  // the offer truth and the match row is only a mirror. The only way out of
+  // HIRED is that decline; nothing else resurrects or re-decides a hire.
+  terminal: ['REJECTED', 'EMPLOYER_REJECTED', 'APPLICANT_REFUSED'],
   transitions: [
     {
       from: ['SHORTLISTED', ...INTERVIEW_STATES],
@@ -95,6 +101,11 @@ export const applicationMachine = defineMachine<
     { from: DECIDABLE_STATES, event: 'EMPLOYER_DECIDE_REJECT', to: 'EMPLOYER_REJECTED' },
     { from: ['OFFER_EXTENDED'], event: 'APPLICANT_REFUSE', to: 'APPLICANT_REFUSED' },
     { from: ['OFFER_EXTENDED'], event: 'APPLICANT_ACCEPT', to: 'HIRED' },
+    // H19/C3: the applicant declined a match offer after the match-HIRED
+    // decision had already hired them here (syncMatchHire). Placement owns
+    // the offer, so the decline mirrors back onto the application instead
+    // of leaving it HIRED while the match says declined.
+    { from: ['HIRED'], event: 'OFFER_DECLINED_AFTER_HIRE', to: 'APPLICANT_REFUSED' },
   ],
 });
 

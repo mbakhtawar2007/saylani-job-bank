@@ -21,7 +21,14 @@ export type NotificationType =
   | 'APPLICANT_REFERRED'
   | 'JOB_REFERRED_TO_APPLICANT'
   | 'APPLICATION_ON_HOLD'
-  | 'MESSAGE';
+  | 'MESSAGE'
+  // M25 — company-side events. The placement/notification types above were
+  // the template: suspend/reinstate/transfer notify the company's employer
+  // users, assign-verifier notifies the assigned verifier.
+  | 'COMPANY_SUSPENDED'
+  | 'COMPANY_REINSTATED'
+  | 'VERIFIER_ASSIGNED'
+  | 'COMPANY_TRANSFERRED';
 
 export interface NotificationView {
   id: string;

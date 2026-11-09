@@ -279,6 +279,10 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
       const { data } = await apiFetch<OnboardedCompany>('/api/v1/companies/onboard', {
         method: 'POST',
         body: parsed.data,
+        // L10: the onboard route requires an Idempotency-Key — one fresh key
+        // per submit, so a double-click replays instead of creating a second
+        // DRAFT (the F4 resumption is the backstop, not the guard).
+        idempotencyKey: crypto.randomUUID(),
       });
       setCompany(data);
       // A new company mounts a fresh print form (keyed by id): its QR and

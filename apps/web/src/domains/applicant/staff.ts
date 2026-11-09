@@ -79,6 +79,7 @@ import {
   type ApplicantRow,
   type SignedIn,
 } from './repository';
+import { completeTokenForRegistration } from './tokens';
 import type { DbExecutor } from '@/lib/db';
 
 /** City must be active master data; an area must belong to that city. */
@@ -541,6 +542,18 @@ export async function staffRegisterApplicant(
         });
       }
 
+      // Step 2 (2026-11-08): a registration that names a first-counter token
+      // completes it in this same transaction — the token must be ISSUED,
+      // unexpired, for this branch and CNIC, or the whole registration fails.
+      if (input.tokenId) {
+        await completeTokenForRegistration(tx, audit, {
+          tokenId: input.tokenId,
+          applicantId: row!.id,
+          branchId: input.branchId,
+          cnic: input.cnic,
+        });
+      }
+
       audit({
         action: 'applicant.register_by_staff',
         entityType: 'applicant',
@@ -567,7 +580,7 @@ export async function staffRegisterApplicant(
             preferences: input.preferences,
           },
         },
-        metadata: { createdBy: ctx.actor.userId },
+        metadata: { createdBy: ctx.actor.userId, tokenId: input.tokenId ?? null },
       });
       // Recompute completeness and activate a complete profile in the same step:
       // without this, a complete staff-created profile stayed DRAFT until the

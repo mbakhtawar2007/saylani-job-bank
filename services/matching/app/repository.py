@@ -352,7 +352,8 @@ async def save_run_result(
                 ), prev AS (
                   SELECT DISTINCT ON (jm.applicant_id) jm.applicant_id, jm.review_status,
                          jm.review_reason_code, jm.review_note, jm.reviewed_by, jm.reviewed_at,
-                         jm.applicant_response, jm.refusal_reason_code, jm.responded_at
+                         jm.applicant_response, jm.refusal_reason_code, jm.responded_at,
+                         jm.vacancy_filled
                   FROM job_matches jm
                   JOIN match_runs mr ON mr.id = jm.run_id
                   WHERE jm.job_id = %s AND mr.status = 'COMPLETED'
@@ -361,11 +362,13 @@ async def save_run_result(
                 INSERT INTO job_matches
                   (run_id, job_id, applicant_id, score, distance_m, review_status,
                    review_reason_code, review_note, reviewed_by, reviewed_at,
-                   applicant_response, refusal_reason_code, responded_at, summary)
+                   applicant_response, refusal_reason_code, responded_at, summary,
+                   vacancy_filled)
                 SELECT %s::uuid, %s::uuid, i.applicant_id, i.score, i.distance_m,
                        COALESCE(p.review_status, 'NEW'),
                        p.review_reason_code, p.review_note, p.reviewed_by, p.reviewed_at,
-                       p.applicant_response, p.refusal_reason_code, p.responded_at, i.summary
+                       p.applicant_response, p.refusal_reason_code, p.responded_at, i.summary,
+                       COALESCE(p.vacancy_filled, false)
                 FROM incoming i
                 LEFT JOIN prev p ON p.applicant_id = i.applicant_id
                 RETURNING id, applicant_id

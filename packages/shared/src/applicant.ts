@@ -401,6 +401,14 @@ export type PreferencesInput = z.infer<typeof preferencesSchema>;
 export const staffRegisterApplicantSchema = registerApplicantSchema.extend({
   phone: pkMobileSchema,
   branchId: z.uuid('Choose a branch'),
+  /**
+   * Step 2 (2026-11-08): the first-counter token this registration completes.
+   * When set, the token must be ISSUED, unexpired, for this branch and CNIC —
+   * the server completes it (ISSUED → COMPLETED, applicant linked) in the same
+   * transaction as the registration, so a failed registration never completes
+   * a token and a completed token always has its applicant.
+   */
+  tokenId: z.uuid().optional(),
   address: applicantLocationSchema.optional(),
   /** Permanent home address (section 5). Same fields as the current address, no map pin. */
   permanentAddress: z
@@ -432,6 +440,16 @@ export type StaffRegisterApplicantInput = z.infer<typeof staffRegisterApplicantS
 export const APPLICANT_TOKEN_STATUSES = ['ISSUED', 'COMPLETED', 'CANCELLED'] as const;
 export type ApplicantTokenStatus = (typeof APPLICANT_TOKEN_STATUSES)[number];
 
+/**
+ * Daily token numbers cap (N6 decision, 2026-11-08): a branch-day never issues
+ * past 9999. Four digits is the widest the slip layout tolerates (the big
+ * number shrinks via `.token-slip__number-value--wide`); 9999 tokens in one
+ * branch-day is far beyond any real counter day, so hitting the cap is a
+ * "come back tomorrow / contact a Super Admin" error, not a silent overflow
+ * into 5-digit codes that would break the slip and the `{BRANCH}-{NNN}` shape.
+ */
+export const MAX_TOKEN_NUMBER = 9999;
+
 export const issueApplicantTokenSchema = z.object({
   branchId: z.uuid('Choose a branch'),
   cnic: cnicSchema,
@@ -445,6 +463,20 @@ export function tokenCodeFor(branchCode: string, tokenNumber: number): string {
   return `${branchCode}-${String(tokenNumber).padStart(3, '0')}`;
 }
 
+/**
+ * Split a token code back into its branch code and daily number. Branch codes
+ * contain dashes ("KHI-GULSHAN"), so the split is at the LAST dash; the suffix
+ * must be all digits.
+ */
+export function parseTokenCode(code: string): { branchCode: string; tokenNumber: number } | null {
+  const at = code.lastIndexOf('-');
+  if (at <= 0) return null;
+  const branchCode = code.slice(0, at);
+  const suffix = code.slice(at + 1);
+  if (!/^\d+$/.test(suffix)) return null;
+  return { branchCode, tokenNumber: Number(suffix) };
+}
+
 /** Calendar date (YYYY-MM-DD) in Pakistan time — token numbers reset on this day. */
 export function karachiDay(date: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -453,6 +485,19 @@ export function karachiDay(date: Date = new Date()): string {
     month: '2-digit',
     day: '2-digit',
   }).format(date);
+}
+
+/**
+ * End of the Pakistan day containing `date`, as an instant: midnight at the
+ * start of the next Pakistan day. A token issued at `date` expires then
+ * (migration 0035 `expires_at`); the value is derived from the same instant
+ * as `issued_at` so a midnight rollover can never split the two (N3).
+ */
+export function karachiDayEnd(date: Date = new Date()): Date {
+  const day = karachiDay(date);
+  const end = new Date(`${day}T00:00:00.000+05:00`);
+  end.setUTCDate(end.getUTCDate() + 1);
+  return end;
 }
 
 /** Response contract for the token-issue route (mirrors ApplicantTokenView). */
@@ -467,10 +512,40 @@ export const applicantTokenSchema = z.object({
   applicantName: z.string(),
   phone: z.string(),
   issuedAt: z.string(),
+  /** End of the issue day in Pakistan time; the token is expired after this. */
+  expiresAt: z.string(),
+  /** True once `expiresAt` has passed (derived server-side, so lookups show it). */
+  expired: z.boolean(),
   status: z.enum(APPLICANT_TOKEN_STATUSES),
   applicantId: z.string().nullable(),
 });
 export type ApplicantTokenView = z.infer<typeof applicantTokenSchema>;
+
+/**
+ * GET /api/v1/applicants/tokens — one of three lookups, all staff-scoped:
+ * by token code, by CNIC + branch (+ day, default today), or the whole
+ * branch-day list (branch + day, default today). `day` is a YYYY-MM-DD date.
+ */
+export const tokenLookupQuerySchema = z
+  .object({
+    tokenCode: z.string().trim().min(1).max(80).optional(),
+    cnic: z.string().trim().min(1).max(20).optional(),
+    branchId: z.uuid().optional(),
+    day: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-11-08')
+      .optional(),
+  })
+  .refine((v) => v.tokenCode ?? (v.cnic && v.branchId) ?? v.branchId, {
+    message: 'Look up by token code, or by CNIC and branch, or list a branch day',
+  });
+export type TokenLookupQuery = z.infer<typeof tokenLookupQuerySchema>;
+
+/** POST /api/v1/applicants/tokens/{id}/cancel — optional reason for the audit log. */
+export const cancelApplicantTokenSchema = z.object({
+  reason: z.string().trim().min(1).max(500).optional(),
+});
+export type CancelApplicantTokenInput = z.infer<typeof cancelApplicantTokenSchema>;
 
 // ─── Documents ─────────────────────────────────────────────────────────
 

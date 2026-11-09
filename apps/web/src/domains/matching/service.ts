@@ -22,6 +22,7 @@ import { db } from '@/lib/db';
 import { env } from '@/lib/env';
 import { sendMail, type MailMessage } from '@/lib/mail/mailer';
 import { createNotification, notifyCompanyEmployers } from '@/domains/notifications';
+import { lockAndTransitionApplication } from '@/domains/placement';
 import {
   enqueueJobMatch,
   getLatestJobMatches,
@@ -194,12 +195,12 @@ export interface MatchDecisionInput {
  * syncs the label and returns false. When no application exists at all, the
  * match itself is the hire signal and the vacancy still fills.
  *
- * NOTE (declined match offers): if the applicant later declines this offer
- * via respondToJobOffer, the vacancy filled here is NOT rolled back — the
- * offer source of truth is split between the match table and the application
- * table, and only a unified offer flow can unwind a hire safely. The hire
- * counts do exclude declined offers, so the chart stays right while the
- * vacancy count needs that follow-up.
+ * C3/H19 (2026-11-08): the boolean returned here is persisted on the match
+ * row as vacancy_filled (see setJobMatchReviewStatus). If the applicant
+ * later declines this offer via respondToJobOffer, the vacancy filled here
+ * IS rolled back and the application mirrors back to APPLICANT_REFUSED —
+ * placement owns the offer truth, the match row only mirrors it. The hire
+ * counts exclude declined offers, so the chart stays right too.
  */
 async function syncMatchHire(
   tx: Transaction,
@@ -313,6 +314,30 @@ export async function setJobMatchReviewStatus(
       throw new ConflictError('This job has no open vacancies');
     }
 
+    // H19 (2026-11-08): placement owns the offer truth, so a match HIRED
+    // must not resurrect an application placement already closed as
+    // refused/rejected. The match decision reads the placement state first;
+    // a refused candidate stays refused even if the match shortlist says
+    // otherwise. (The reverse direction — a match HIRED syncing the
+    // application to HIRED — is syncMatchHire below.)
+    if (hiring) {
+      const [placementApplication] = await tx
+        .select({ status: apn.status })
+        .from(apn)
+        .where(and(eq(apn.jobId, jobId), eq(apn.applicantId, applicantId)))
+        .limit(1);
+      if (
+        placementApplication &&
+        (placementApplication.status === 'APPLICANT_REFUSED' ||
+          placementApplication.status === 'EMPLOYER_REJECTED' ||
+          placementApplication.status === 'REJECTED')
+      ) {
+        throw new ConflictError(
+          'This candidate already declined or was rejected for this job — the placement decision stands',
+        );
+      }
+    }
+
     const updated = await tx
       .update(jm)
       .set({
@@ -330,6 +355,16 @@ export async function setJobMatchReviewStatus(
     // C3: a HIRED match decision is a hire — sync the application, fill one
     // vacancy, and FILL the job when the last vacancy fills.
     const vacancyFilled = hiring ? await syncMatchHire(tx, jobId, applicantId, lockedJob) : null;
+    // C3/H19: persist whether THIS decision filled a vacancy on the match
+    // row, so the decline path can tell a match-filled vacancy (free it)
+    // from a placement-filled one (leave it alone). See job_matches.
+    // vacancy_filled and respondToJobOffer.
+    if (hiring) {
+      await tx
+        .update(jm)
+        .set({ vacancyFilled: vacancyFilled ?? false, updatedAt: new Date() })
+        .where(eq(jm.id, match.id));
+    }
 
     audit({
       action: 'match.review_status',
@@ -425,6 +460,81 @@ async function notifyApplicantOfDecision(
   }
 }
 
+/**
+ * C3/H19 — unwind a match-filled hire when the applicant declines the match
+ * offer. Only ever called when the match row's vacancy_filled flag is set,
+ * i.e. this match's HIRED decision filled the vacancy (syncMatchHire).
+ *
+ * Guards: the job row is locked FOR UPDATE and vacanciesFilled never drops
+ * below 0; a FILLED job whose vacancy frees re-opens via the job machine's
+ * UNFILL event (closedAt cleared); the flag is consumed (set false) so the
+ * same decline can never free twice. The placement application mirrors
+ * HIRED → APPLICANT_REFUSED through the placement machine — placement owns
+ * the offer truth, the match row only mirrors it. An application this match
+ * did not hire (e.g. still OFFER_EXTENDED, which never filled a vacancy)
+ * is left untouched.
+ */
+async function freeVacancyForDeclinedMatchOffer(
+  tx: Transaction,
+  jobId: string,
+  applicantId: string,
+  matchId: string,
+  reason: { code: string; label: string } | null,
+): Promise<boolean> {
+  const [application] = await tx
+    .select({ id: apn.id, status: apn.status })
+    .from(apn)
+    .where(and(eq(apn.jobId, jobId), eq(apn.applicantId, applicantId)))
+    .for('update');
+  if (application && application.status === 'HIRED') {
+    const { to } = await lockAndTransitionApplication(
+      tx,
+      application.id,
+      'OFFER_DECLINED_AFTER_HIRE',
+    );
+    await tx
+      .update(apn)
+      .set({
+        status: to,
+        applicantRefusalReason: reason?.label ?? null,
+        applicantRefusedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(apn.id, application.id));
+  }
+
+  const [job] = await tx
+    .select({
+      id: j.id,
+      status: j.status,
+      vacancies: j.vacancies,
+      vacanciesFilled: j.vacanciesFilled,
+    })
+    .from(j)
+    .where(eq(j.id, jobId))
+    .for('update');
+  if (!job || job.vacanciesFilled <= 0) return false;
+  const freed = job.vacanciesFilled - 1;
+  const patch: Partial<typeof j.$inferInsert> = {
+    vacanciesFilled: freed,
+    updatedAt: new Date(),
+  };
+  if (job.status === 'FILLED') {
+    const check = jobMachine.check(job.status, 'UNFILL', {}, 'system');
+    if (check.ok) {
+      patch.status = check.to;
+      patch.closedAt = null;
+    }
+  }
+  await tx.update(j).set(patch).where(eq(j.id, job.id));
+  // Consume the flag: this vacancy is freed exactly once.
+  await tx
+    .update(jm)
+    .set({ vacancyFilled: false, updatedAt: new Date() })
+    .where(eq(jm.id, matchId));
+  return true;
+}
+
 export interface OfferResponseInput {
   applicantResponse: OfferResponse;
   /** Required when applicantResponse = DECLINED (master-data REFUSAL_REASON code). */
@@ -435,6 +545,13 @@ export interface OfferResponseInput {
 /**
  * Applicant answers a HIRED decision on their own match (offer accept/decline).
  * Declining requires a REFUSAL_REASON; the employer is notified either way.
+ *
+ * C3/H19 (2026-11-08): a DECLINED answer unwinds the hire this match made —
+ * the vacancy frees (FILLED → OPEN when it was the last one) and the
+ * placement application mirrors back to APPLICANT_REFUSED, because placement
+ * owns the offer truth. Only when this match's HIRED decision filled the
+ * vacancy (job_matches.vacancy_filled); a placement accept that filled it
+ * first is not this match's to unwind.
  */
 export async function respondToJobOffer(
   ctx: RequestContext & { actor: Actor },
@@ -467,7 +584,12 @@ export async function respondToJobOffer(
     if (!latestRun) throw new NotFoundError('Match run', jobId);
 
     const [existing] = await tx
-      .select({ id: jm.id, reviewStatus: jm.reviewStatus, applicantResponse: jm.applicantResponse })
+      .select({
+        id: jm.id,
+        reviewStatus: jm.reviewStatus,
+        applicantResponse: jm.applicantResponse,
+        vacancyFilled: jm.vacancyFilled,
+      })
       .from(jm)
       .where(and(eq(jm.runId, latestRun.id), eq(jm.applicantId, applicantId)))
       .limit(1);
@@ -489,6 +611,23 @@ export async function respondToJobOffer(
       })
       .where(eq(jm.id, existing.id));
 
+    // C3/H19: a decline unwinds the hire this match made — but only when
+    // this match's HIRED decision filled the vacancy (vacancy_filled). A
+    // placement accept that filled it first leaves the flag false, and the
+    // vacancy stays filled: the applicant accepted that offer, the match
+    // answer does not un-hire them. The second-answer guard above already
+    // blocks a repeat decline; the flag is consumed inside as well.
+    let vacancyFreed = false;
+    if (input.applicantResponse === 'DECLINED' && existing.vacancyFilled) {
+      vacancyFreed = await freeVacancyForDeclinedMatchOffer(
+        tx,
+        jobId,
+        applicantId,
+        existing.id,
+        reason,
+      );
+    }
+
     audit({
       action: 'match.offer_response',
       entityType: 'job_match',
@@ -497,6 +636,7 @@ export async function respondToJobOffer(
         applicant_id: applicantId,
         response: input.applicantResponse,
         reason_code: reason?.code ?? null,
+        ...(input.applicantResponse === 'DECLINED' ? { vacancy_freed: vacancyFreed } : {}),
       },
     });
   });

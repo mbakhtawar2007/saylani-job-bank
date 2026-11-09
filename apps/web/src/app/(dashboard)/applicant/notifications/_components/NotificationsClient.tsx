@@ -248,6 +248,13 @@ export function NotificationsClient({ items, unread, offers, refusalReasons }: P
                               label: 'Job referred',
                               tone: 'info' as const,
                             },
+                            COMPANY_SUSPENDED: { label: 'Suspended', tone: 'danger' as const },
+                            COMPANY_REINSTATED: { label: 'Reinstated', tone: 'success' as const },
+                            VERIFIER_ASSIGNED: {
+                              label: 'Verifier assigned',
+                              tone: 'info' as const,
+                            },
+                            COMPANY_TRANSFERRED: { label: 'Moved', tone: 'info' as const },
                           }[item.type] ?? { label: item.type, tone: 'neutral' as const })}
                         />
                       </span>

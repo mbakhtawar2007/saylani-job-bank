@@ -54,7 +54,12 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Saylani Job Bank — Matching Engine", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="Saylani Job Bank — Matching Engine",
+        version="0.1.0",
+        lifespan=lifespan,
+        docs_url=None,
+    )
     app.include_router(router)
 
     @app.get("/health", tags=["ops"])

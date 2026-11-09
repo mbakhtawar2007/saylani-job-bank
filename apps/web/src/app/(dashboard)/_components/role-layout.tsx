@@ -33,12 +33,19 @@ async function Shell({
           ?.filter((branch) => branch.isActive)
           .map((branch) => ({ value: branch.id, label: branch.name }))
       : role === 'STAFF' || role === 'BRANCH_ADMIN'
-        ? branchOptions?.map((branch) => ({ value: branch.id, label: branch.name }))
+        ? // N10: inactive branches must not be offered — the server rejects
+          // them, so listing them only produces a dead end in the dialog.
+          branchOptions
+            ?.filter((branch) => branch.isActive)
+            .map((branch) => ({ value: branch.id, label: branch.name }))
         : undefined;
-  // Sidebar "Company Registration" button: Super Admin and Verifier only.
-  // Staff and Branch Admin no longer register companies from the sidebar.
+  // Sidebar "Company Registration" button: Super Admin, Branch Admin and
+  // Verifier. F9/N16: Branch Admins register companies from this sidebar
+  // dialog (the field-visit onboard flow) — the legacy branch-admin
+  // "Add company" page is deleted, so this is their only entry point.
+  // Staff never registers companies.
   const companyRegistrationBranches =
-    role === 'SUPER_ADMIN' || role === 'VERIFIER'
+    role === 'SUPER_ADMIN' || role === 'BRANCH_ADMIN' || role === 'VERIFIER'
       ? branchOptions
           ?.filter((branch) => branch.isActive)
           .map((branch) => ({ value: branch.id, label: branch.name }))

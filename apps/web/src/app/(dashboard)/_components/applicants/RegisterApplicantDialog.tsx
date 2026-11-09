@@ -9,6 +9,7 @@ import {
   SHIFT_LABELS,
   SHIFTS,
   staffRegisterApplicantSchema,
+  type ApplicantTokenView,
   type Gender,
 } from '@jobbank/shared';
 import { UserRoundPlus } from 'lucide-react';
@@ -97,6 +98,18 @@ const latestBirthDate = () => {
 interface Props {
   branches: SelectOption[];
   placement?: 'default' | 'sidebar';
+  /**
+   * Step 2 (2026-11-08): the first-counter token this registration completes.
+   * When set, the CNIC, name, phone and branch are prefilled from the token
+   * and locked — the server completes the token only when they match it.
+   */
+  token?: ApplicantTokenView | null;
+  /**
+   * Controlled open (used by the token lookup dialog, which opens this dialog
+   * for a looked-up token). Omit for the standalone sidebar trigger.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 function ReviewChart() {
@@ -220,11 +233,20 @@ function applicantFieldLabel(key: string): string {
   return humanizeFieldKey(key);
 }
 
-export function RegisterApplicantDialog({ branches, placement = 'default' }: Props) {
+export function RegisterApplicantDialog({
+  branches,
+  placement = 'default',
+  token = null,
+  open: controlledOpen,
+  onOpenChange,
+}: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const previousPathname = useRef(pathname);
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  // Controlled when the caller passes `open` (token lookup flow); otherwise
+  // the dialog owns its open state behind the sidebar trigger.
+  const open = controlledOpen ?? openState;
   const [loading, setLoading] = useState(false);
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -335,21 +357,23 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
   }, [open, cities.length]);
 
   const setDialogOpen = (next: boolean) => {
-    setOpen(next);
+    if (controlledOpen === undefined) setOpenState(next);
+    onOpenChange?.(next);
     if (next) {
       setApplicant(null);
       setVerifiedSigned(false);
       setErrors({});
       setAlert(null);
+      // Step 2: a token locks the identity fields to the token's details.
       updateForm({
-        fullName: '',
+        fullName: token?.applicantName ?? '',
         fatherName: '',
-        cnic: '',
+        cnic: token?.cnic ?? '',
         dateOfBirth: '',
         gender: '',
         email: '',
-        phone: '',
-        branchId: branches.length === 1 ? branches[0]!.value : '',
+        phone: token?.phone ?? '',
+        branchId: token?.branchId ?? (branches.length === 1 ? branches[0]!.value : ''),
       });
       setAddress({ addressLine: '', cityCode: '', areaCode: '' });
       setLocation(null);
@@ -395,6 +419,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
     );
     const payload = {
       ...form,
+      ...(token ? { tokenId: token.id } : {}),
       ...(hasAddress ? { address: { ...address, location: location ?? undefined } } : {}),
       ...(hasPermanentAddress ? { permanentAddress } : {}),
       additionalNotes,
@@ -448,7 +473,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
       // QR and logo have not loaded yet.
       setPrintLabelsReady(false);
       setVerifiedSigned(Boolean(data.registrationVerifiedSignedAt));
-      setOpen(false);
+      setDialogOpen(false);
       router.replace(pathname);
       router.refresh();
     } catch (error) {
@@ -524,15 +549,27 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
         onOpenChange={setDialogOpen}
         size="lg"
         trigger={
-          <Button
-            fullWidth={placement === 'sidebar'}
-            leftIcon={placement === 'sidebar' ? <UserRoundPlus aria-hidden="true" /> : undefined}
-          >
-            Register Applicant
-          </Button>
+          controlledOpen === undefined ? (
+            <Button
+              fullWidth={placement === 'sidebar'}
+              leftIcon={placement === 'sidebar' ? <UserRoundPlus aria-hidden="true" /> : undefined}
+            >
+              Register Applicant
+            </Button>
+          ) : undefined
         }
       >
         <form className="grid gap-5" onSubmit={submit} noValidate ref={formRef}>
+          {token && (
+            <p
+              role="status"
+              className="bg-primary-soft text-primary-soft-fg rounded-lg px-4 py-3 text-sm"
+            >
+              Completing registration for token {token.tokenCode}. The name, CNIC, phone and branch
+              come from the token and cannot be changed here — completing this form marks the token
+              COMPLETED.
+            </p>
+          )}
           {alert && (
             <p
               role="alert"
@@ -554,6 +591,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                 onChange={(event) => updateForm({ branchId: event.target.value })}
                 placeholder="Choose a branch"
                 options={branches}
+                disabled={Boolean(token)}
               />
             </FormField>
           )}
@@ -570,6 +608,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                 <Input
                   autoComplete="name"
                   value={form.fullName}
+                  disabled={Boolean(token)}
                   onChange={(e) => updateForm({ fullName: e.target.value })}
                   onBlur={() => {
                     const result = staffRegisterApplicantSchema.shape.fullName.safeParse(
@@ -608,6 +647,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                 <CNICInput
                   value={form.cnic}
                   onChange={(cnic) => updateForm({ cnic: cnic.digits })}
+                  disabled={Boolean(token)}
                 />
               </FormField>
               <FormField
@@ -653,6 +693,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
                   aria-label="Mobile number"
                   value={form.phone}
                   onChange={(value) => updateForm({ phone: value.e164 ?? value.national })}
+                  disabled={Boolean(token)}
                 />
               </FormField>
               <FormField label="Email" error={errors.email} id={fieldControlId('email')}>
@@ -1350,7 +1391,7 @@ export function RegisterApplicantDialog({ branches, placement = 'default' }: Pro
           )}
           <FormErrorSummary errors={errors} labelFor={applicantFieldLabel} />
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
+            <Button type="button" variant="secondary" onClick={() => setDialogOpen(false)}>
               Cancel
             </Button>
             <Button
