@@ -511,6 +511,11 @@ export const MASTER_DATA_SEED: Record<MasterDataType, SeedItem[]> = {
     ['GOVERNMENT', 'Government & public sector'],
     ['OTHER', 'Other'],
   ].map(([code, label]) => ({ code: code!, label: label! })),
+  // DESIGNATION (job posting form, 2026-11-10): intentionally empty — the
+  // user supplies the designation list with its salary ranges, and Super
+  // Admin adds them in Master data. Until then a job's designation is
+  // free text and no salary-range check can run.
+  DESIGNATION: [],
 };
 
 /** Required company documents per legal structure (M7); insert-only like the lists above. */

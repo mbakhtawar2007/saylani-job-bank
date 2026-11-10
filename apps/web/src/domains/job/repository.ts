@@ -1,10 +1,14 @@
 import 'server-only';
 import { schema } from '@jobbank/db';
 import type {
+  BonusBasis,
+  BonusFrequency,
   BonusTier,
+  ExperienceLevel,
   GenderPreference,
   JobStatus,
   JobType,
+  MedicalCoverageScope,
   MedicalCoverageType,
   ShiftType,
   SkillLevel,
@@ -37,6 +41,8 @@ export interface JobLocationView {
 export interface JobRequirementsView {
   educationLevelCode: string | null;
   minExperienceYears: number | null;
+  experienceLevel: ExperienceLevel | null;
+  minExperienceMonths: number | null;
   languageCodes: string[];
   otherRequirements: string | null;
 }
@@ -56,6 +62,8 @@ export interface JobView {
   description: string;
   jobType: JobType;
   shift: ShiftType;
+  shiftHours: number | null;
+  designationCode: string | null;
   genderPreference: GenderPreference;
   vacancies: number;
   vacanciesFilled: number;
@@ -70,8 +78,16 @@ export interface JobView {
   fuelAllowance: boolean;
   flexibleHours: boolean;
   annualLeaveDays: number | null;
+  sickLeaveDays: number | null;
+  casualLeaveDays: number | null;
   medicalCoverage: MedicalCoverageType;
+  opdLimit: number | null;
+  ipdLimit: number | null;
+  medicalCoverageScope: MedicalCoverageScope | null;
   bonusTier: BonusTier;
+  bonusBasis: BonusBasis | null;
+  bonusAmountPkr: number | null;
+  bonusFrequency: BonusFrequency | null;
   workFromHome: boolean;
   providentFund: boolean;
   transportAllowance: boolean;
@@ -119,6 +135,8 @@ function toJobView(
     description: row.description,
     jobType: row.jobType as JobType,
     shift: row.shift as ShiftType,
+    shiftHours: row.shiftHours,
+    designationCode: row.designationCode,
     genderPreference: row.genderPreference as GenderPreference,
     vacancies: row.vacancies,
     vacanciesFilled: row.vacanciesFilled,
@@ -132,8 +150,16 @@ function toJobView(
     fuelAllowance: row.fuelAllowance,
     flexibleHours: row.flexibleHours,
     annualLeaveDays: row.annualLeaveDays,
+    sickLeaveDays: row.sickLeaveDays,
+    casualLeaveDays: row.casualLeaveDays,
     medicalCoverage: row.medicalCoverage as MedicalCoverageType,
+    opdLimit: row.opdLimit,
+    ipdLimit: row.ipdLimit,
+    medicalCoverageScope: row.medicalCoverageScope as MedicalCoverageScope | null,
     bonusTier: row.bonusTier as BonusTier,
+    bonusBasis: row.bonusBasis as BonusBasis | null,
+    bonusAmountPkr: row.bonusAmountPkr,
+    bonusFrequency: row.bonusFrequency as BonusFrequency | null,
     workFromHome: row.workFromHome,
     providentFund: row.providentFund,
     transportAllowance: row.transportAllowance,
@@ -150,6 +176,8 @@ function toJobView(
       ? {
           educationLevelCode: reqs.educationLevelCode,
           minExperienceYears: reqs.minExperienceYears,
+          experienceLevel: reqs.experienceLevel as ExperienceLevel | null,
+          minExperienceMonths: reqs.minExperienceMonths,
           languageCodes: reqs.languageCodes ?? [],
           otherRequirements: reqs.otherRequirements,
         }

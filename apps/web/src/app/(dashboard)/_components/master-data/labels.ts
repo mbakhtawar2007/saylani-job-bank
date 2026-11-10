@@ -14,11 +14,15 @@ export const TYPE_SINGULAR: Record<MasterDataType, string> = {
   VERIFICATION_REJECTION_REASON: 'verification rejection reason',
   WITHDRAWAL_REASON: 'withdrawal reason',
   INDUSTRY: 'industry',
+  DESIGNATION: 'designation',
 };
 
 /** Groups for the type navigation. */
 export const TYPE_GROUPS: { title: string; types: MasterDataType[] }[] = [
-  { title: 'Jobs & skills', types: ['JOB_CATEGORY', 'SKILL', 'EDUCATION_LEVEL', 'LANGUAGE'] },
+  {
+    title: 'Jobs & skills',
+    types: ['JOB_CATEGORY', 'SKILL', 'EDUCATION_LEVEL', 'LANGUAGE', 'DESIGNATION'],
+  },
   { title: 'Places & documents', types: ['CITY', 'AREA', 'DOCUMENT_TYPE'] },
   { title: 'Companies', types: ['INDUSTRY'] },
   {

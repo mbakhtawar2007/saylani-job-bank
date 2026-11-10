@@ -1,8 +1,12 @@
 import {
+  BONUS_BASES,
+  BONUS_FREQUENCIES,
   BONUS_TIERS,
+  EXPERIENCE_LEVELS,
   GENDER_PREFERENCES,
   JOB_STATUSES,
   JOB_TYPES,
+  MEDICAL_COVERAGE_SCOPES,
   MEDICAL_COVERAGE_TYPES,
   SHIFT_TYPES,
   SKILL_LEVELS,
@@ -35,6 +39,10 @@ export const jobs = pgTable(
     description: text('description').notNull(),
     jobType: text('job_type', { enum: JOB_TYPES }).notNull(),
     shift: text('shift', { enum: SHIFT_TYPES }).notNull(),
+    /** Hours per shift/day — rotation-only postings (2026-11-10). */
+    shiftHours: smallint('shift_hours'),
+    /** Designation the salary must correspond to (2026-11-10). */
+    designationCode: text('designation_code'),
     genderPreference: text('gender_preference', { enum: GENDER_PREFERENCES })
       .notNull()
       .default('ANY'),
@@ -51,10 +59,20 @@ export const jobs = pgTable(
     fuelAllowance: boolean('fuel_allowance').notNull().default(false),
     flexibleHours: boolean('flexible_hours').notNull().default(false),
     annualLeaveDays: smallint('annual_leave_days'),
+    sickLeaveDays: smallint('sick_leave_days'),
+    casualLeaveDays: smallint('casual_leave_days'),
     medicalCoverage: text('medical_coverage', { enum: MEDICAL_COVERAGE_TYPES })
       .notNull()
       .default('NONE'),
+    /** Structured medical cover (2026-11-10); medicalCoverage is derived from these. */
+    opdLimit: integer('opd_limit'),
+    ipdLimit: integer('ipd_limit'),
+    medicalCoverageScope: text('medical_coverage_scope', { enum: MEDICAL_COVERAGE_SCOPES }),
     bonusTier: text('bonus_tier', { enum: BONUS_TIERS }).notNull().default('NONE'),
+    /** Bonus basis / amount / frequency — the four bonus fields are tier, basis, amount, frequency. */
+    bonusBasis: text('bonus_basis', { enum: BONUS_BASES }),
+    bonusAmountPkr: integer('bonus_amount_pkr'),
+    bonusFrequency: text('bonus_frequency', { enum: BONUS_FREQUENCIES }),
     workFromHome: boolean('work_from_home').notNull().default(false),
     providentFund: boolean('provident_fund').notNull().default(false),
     transportAllowance: boolean('transport_allowance').notNull().default(false),
@@ -77,6 +95,13 @@ export const jobs = pgTable(
     check(
       'jobs_salary_order',
       sql`salary_min IS NULL OR salary_max IS NULL OR salary_min <= salary_max`,
+    ),
+    // Minimum salary PKR 41,700 (2026-11-10) — enforced in the DB as well as the schema.
+    check('jobs_salary_min_floor', sql`salary_min IS NULL OR salary_min >= 41700`),
+    check('jobs_salary_max_floor', sql`salary_max IS NULL OR salary_max >= 41700`),
+    check(
+      'jobs_shift_hours_range',
+      sql`shift_hours IS NULL OR (shift_hours >= 1 AND shift_hours <= 24)`,
     ),
     check('jobs_vacancies_positive', sql`vacancies > 0`),
     check('jobs_filled_lte_vacancies', sql`vacancies_filled <= vacancies`),
@@ -109,6 +134,9 @@ export const jobRequirements = pgTable('job_requirements', {
   jobId: uuid('job_id').primaryKey(),
   educationLevelCode: text('education_level_code'),
   minExperienceYears: smallint('min_experience_years'),
+  /** Experience band + minimum months (2026-11-10); years are derived from the band. */
+  experienceLevel: text('experience_level', { enum: EXPERIENCE_LEVELS }),
+  minExperienceMonths: smallint('min_experience_months'),
   languageCodes: text('language_codes').array(),
   otherRequirements: text('other_requirements'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

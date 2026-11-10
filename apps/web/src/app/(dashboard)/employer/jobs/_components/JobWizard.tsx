@@ -2,22 +2,36 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import {
+  BONUS_BASES,
+  BONUS_BASIS_LABELS,
+  BONUS_FREQUENCIES,
+  BONUS_FREQUENCY_LABELS,
   BONUS_TIERS,
   BONUS_TIER_LABELS,
+  EXPERIENCE_LEVELS,
+  EXPERIENCE_LEVEL_LABELS,
+  EXPERIENCE_LEVEL_MIN_MONTHS,
+  experienceLevelForMonths,
   GENDER_PREFERENCES,
   GENDER_PREFERENCE_LABELS,
+  JOB_LANGUAGE_CODES,
+  JOB_POSTING_SHIFT_TYPES,
   JOB_TYPES,
   JOB_TYPE_LABELS,
-  MEDICAL_COVERAGE_TYPES,
-  MEDICAL_COVERAGE_LABELS,
-  SHIFT_TYPES,
+  MEDICAL_COVERAGE_SCOPES,
+  MEDICAL_COVERAGE_SCOPE_LABELS,
+  MIN_SALARY_PKR,
   SHIFT_TYPE_LABELS,
   SKILL_LEVELS,
   SKILL_LEVEL_LABELS,
+  STANDARD_LEAVE_DAYS,
+  type BonusBasis,
+  type BonusFrequency,
   type BonusTier,
+  type ExperienceLevel,
   type GenderPreference,
   type JobType,
-  type MedicalCoverageType,
+  type MedicalCoverageScope,
   type ShiftType,
   type SkillLevel,
 } from '@jobbank/shared';
@@ -43,16 +57,33 @@ interface ReverseResult {
 }
 
 const JOB_TYPE_OPTIONS = JOB_TYPES.map((v) => ({ value: v, label: JOB_TYPE_LABELS[v] }));
-const SHIFT_OPTIONS = SHIFT_TYPES.map((v) => ({ value: v, label: SHIFT_TYPE_LABELS[v] }));
+// Rotation only for new postings (2026-11-10).
+const SHIFT_OPTIONS = JOB_POSTING_SHIFT_TYPES.map((v) => ({
+  value: v,
+  label: SHIFT_TYPE_LABELS[v],
+}));
 const GENDER_OPTIONS = GENDER_PREFERENCES.map((v) => ({
   value: v,
   label: GENDER_PREFERENCE_LABELS[v],
 }));
-const MEDICAL_OPTIONS = MEDICAL_COVERAGE_TYPES.map((v) => ({
+const EXPERIENCE_OPTIONS = EXPERIENCE_LEVELS.map((v) => ({
   value: v,
-  label: MEDICAL_COVERAGE_LABELS[v],
+  label: EXPERIENCE_LEVEL_LABELS[v],
+}));
+const LANGUAGE_LABELS: Record<(typeof JOB_LANGUAGE_CODES)[number], string> = {
+  URDU: 'Urdu',
+  ENGLISH: 'English',
+};
+const MEDICAL_SCOPE_OPTIONS = MEDICAL_COVERAGE_SCOPES.map((v) => ({
+  value: v,
+  label: MEDICAL_COVERAGE_SCOPE_LABELS[v],
 }));
 const BONUS_OPTIONS = BONUS_TIERS.map((v) => ({ value: v, label: BONUS_TIER_LABELS[v] }));
+const BONUS_BASIS_OPTIONS = BONUS_BASES.map((v) => ({ value: v, label: BONUS_BASIS_LABELS[v] }));
+const BONUS_FREQUENCY_OPTIONS = BONUS_FREQUENCIES.map((v) => ({
+  value: v,
+  label: BONUS_FREQUENCY_LABELS[v],
+}));
 const LEVEL_OPTIONS = SKILL_LEVELS.map((v) => ({ value: v, label: SKILL_LEVEL_LABELS[v] }));
 
 function friendlyError(err: unknown): string {
@@ -92,7 +123,12 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
   const [categoryCode, setCategoryCode] = useState(initialJob?.categoryCode ?? '');
   const [description, setDescription] = useState(initialJob?.description ?? '');
   const [jobType, setJobType] = useState<JobType>(initialJob?.jobType ?? 'FULL_TIME');
-  const [shift, setShift] = useState<ShiftType>(initialJob?.shift ?? 'DAY');
+  const [shift, setShift] = useState<ShiftType>(initialJob?.shift ?? 'ROTATING');
+  const [shiftHours, setShiftHours] = useState(
+    initialJob?.shiftHours != null ? String(initialJob.shiftHours) : '',
+  );
+  const [designationCode, setDesignationCode] = useState(initialJob?.designationCode ?? '');
+  const [designations, setDesignations] = useState<{ value: string; label: string }[]>([]);
   const [genderPreference, setGenderPreference] = useState<GenderPreference>(
     initialJob?.genderPreference ?? 'ANY',
   );
@@ -116,10 +152,19 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
   const autoFilled = useRef(!saved?.addressLine);
 
   // ── Experience & Requirements ────────────────────────────────────────
-  const [minExperience, setMinExperience] = useState(
-    initialJob?.requirements?.minExperienceYears != null
-      ? String(initialJob.requirements.minExperienceYears)
-      : '',
+  const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>(
+    initialJob?.requirements?.experienceLevel ??
+      experienceLevelForMonths(
+        initialJob?.requirements?.minExperienceMonths ??
+          (initialJob?.requirements?.minExperienceYears != null
+            ? initialJob.requirements.minExperienceYears * 12
+            : null),
+      ),
+  );
+  const [languageCodes, setLanguageCodes] = useState<string[]>(
+    (initialJob?.requirements?.languageCodes ?? []).filter((c) =>
+      (JOB_LANGUAGE_CODES as readonly string[]).includes(c),
+    ),
   );
   const [otherRequirements, setOtherRequirements] = useState(
     initialJob?.requirements?.otherRequirements ?? '',
@@ -168,13 +213,38 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
   const [fuelAllowance, setFuelAllowance] = useState(initialJob?.fuelAllowance ?? false);
   const [flexibleHours, setFlexibleHours] = useState(initialJob?.flexibleHours ?? false);
   const [annualLeaveDays, setAnnualLeaveDays] = useState(
-    initialJob?.annualLeaveDays != null ? String(initialJob.annualLeaveDays) : '',
+    initialJob?.annualLeaveDays != null
+      ? String(initialJob.annualLeaveDays)
+      : String(STANDARD_LEAVE_DAYS.annual),
   );
-  const [medicalCoverage, setMedicalCoverage] = useState<MedicalCoverageType>(
-    (initialJob?.medicalCoverage as MedicalCoverageType) ?? 'NONE',
+  const [sickLeaveDays, setSickLeaveDays] = useState(
+    initialJob?.sickLeaveDays != null
+      ? String(initialJob.sickLeaveDays)
+      : String(STANDARD_LEAVE_DAYS.sick),
+  );
+  const [casualLeaveDays, setCasualLeaveDays] = useState(
+    initialJob?.casualLeaveDays != null
+      ? String(initialJob.casualLeaveDays)
+      : String(STANDARD_LEAVE_DAYS.casual),
+  );
+  const [opdLimit, setOpdLimit] = useState(
+    initialJob?.opdLimit != null ? String(initialJob.opdLimit) : '',
+  );
+  const [ipdLimit, setIpdLimit] = useState(
+    initialJob?.ipdLimit != null ? String(initialJob.ipdLimit) : '',
+  );
+  const [medicalCoverageScope, setMedicalCoverageScope] = useState<MedicalCoverageScope | ''>(
+    initialJob?.medicalCoverageScope ?? '',
   );
   const [bonusTier, setBonusTier] = useState<BonusTier>(
     (initialJob?.bonusTier as BonusTier) ?? 'NONE',
+  );
+  const [bonusBasis, setBonusBasis] = useState<BonusBasis | ''>(initialJob?.bonusBasis ?? '');
+  const [bonusAmountPkr, setBonusAmountPkr] = useState(
+    initialJob?.bonusAmountPkr != null ? String(initialJob.bonusAmountPkr) : '',
+  );
+  const [bonusFrequency, setBonusFrequency] = useState<BonusFrequency | ''>(
+    initialJob?.bonusFrequency ?? '',
   );
   const [workFromHome, setWorkFromHome] = useState(initialJob?.workFromHome ?? false);
   const [providentFund, setProvidentFund] = useState(initialJob?.providentFund ?? false);
@@ -192,11 +262,13 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
     Promise.all([
       apiFetch<{ code: string; label: string }[]>('/api/v1/master-data?type=CITY'),
       apiFetch<{ code: string; label: string }[]>('/api/v1/master-data?type=JOB_CATEGORY'),
+      apiFetch<{ code: string; label: string }[]>('/api/v1/master-data?type=DESIGNATION'),
     ])
-      .then(([cityRes, catRes]) => {
+      .then(([cityRes, catRes, desRes]) => {
         if (cancelled) return;
         setCities(cityRes.data.map((c) => ({ value: c.code, label: c.label })));
         setCategories(catRes.data.map((c) => ({ value: c.code, label: c.label })));
+        setDesignations(desRes.data.map((d) => ({ value: d.code, label: d.label })));
       })
       .catch(() => {});
     return () => {
@@ -243,6 +315,8 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
               fuelAllowance,
               flexibleHours,
               annualLeaveDays: annualLeaveDays ? parseInt(annualLeaveDays, 10) : undefined,
+              sickLeaveDays: sickLeaveDays ? parseInt(sickLeaveDays, 10) : undefined,
+              casualLeaveDays: casualLeaveDays ? parseInt(casualLeaveDays, 10) : undefined,
               workFromHome,
               providentFund,
               transportAllowance,
@@ -255,6 +329,8 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
               description: description.trim(),
               jobType,
               shift,
+              shiftHours: shiftHours ? parseInt(shiftHours, 10) : undefined,
+              designationCode: designationCode.trim() || undefined,
               genderPreference,
               vacancies: parseInt(vacancies, 10),
               salaryMin: salaryMin ? parseInt(salaryMin, 10) : undefined,
@@ -262,8 +338,17 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
               fuelAllowance,
               flexibleHours,
               annualLeaveDays: annualLeaveDays ? parseInt(annualLeaveDays, 10) : undefined,
-              medicalCoverage,
+              sickLeaveDays: sickLeaveDays ? parseInt(sickLeaveDays, 10) : undefined,
+              casualLeaveDays: casualLeaveDays ? parseInt(casualLeaveDays, 10) : undefined,
+              opdLimit: opdLimit ? parseInt(opdLimit, 10) : undefined,
+              ipdLimit: ipdLimit ? parseInt(ipdLimit, 10) : undefined,
+              medicalCoverageScope:
+                (opdLimit || ipdLimit) && medicalCoverageScope ? medicalCoverageScope : undefined,
               bonusTier,
+              bonusBasis: bonusTier !== 'NONE' && bonusBasis ? bonusBasis : undefined,
+              bonusAmountPkr:
+                bonusTier !== 'NONE' && bonusAmountPkr ? parseInt(bonusAmountPkr, 10) : undefined,
+              bonusFrequency: bonusTier !== 'NONE' && bonusFrequency ? bonusFrequency : undefined,
               workFromHome,
               providentFund,
               transportAllowance,
@@ -314,7 +399,9 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
           body: restricted
             ? { otherRequirements: otherRequirements.trim() || undefined }
             : {
-                minExperienceYears: minExperience.trim() ? parseInt(minExperience, 10) : undefined,
+                experienceLevel,
+                minExperienceMonths: EXPERIENCE_LEVEL_MIN_MONTHS[experienceLevel],
+                languageCodes: languageCodes.length > 0 ? languageCodes : undefined,
                 otherRequirements: otherRequirements.trim() || undefined,
               },
         });
@@ -389,6 +476,28 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
             )}
           </FormField>
 
+          <FormField
+            label="Designation"
+            hint="The salary must fall inside this designation's salary range, once ranges are set in master data."
+          >
+            {designations.length > 0 ? (
+              <Select
+                value={designationCode}
+                onChange={(e) => setDesignationCode(e.target.value)}
+                options={designations}
+                placeholder="Select a designation"
+                disabled={restricted}
+              />
+            ) : (
+              <Input
+                value={designationCode}
+                onChange={(e) => setDesignationCode(e.target.value)}
+                placeholder="e.g. ACCOUNTANT"
+                disabled={restricted}
+              />
+            )}
+          </FormField>
+
           <FormField label="Job description" required>
             <Textarea
               value={description}
@@ -407,7 +516,7 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
                 disabled={restricted}
               />
             </FormField>
-            <FormField label="Shift" required>
+            <FormField label="Shift" required hint="Rotation shift only">
               <Select
                 options={SHIFT_OPTIONS}
                 value={shift}
@@ -416,6 +525,22 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
               />
             </FormField>
           </div>
+
+          <FormField label="How many hours for that shift?" required hint="Hours per shift / day">
+            <div className="flex items-center gap-3">
+              <Input
+                type="number"
+                min={1}
+                max={24}
+                value={shiftHours}
+                onChange={(e) => setShiftHours(e.target.value)}
+                placeholder="e.g. 8"
+                className="w-28"
+                disabled={restricted}
+              />
+              <span className="text-fg-muted text-sm">hours</span>
+            </div>
+          </FormField>
 
           <div className="grid grid-cols-2 gap-4">
             <FormField label="Gender preference">
@@ -438,20 +563,20 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <FormField label="Min salary (PKR/month)">
+            <FormField label="Min salary (PKR/month)" hint="Minimum salary is PKR 41,700">
               <Input
                 type="number"
-                min={0}
+                min={MIN_SALARY_PKR}
                 value={salaryMin}
                 onChange={(e) => setSalaryMin(e.target.value)}
-                placeholder="Optional"
+                placeholder="e.g. 41700"
                 disabled={restricted}
               />
             </FormField>
             <FormField label="Max salary (PKR/month)">
               <Input
                 type="number"
-                min={0}
+                min={MIN_SALARY_PKR}
                 value={salaryMax}
                 onChange={(e) => setSalaryMax(e.target.value)}
                 placeholder="Optional"
@@ -463,22 +588,33 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
 
         {/* ─── Experience & Requirements ───────────────────────────────── */}
         <Section title="Experience & Requirements">
-          <FormField
-            label="Minimum experience required"
-            hint="Leave blank if no experience is required"
-          >
-            <div className="flex items-center gap-3">
-              <Input
-                type="number"
-                min={0}
-                max={50}
-                value={minExperience}
-                onChange={(e) => setMinExperience(e.target.value)}
-                placeholder="0"
-                className="w-28"
-                disabled={restricted}
-              />
-              <span className="text-fg-muted text-sm">years</span>
+          <FormField label="Experience level required">
+            <Select
+              options={EXPERIENCE_OPTIONS}
+              value={experienceLevel}
+              onChange={(e) => setExperienceLevel(e.target.value as ExperienceLevel)}
+              disabled={restricted}
+            />
+          </FormField>
+
+          <FormField label="Languages required">
+            <div className="flex gap-6">
+              {JOB_LANGUAGE_CODES.map((code) => (
+                <label key={code} className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="accent-primary size-4"
+                    checked={languageCodes.includes(code)}
+                    onChange={(e) =>
+                      setLanguageCodes((prev) =>
+                        e.target.checked ? [...prev, code] : prev.filter((c) => c !== code),
+                      )
+                    }
+                    disabled={restricted}
+                  />
+                  <span className="text-fg text-sm">{LANGUAGE_LABELS[code]}</span>
+                </label>
+              ))}
             </div>
           </FormField>
 
@@ -572,15 +708,41 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
         {/* ─── Benefits & Perks ─────────────────────────────────────────── */}
         <Section title="Benefits & Perks">
           <div className="grid grid-cols-2 gap-4">
-            <FormField label="Medical coverage">
-              <Select
-                options={MEDICAL_OPTIONS}
-                value={medicalCoverage}
-                onChange={(e) => setMedicalCoverage(e.target.value as MedicalCoverageType)}
+            <FormField label="OPD limit (PKR)" hint="Leave blank for no OPD cover">
+              <Input
+                type="number"
+                min={0}
+                value={opdLimit}
+                onChange={(e) => setOpdLimit(e.target.value)}
+                placeholder="Optional"
                 disabled={restricted}
               />
             </FormField>
+            <FormField label="IPD limit (PKR)" hint="Leave blank for no IPD cover">
+              <Input
+                type="number"
+                min={0}
+                value={ipdLimit}
+                onChange={(e) => setIpdLimit(e.target.value)}
+                placeholder="Optional"
+                disabled={restricted}
+              />
+            </FormField>
+          </div>
 
+          {(opdLimit || ipdLimit) && (
+            <FormField label="Medical coverage for">
+              <Select
+                options={MEDICAL_SCOPE_OPTIONS}
+                value={medicalCoverageScope}
+                onChange={(e) => setMedicalCoverageScope(e.target.value as MedicalCoverageScope)}
+                placeholder="Individual or family?"
+                disabled={restricted}
+              />
+            </FormField>
+          )}
+
+          <div className="grid grid-cols-3 gap-4">
             <FormField label="Annual leave (days / year)">
               <Input
                 type="number"
@@ -588,7 +750,27 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
                 max={365}
                 value={annualLeaveDays}
                 onChange={(e) => setAnnualLeaveDays(e.target.value)}
-                placeholder="e.g. 15"
+                placeholder="e.g. 14"
+              />
+            </FormField>
+            <FormField label="Sick leave (days / year)">
+              <Input
+                type="number"
+                min={0}
+                max={365}
+                value={sickLeaveDays}
+                onChange={(e) => setSickLeaveDays(e.target.value)}
+                placeholder="e.g. 10"
+              />
+            </FormField>
+            <FormField label="Casual leave (days / year)">
+              <Input
+                type="number"
+                min={0}
+                max={365}
+                value={casualLeaveDays}
+                onChange={(e) => setCasualLeaveDays(e.target.value)}
+                placeholder="e.g. 10"
               />
             </FormField>
           </div>
@@ -601,6 +783,44 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
               disabled={restricted}
             />
           </FormField>
+
+          {bonusTier !== 'NONE' && (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <FormField label="Bonus calculated on" required>
+                  <Select
+                    options={BONUS_BASIS_OPTIONS}
+                    value={bonusBasis}
+                    onChange={(e) => setBonusBasis(e.target.value as BonusBasis)}
+                    placeholder="Gross or basic salary?"
+                    disabled={restricted}
+                  />
+                </FormField>
+                <FormField label="Bonus frequency">
+                  <Select
+                    options={BONUS_FREQUENCY_OPTIONS}
+                    value={bonusFrequency}
+                    onChange={(e) => setBonusFrequency(e.target.value as BonusFrequency)}
+                    placeholder="How often?"
+                    disabled={restricted}
+                  />
+                </FormField>
+              </div>
+              <FormField
+                label="Fixed bonus amount (PKR)"
+                hint="Optional — leave blank to use the tier multiple above"
+              >
+                <Input
+                  type="number"
+                  min={0}
+                  value={bonusAmountPkr}
+                  onChange={(e) => setBonusAmountPkr(e.target.value)}
+                  placeholder="Optional"
+                  disabled={restricted}
+                />
+              </FormField>
+            </>
+          )}
 
           <div className="grid grid-cols-2 gap-x-8 gap-y-3 pt-1">
             {(

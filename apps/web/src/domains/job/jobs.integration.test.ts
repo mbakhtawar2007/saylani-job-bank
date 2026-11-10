@@ -87,8 +87,10 @@ beforeAll(async () => {
       jobType: 'PART_TIME',
       shift: 'NIGHT',
       vacancies: 2,
-      salaryMin: 30000,
-      salaryMax: 40000,
+      // Minimum salary PKR 41,700 (2026-11-10) — the old 30,000/40,000
+      // range would violate the jobs_salary_min_floor check.
+      salaryMin: 41700,
+      salaryMax: 44000,
       status: 'PAUSED',
       createdBy: employerUserId,
     })
@@ -192,8 +194,8 @@ describe('job search and filtering', () => {
     expect(ids(await find('salaryMin=45000'))).toContain(jobA);
     expect(ids(await find('salaryMin=45000'))).not.toContain(jobB);
     expect(ids(await find('salaryMin=45000'))).not.toContain(jobC);
-    expect(ids(await find('salaryMax=35000'))).toContain(jobB);
-    expect(ids(await find('salaryMax=35000'))).not.toContain(jobA);
+    expect(ids(await find('salaryMax=43000'))).toContain(jobB);
+    expect(ids(await find('salaryMax=43000'))).not.toContain(jobA);
     expect(ids(await find('salaryMin=35000&salaryMax=55000'))).toEqual(
       expect.arrayContaining([jobA, jobB]),
     );

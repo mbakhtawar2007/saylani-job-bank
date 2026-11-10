@@ -1,19 +1,34 @@
 'use client';
 
 import {
+  BONUS_BASES,
+  BONUS_BASIS_LABELS,
+  BONUS_FREQUENCIES,
+  BONUS_FREQUENCY_LABELS,
   BONUS_TIERS,
   BONUS_TIER_LABELS,
+  EXPERIENCE_LEVELS,
+  EXPERIENCE_LEVEL_LABELS,
+  EXPERIENCE_LEVEL_MIN_MONTHS,
   GENDER_PREFERENCES,
   GENDER_PREFERENCE_LABELS,
+  JOB_LANGUAGE_CODES,
+  JOB_POSTING_SHIFT_TYPES,
   JOB_TYPES,
   JOB_TYPE_LABELS,
-  MEDICAL_COVERAGE_TYPES,
-  MEDICAL_COVERAGE_LABELS,
-  SHIFT_TYPES,
+  MEDICAL_COVERAGE_SCOPES,
+  MEDICAL_COVERAGE_SCOPE_LABELS,
+  MIN_SALARY_PKR,
   SHIFT_TYPE_LABELS,
+  STANDARD_LEAVE_DAYS,
+  type BonusBasis,
+  type BonusFrequency,
+  type BonusTier,
+  type ExperienceLevel,
+  type MedicalCoverageScope,
 } from '@jobbank/shared';
 import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { Button, Input, Select, Textarea } from '@/components/atoms';
 import { FormField, toast } from '@/components/molecules';
 import { apiFetch, friendlyApiError } from '@/lib/api/client';
@@ -34,16 +49,33 @@ interface Props {
 }
 
 const JOB_TYPE_OPTIONS = JOB_TYPES.map((v) => ({ value: v, label: JOB_TYPE_LABELS[v] }));
-const SHIFT_OPTIONS = SHIFT_TYPES.map((v) => ({ value: v, label: SHIFT_TYPE_LABELS[v] }));
+// Rotation only for new postings (2026-11-10).
+const SHIFT_OPTIONS = JOB_POSTING_SHIFT_TYPES.map((v) => ({
+  value: v,
+  label: SHIFT_TYPE_LABELS[v],
+}));
 const GENDER_OPTIONS = GENDER_PREFERENCES.map((v) => ({
   value: v,
   label: GENDER_PREFERENCE_LABELS[v],
 }));
-const MEDICAL_OPTIONS = MEDICAL_COVERAGE_TYPES.map((v) => ({
+const EXPERIENCE_OPTIONS = EXPERIENCE_LEVELS.map((v) => ({
   value: v,
-  label: MEDICAL_COVERAGE_LABELS[v],
+  label: EXPERIENCE_LEVEL_LABELS[v],
+}));
+const LANGUAGE_LABELS: Record<(typeof JOB_LANGUAGE_CODES)[number], string> = {
+  URDU: 'Urdu',
+  ENGLISH: 'English',
+};
+const MEDICAL_SCOPE_OPTIONS = MEDICAL_COVERAGE_SCOPES.map((v) => ({
+  value: v,
+  label: MEDICAL_COVERAGE_SCOPE_LABELS[v],
 }));
 const BONUS_OPTIONS = BONUS_TIERS.map((v) => ({ value: v, label: BONUS_TIER_LABELS[v] }));
+const BONUS_BASIS_OPTIONS = BONUS_BASES.map((v) => ({ value: v, label: BONUS_BASIS_LABELS[v] }));
+const BONUS_FREQUENCY_OPTIONS = BONUS_FREQUENCIES.map((v) => ({
+  value: v,
+  label: BONUS_FREQUENCY_LABELS[v],
+}));
 
 export function StaffPostJobForm({
   companies,
@@ -59,21 +91,35 @@ export function StaffPostJobForm({
   );
   const [title, setTitle] = useState('');
   const [categoryCode, setCategoryCode] = useState('');
+  const [designationCode, setDesignationCode] = useState('');
+  const [designations, setDesignations] = useState<{ value: string; label: string }[]>([]);
   const [description, setDescription] = useState('');
   const [jobType, setJobType] = useState('FULL_TIME');
-  const [shift, setShift] = useState('DAY');
+  const [shift, setShift] = useState('ROTATING');
+  const [shiftHours, setShiftHours] = useState('');
   const [genderPreference, setGenderPreference] = useState('ANY');
   const [vacancies, setVacancies] = useState('1');
   const [salaryMin, setSalaryMin] = useState('');
   const [salaryMax, setSalaryMax] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  // Experience & languages
+  const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>('FRESHER');
+  const [languageCodes, setLanguageCodes] = useState<string[]>([]);
+
   // Benefits & Perks
   const [fuelAllowance, setFuelAllowance] = useState(false);
   const [flexibleHours, setFlexibleHours] = useState(false);
-  const [annualLeaveDays, setAnnualLeaveDays] = useState('');
-  const [medicalCoverage, setMedicalCoverage] = useState('NONE');
-  const [bonusTier, setBonusTier] = useState('NONE');
+  const [annualLeaveDays, setAnnualLeaveDays] = useState(String(STANDARD_LEAVE_DAYS.annual));
+  const [sickLeaveDays, setSickLeaveDays] = useState(String(STANDARD_LEAVE_DAYS.sick));
+  const [casualLeaveDays, setCasualLeaveDays] = useState(String(STANDARD_LEAVE_DAYS.casual));
+  const [opdLimit, setOpdLimit] = useState('');
+  const [ipdLimit, setIpdLimit] = useState('');
+  const [medicalCoverageScope, setMedicalCoverageScope] = useState<MedicalCoverageScope | ''>('');
+  const [bonusTier, setBonusTier] = useState<BonusTier>('NONE');
+  const [bonusBasis, setBonusBasis] = useState<BonusBasis | ''>('');
+  const [bonusAmountPkr, setBonusAmountPkr] = useState('');
+  const [bonusFrequency, setBonusFrequency] = useState<BonusFrequency | ''>('');
   const [workFromHome, setWorkFromHome] = useState(false);
   const [providentFund, setProvidentFund] = useState(false);
   const [transportAllowance, setTransportAllowance] = useState(false);
@@ -82,6 +128,18 @@ export function StaffPostJobForm({
 
   const categoryOptions = categories.map((c) => ({ value: c.code, label: c.label }));
   const companyOptions = companies.map((c) => ({ value: c.id, label: c.name }));
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<{ code: string; label: string }[]>('/api/v1/master-data?type=DESIGNATION')
+      .then((res) => {
+        if (!cancelled) setDesignations(res.data.map((d) => ({ value: d.code, label: d.label })));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function handleSubmit() {
     startTransition(async () => {
@@ -93,18 +151,34 @@ export function StaffPostJobForm({
             companyId,
             title: title.trim(),
             categoryCode: categoryCode.trim(),
+            designationCode: designationCode.trim() || undefined,
             description: description.trim(),
             jobType,
             shift,
+            shiftHours: shiftHours ? parseInt(shiftHours, 10) : undefined,
             genderPreference,
             vacancies: parseInt(vacancies, 10),
             salaryMin: salaryMin ? parseInt(salaryMin, 10) : undefined,
             salaryMax: salaryMax ? parseInt(salaryMax, 10) : undefined,
+            requirements: {
+              experienceLevel,
+              minExperienceMonths: EXPERIENCE_LEVEL_MIN_MONTHS[experienceLevel],
+              languageCodes: languageCodes.length > 0 ? languageCodes : undefined,
+            },
             fuelAllowance,
             flexibleHours,
             annualLeaveDays: annualLeaveDays ? parseInt(annualLeaveDays, 10) : undefined,
-            medicalCoverage,
+            sickLeaveDays: sickLeaveDays ? parseInt(sickLeaveDays, 10) : undefined,
+            casualLeaveDays: casualLeaveDays ? parseInt(casualLeaveDays, 10) : undefined,
+            opdLimit: opdLimit ? parseInt(opdLimit, 10) : undefined,
+            ipdLimit: ipdLimit ? parseInt(ipdLimit, 10) : undefined,
+            medicalCoverageScope:
+              (opdLimit || ipdLimit) && medicalCoverageScope ? medicalCoverageScope : undefined,
             bonusTier,
+            bonusBasis: bonusTier !== 'NONE' && bonusBasis ? bonusBasis : undefined,
+            bonusAmountPkr:
+              bonusTier !== 'NONE' && bonusAmountPkr ? parseInt(bonusAmountPkr, 10) : undefined,
+            bonusFrequency: bonusTier !== 'NONE' && bonusFrequency ? bonusFrequency : undefined,
             workFromHome,
             providentFund,
             transportAllowance,
@@ -153,6 +227,25 @@ export function StaffPostJobForm({
                 options={categoryOptions}
               />
             </FormField>
+            <FormField
+              label="Designation"
+              hint="The salary must fall inside this designation's salary range, once ranges are set in master data."
+            >
+              {designations.length > 0 ? (
+                <Select
+                  value={designationCode}
+                  onChange={(e) => setDesignationCode(e.target.value)}
+                  placeholder="Select a designation"
+                  options={designations}
+                />
+              ) : (
+                <Input
+                  value={designationCode}
+                  onChange={(e) => setDesignationCode(e.target.value)}
+                  placeholder="e.g. ACCOUNTANT"
+                />
+              )}
+            </FormField>
             <FormField label="Job type" required>
               <Select
                 value={jobType}
@@ -160,12 +253,26 @@ export function StaffPostJobForm({
                 options={JOB_TYPE_OPTIONS}
               />
             </FormField>
-            <FormField label="Shift" required>
+            <FormField label="Shift" required hint="Rotation shift only">
               <Select
                 value={shift}
                 onChange={(e) => setShift(e.target.value)}
                 options={SHIFT_OPTIONS}
               />
+            </FormField>
+            <FormField label="How many hours for that shift?" required>
+              <div className="flex items-center gap-3">
+                <Input
+                  type="number"
+                  min="1"
+                  max="24"
+                  value={shiftHours}
+                  onChange={(e) => setShiftHours(e.target.value)}
+                  placeholder="e.g. 8"
+                  className="w-28"
+                />
+                <span className="text-fg-muted text-sm">hours</span>
+              </div>
             </FormField>
             <FormField label="Gender preference">
               <Select
@@ -183,53 +290,160 @@ export function StaffPostJobForm({
                 onChange={(e) => setVacancies(e.target.value)}
               />
             </FormField>
-            <FormField label="Salary min (PKR/mo)">
+            <FormField label="Salary min (PKR/mo)" hint="Minimum salary is PKR 41,700">
               <Input
                 type="number"
-                min="0"
+                min={MIN_SALARY_PKR}
                 value={salaryMin}
                 onChange={(e) => setSalaryMin(e.target.value)}
-                placeholder="Optional"
+                placeholder="e.g. 41700"
               />
             </FormField>
             <FormField label="Salary max (PKR/mo)">
               <Input
                 type="number"
-                min="0"
+                min={MIN_SALARY_PKR}
                 value={salaryMax}
                 onChange={(e) => setSalaryMax(e.target.value)}
                 placeholder="Optional"
               />
             </FormField>
+            <FormField label="Experience level required">
+              <Select
+                options={EXPERIENCE_OPTIONS}
+                value={experienceLevel}
+                onChange={(e) => setExperienceLevel(e.target.value as ExperienceLevel)}
+              />
+            </FormField>
+            <FormField label="Languages required">
+              <div className="flex gap-6">
+                {JOB_LANGUAGE_CODES.map((code) => (
+                  <label key={code} className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="accent-primary size-4"
+                      checked={languageCodes.includes(code)}
+                      onChange={(e) =>
+                        setLanguageCodes((prev) =>
+                          e.target.checked ? [...prev, code] : prev.filter((c) => c !== code),
+                        )
+                      }
+                    />
+                    <span className="text-fg text-sm">{LANGUAGE_LABELS[code]}</span>
+                  </label>
+                ))}
+              </div>
+            </FormField>
             <div className="border-border rounded-xl border p-4 sm:col-span-2">
               <h3 className="text-fg mb-3 text-sm font-medium">Benefits &amp; Perks</h3>
               <div className="grid gap-3">
                 <div className="grid grid-cols-2 gap-3">
-                  <FormField label="Medical coverage">
-                    <Select
-                      options={MEDICAL_OPTIONS}
-                      value={medicalCoverage}
-                      onChange={(e) => setMedicalCoverage(e.target.value)}
+                  <FormField label="OPD limit (PKR)" hint="Blank = no OPD cover">
+                    <Input
+                      type="number"
+                      min="0"
+                      value={opdLimit}
+                      onChange={(e) => setOpdLimit(e.target.value)}
+                      placeholder="Optional"
                     />
                   </FormField>
+                  <FormField label="IPD limit (PKR)" hint="Blank = no IPD cover">
+                    <Input
+                      type="number"
+                      min="0"
+                      value={ipdLimit}
+                      onChange={(e) => setIpdLimit(e.target.value)}
+                      placeholder="Optional"
+                    />
+                  </FormField>
+                </div>
+                {(opdLimit || ipdLimit) && (
+                  <FormField label="Medical coverage for">
+                    <Select
+                      options={MEDICAL_SCOPE_OPTIONS}
+                      value={medicalCoverageScope}
+                      onChange={(e) =>
+                        setMedicalCoverageScope(e.target.value as MedicalCoverageScope)
+                      }
+                      placeholder="Individual or family?"
+                    />
+                  </FormField>
+                )}
+                <div className="grid grid-cols-3 gap-3">
+                  <FormField label="Annual leave (days/year)">
+                    <Input
+                      type="number"
+                      min="0"
+                      max="365"
+                      value={annualLeaveDays}
+                      onChange={(e) => setAnnualLeaveDays(e.target.value)}
+                      placeholder="e.g. 14"
+                    />
+                  </FormField>
+                  <FormField label="Sick leave (days/year)">
+                    <Input
+                      type="number"
+                      min="0"
+                      max="365"
+                      value={sickLeaveDays}
+                      onChange={(e) => setSickLeaveDays(e.target.value)}
+                      placeholder="e.g. 10"
+                    />
+                  </FormField>
+                  <FormField label="Casual leave (days/year)">
+                    <Input
+                      type="number"
+                      min="0"
+                      max="365"
+                      value={casualLeaveDays}
+                      onChange={(e) => setCasualLeaveDays(e.target.value)}
+                      placeholder="e.g. 10"
+                    />
+                  </FormField>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
                   <FormField label="Bonus">
                     <Select
                       options={BONUS_OPTIONS}
                       value={bonusTier}
-                      onChange={(e) => setBonusTier(e.target.value)}
+                      onChange={(e) => setBonusTier(e.target.value as BonusTier)}
                     />
                   </FormField>
+                  {bonusTier !== 'NONE' && (
+                    <FormField label="Bonus calculated on" required>
+                      <Select
+                        options={BONUS_BASIS_OPTIONS}
+                        value={bonusBasis}
+                        onChange={(e) => setBonusBasis(e.target.value as BonusBasis)}
+                        placeholder="Gross or basic salary?"
+                      />
+                    </FormField>
+                  )}
                 </div>
-                <FormField label="Annual leave (days/year)">
-                  <Input
-                    type="number"
-                    min="0"
-                    max="365"
-                    value={annualLeaveDays}
-                    onChange={(e) => setAnnualLeaveDays(e.target.value)}
-                    placeholder="e.g. 15"
-                  />
-                </FormField>
+                {bonusTier !== 'NONE' && (
+                  <>
+                    <FormField label="Bonus frequency">
+                      <Select
+                        options={BONUS_FREQUENCY_OPTIONS}
+                        value={bonusFrequency}
+                        onChange={(e) => setBonusFrequency(e.target.value as BonusFrequency)}
+                        placeholder="How often?"
+                      />
+                    </FormField>
+                    <FormField
+                      label="Fixed bonus amount (PKR)"
+                      hint="Optional — leave blank to use the tier multiple above"
+                    >
+                      <Input
+                        type="number"
+                        min="0"
+                        value={bonusAmountPkr}
+                        onChange={(e) => setBonusAmountPkr(e.target.value)}
+                        placeholder="Optional"
+                      />
+                    </FormField>
+                  </>
+                )}
                 <div className="grid grid-cols-2 gap-x-6 gap-y-2.5">
                   {(
                     [
@@ -269,7 +483,9 @@ export function StaffPostJobForm({
             <Button
               onClick={handleSubmit}
               loading={pending}
-              disabled={!companyId || !title || !categoryCode || !description || !vacancies}
+              disabled={
+                !companyId || !title || !categoryCode || !description || !vacancies || !shiftHours
+              }
             >
               Create job draft
             </Button>

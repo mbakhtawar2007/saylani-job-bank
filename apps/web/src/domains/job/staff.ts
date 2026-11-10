@@ -1,10 +1,14 @@
 import 'server-only';
 import {
+  deriveMedicalCoverage,
+  EXPERIENCE_LEVEL_MIN_MONTHS,
+  experienceLevelToMinYears,
   INTERNAL_ROLES,
   JOB_STATUSES,
   JOB_TYPES,
   SHIFT_TYPES,
   type CreateJobInput,
+  type JobRequirementsInput,
   type JobStatus,
   type JobType,
   type ShiftType,
@@ -25,9 +29,13 @@ import {
 } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
 import type { RequestContext } from '@/domains/shared/audit';
-import { assertActiveMasterData, masterDataLabels } from '@/domains/settings';
+import {
+  assertActiveMasterData,
+  findMasterDataByCodes,
+  masterDataLabels,
+} from '@/domains/settings';
 import { schema } from '@jobbank/db';
-import { buildJobView, j, loadJob, type JobView } from './repository';
+import { buildJobView, j, jr, loadJob, type JobView } from './repository';
 import { jobMachine } from './machine';
 
 type SignedIn = RequestContext & { actor: Actor };
@@ -289,6 +297,7 @@ export async function staffCreateJob(
   ctx: SignedIn,
   companyId: string,
   input: CreateJobInput,
+  requirements?: JobRequirementsInput,
 ): Promise<JobView> {
   assertPermission(ctx.actor, 'job:manage');
   const [company] = await db
@@ -311,6 +320,29 @@ export async function staffCreateJob(
   return runCommand(ctx, async ({ tx, audit }) => {
     // C4/H13: the category must be a real, active master-data code.
     await assertActiveMasterData(tx, 'JOB_CATEGORY', [input.categoryCode], () => 'categoryCode');
+    // Salary must correspond to the designation, when a range is stored for it.
+    if (input.designationCode) {
+      const [item] = await findMasterDataByCodes('DESIGNATION', [input.designationCode], tx);
+      if (item) {
+        const meta = (item.meta ?? {}) as { salaryMin?: unknown; salaryMax?: unknown };
+        const rangeMin = typeof meta.salaryMin === 'number' ? meta.salaryMin : null;
+        const rangeMax = typeof meta.salaryMax === 'number' ? meta.salaryMax : null;
+        const issues: { path: string; message: string }[] = [];
+        if (rangeMin !== null && input.salaryMin != null && input.salaryMin < rangeMin) {
+          issues.push({
+            path: 'salaryMin',
+            message: `Minimum salary for ${item.label} is PKR ${rangeMin.toLocaleString('en-PK')}`,
+          });
+        }
+        if (rangeMax !== null && input.salaryMax != null && input.salaryMax > rangeMax) {
+          issues.push({
+            path: 'salaryMax',
+            message: `Maximum salary for ${item.label} is PKR ${rangeMax.toLocaleString('en-PK')}`,
+          });
+        }
+        if (issues.length > 0) throw new ValidationError(issues);
+      }
+    }
     const [row] = await tx
       .insert(j)
       .values({
@@ -321,6 +353,8 @@ export async function staffCreateJob(
         description: input.description,
         jobType: input.jobType,
         shift: input.shift,
+        shiftHours: input.shiftHours ?? null,
+        designationCode: input.designationCode ?? null,
         genderPreference: input.genderPreference ?? 'ANY',
         vacancies: input.vacancies,
         salaryMin: input.salaryMin ?? null,
@@ -330,8 +364,19 @@ export async function staffCreateJob(
         fuelAllowance: input.fuelAllowance ?? false,
         flexibleHours: input.flexibleHours ?? false,
         annualLeaveDays: input.annualLeaveDays ?? null,
-        medicalCoverage: input.medicalCoverage ?? 'NONE',
+        sickLeaveDays: input.sickLeaveDays ?? null,
+        casualLeaveDays: input.casualLeaveDays ?? null,
+        medicalCoverage:
+          input.opdLimit != null || input.ipdLimit != null
+            ? deriveMedicalCoverage(input.opdLimit, input.ipdLimit)
+            : (input.medicalCoverage ?? 'NONE'),
+        opdLimit: input.opdLimit ?? null,
+        ipdLimit: input.ipdLimit ?? null,
+        medicalCoverageScope: input.medicalCoverageScope ?? null,
         bonusTier: input.bonusTier ?? 'NONE',
+        bonusBasis: input.bonusBasis ?? null,
+        bonusAmountPkr: input.bonusAmountPkr ?? null,
+        bonusFrequency: input.bonusFrequency ?? null,
         workFromHome: input.workFromHome ?? false,
         providentFund: input.providentFund ?? false,
         transportAllowance: input.transportAllowance ?? false,
@@ -340,6 +385,43 @@ export async function staffCreateJob(
         createdBy: ctx.actor.userId,
       })
       .returning();
+    // The staff form collects experience + languages with the posting, so
+    // they are saved in the same transaction (the employer form uses the
+    // separate requirements PUT instead).
+    if (requirements) {
+      if (requirements.educationLevelCode) {
+        await assertActiveMasterData(
+          tx,
+          'EDUCATION_LEVEL',
+          [requirements.educationLevelCode],
+          () => 'educationLevelCode',
+        );
+      }
+      if (requirements.languageCodes?.length) {
+        await assertActiveMasterData(
+          tx,
+          'LANGUAGE',
+          requirements.languageCodes,
+          (index) => `languageCodes[${index}]`,
+        );
+      }
+      await tx.insert(jr).values({
+        jobId: row!.id,
+        educationLevelCode: requirements.educationLevelCode ?? null,
+        minExperienceYears:
+          requirements.experienceLevel !== undefined
+            ? experienceLevelToMinYears(requirements.experienceLevel)
+            : (requirements.minExperienceYears ?? null),
+        experienceLevel: requirements.experienceLevel ?? null,
+        minExperienceMonths:
+          requirements.minExperienceMonths ??
+          (requirements.experienceLevel !== undefined
+            ? EXPERIENCE_LEVEL_MIN_MONTHS[requirements.experienceLevel]
+            : null),
+        languageCodes: requirements.languageCodes ?? null,
+        otherRequirements: requirements.otherRequirements ?? null,
+      });
+    }
     audit({
       action: 'job.staff_create',
       entityType: 'job',

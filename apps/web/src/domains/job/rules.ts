@@ -22,6 +22,8 @@ export const EMPLOYER_OPEN_JOB_FIELDS = [
   'fuelAllowance',
   'flexibleHours',
   'annualLeaveDays',
+  'sickLeaveDays',
+  'casualLeaveDays',
   'workFromHome',
   'providentFund',
   'transportAllowance',
@@ -35,13 +37,21 @@ export const EMPLOYER_RESTRICTED_JOB_FIELDS = [
   'categoryCode',
   'jobType',
   'shift',
+  'shiftHours',
+  'designationCode',
   'genderPreference',
   'vacancies',
   'salaryMin',
   'salaryMax',
   'closesAt',
   'medicalCoverage',
+  'opdLimit',
+  'ipdLimit',
+  'medicalCoverageScope',
   'bonusTier',
+  'bonusBasis',
+  'bonusAmountPkr',
+  'bonusFrequency',
 ] as const satisfies readonly (keyof UpdateJobInput)[];
 
 /** JobRequirementsInput keys an employer may still edit once the job is OPEN. */
@@ -57,6 +67,8 @@ export const EMPLOYER_OPEN_REQUIREMENTS_FIELDS = [
 export const EMPLOYER_RESTRICTED_REQUIREMENTS_FIELDS = [
   'educationLevelCode',
   'minExperienceYears',
+  'experienceLevel',
+  'minExperienceMonths',
   'languageCodes',
 ] as const satisfies readonly (keyof JobRequirementsInput)[];
 

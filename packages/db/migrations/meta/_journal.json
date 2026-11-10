@@ -288,6 +288,13 @@
       "when": 1794321236279,
       "tag": "0040_company_cnic_front_back",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1794323296344,
+      "tag": "0041_job_posting_form_fields",
+      "breakpoints": true
     }
   ]
 }

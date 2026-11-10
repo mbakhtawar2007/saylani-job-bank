@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   createJobSchema,
+  deriveMedicalCoverage,
+  experienceLevelToMinYears,
   jobLocationSchema,
+  jobRequirementsSchema,
   jobSkillsSchema,
   type Role,
   updateJobSchema,
@@ -27,7 +30,8 @@ describe('job schemas', () => {
     categoryCode: 'TRANSPORT',
     description: 'Drives the delivery van.',
     jobType: 'FULL_TIME',
-    shift: 'DAY',
+    shift: 'ROTATING',
+    shiftHours: 8,
     vacancies: 2,
   } as const;
   it('a partial update carries only the fields the caller sent', () => {
@@ -54,12 +58,86 @@ describe('job schemas', () => {
       categoryCode: 'TRANSPORT',
       description: 'Drives the delivery van.',
       jobType: 'FULL_TIME',
-      shift: 'DAY',
+      shift: 'ROTATING',
+      shiftHours: 8,
       vacancies: 2,
     });
     expect(parsed.genderPreference).toBe('ANY');
     expect(parsed.fuelAllowance).toBe(false);
     expect(parsed.medicalCoverage).toBe('NONE');
+    // Standard leave entitlement (2026-11-10): Annual 14 / Sick 10 / Casual 10.
+    expect(parsed.annualLeaveDays).toBe(14);
+    expect(parsed.sickLeaveDays).toBe(10);
+    expect(parsed.casualLeaveDays).toBe(10);
+  });
+
+  // Job posting form fields (2026-11-10).
+  it('create rejects a salary below the PKR 41,700 minimum', () => {
+    expect(createJobSchema.safeParse({ ...validCreate, salaryMin: 41_699 }).success).toBe(false);
+    expect(createJobSchema.safeParse({ ...validCreate, salaryMin: 41_700 }).success).toBe(true);
+    expect(createJobSchema.safeParse({ ...validCreate, salaryMax: 40_000 }).success).toBe(false);
+  });
+
+  it('create rejects a non-rotating shift', () => {
+    expect(createJobSchema.safeParse({ ...validCreate, shift: 'DAY' }).success).toBe(false);
+    expect(createJobSchema.safeParse({ ...validCreate, shift: 'NIGHT' }).success).toBe(false);
+  });
+
+  it('create requires shift hours', () => {
+    const { shiftHours: _omitted, ...withoutHours } = validCreate;
+    expect(createJobSchema.safeParse(withoutHours).success).toBe(false);
+    expect(createJobSchema.safeParse({ ...validCreate, shiftHours: 0 }).success).toBe(false);
+    expect(createJobSchema.safeParse({ ...validCreate, shiftHours: 25 }).success).toBe(false);
+    expect(createJobSchema.safeParse({ ...validCreate, shiftHours: 12 }).success).toBe(true);
+  });
+
+  it('create requires a bonus basis when a bonus tier is set', () => {
+    expect(createJobSchema.safeParse({ ...validCreate, bonusTier: 'TIER_1' }).success).toBe(false);
+    expect(
+      createJobSchema.safeParse({
+        ...validCreate,
+        bonusTier: 'TIER_1',
+        bonusBasis: 'GROSS',
+      }).success,
+    ).toBe(true);
+    expect(createJobSchema.safeParse({ ...validCreate, bonusBasis: 'BASIC' }).success).toBe(false);
+  });
+
+  it('experience bands map to whole years for matching', () => {
+    expect(experienceLevelToMinYears('FRESHER')).toBe(0);
+    expect(experienceLevelToMinYears('BEGINNER')).toBe(0);
+    expect(experienceLevelToMinYears('INTERMEDIATE')).toBe(1);
+    expect(experienceLevelToMinYears('EXPERT')).toBe(3);
+  });
+
+  it('requirements reject months outside the chosen experience band', () => {
+    expect(
+      jobRequirementsSchema.safeParse({ experienceLevel: 'BEGINNER', minExperienceMonths: 12 })
+        .success,
+    ).toBe(false);
+    expect(
+      jobRequirementsSchema.safeParse({ experienceLevel: 'BEGINNER', minExperienceMonths: 6 })
+        .success,
+    ).toBe(true);
+    expect(
+      jobRequirementsSchema.safeParse({ experienceLevel: 'FRESHER', minExperienceMonths: 3 })
+        .success,
+    ).toBe(false);
+  });
+
+  it('requirements only allow English and Urdu', () => {
+    expect(jobRequirementsSchema.safeParse({ languageCodes: ['URDU', 'ENGLISH'] }).success).toBe(
+      true,
+    );
+    expect(jobRequirementsSchema.safeParse({ languageCodes: ['SINDHI'] }).success).toBe(false);
+    expect(jobRequirementsSchema.safeParse({ languageCodes: ['ARABIC'] }).success).toBe(false);
+  });
+
+  it('medical cover is derived from the OPD / IPD limits', () => {
+    expect(deriveMedicalCoverage(undefined, undefined)).toBe('NONE');
+    expect(deriveMedicalCoverage(50_000, undefined)).toBe('BASIC');
+    expect(deriveMedicalCoverage(undefined, 200_000)).toBe('BASIC');
+    expect(deriveMedicalCoverage(50_000, 200_000)).toBe('COMPREHENSIVE');
   });
 
   // C4/M16: salary range and closing date guards on create.
@@ -232,7 +310,9 @@ describe('employer field restrictions', () => {
     categoryCode: 'TRANSPORT',
     description: 'Drives the delivery van.',
     jobType: 'FULL_TIME',
-    shift: 'DAY',
+    shift: 'ROTATING',
+    shiftHours: 8,
+    designationCode: 'DRIVER',
     genderPreference: 'ANY',
     vacancies: 2,
     salaryMin: 50_000,
@@ -241,8 +321,16 @@ describe('employer field restrictions', () => {
     fuelAllowance: true,
     flexibleHours: false,
     annualLeaveDays: 15,
+    sickLeaveDays: 10,
+    casualLeaveDays: 10,
     medicalCoverage: 'BASIC',
+    opdLimit: 50_000,
+    ipdLimit: 200_000,
+    medicalCoverageScope: 'FAMILY',
     bonusTier: 'TIER_1',
+    bonusBasis: 'GROSS',
+    bonusAmountPkr: 25_000,
+    bonusFrequency: 'ANNUAL',
     workFromHome: false,
     providentFund: true,
     transportAllowance: false,
@@ -269,6 +357,8 @@ describe('employer field restrictions', () => {
         fuelAllowance: true,
         flexibleHours: true,
         annualLeaveDays: 20,
+        sickLeaveDays: 10,
+        casualLeaveDays: 10,
         workFromHome: true,
         providentFund: true,
         transportAllowance: true,
@@ -285,6 +375,29 @@ describe('employer field restrictions', () => {
     expect(employerRestrictedUpdateFields(EMPLOYER, 'OPEN', { bonusTier: 'TIER_2' })).toEqual([
       'bonusTier',
     ]);
+    expect(
+      employerRestrictedUpdateFields(EMPLOYER, 'OPEN', {
+        opdLimit: 50_000,
+        ipdLimit: 200_000,
+        medicalCoverageScope: 'FAMILY',
+        bonusBasis: 'BASIC',
+        bonusAmountPkr: 25_000,
+        bonusFrequency: 'QUARTERLY',
+      }),
+    ).toEqual([
+      'opdLimit',
+      'ipdLimit',
+      'medicalCoverageScope',
+      'bonusBasis',
+      'bonusAmountPkr',
+      'bonusFrequency',
+    ]);
+    expect(employerRestrictedUpdateFields(EMPLOYER, 'OPEN', { shiftHours: 12 })).toEqual([
+      'shiftHours',
+    ]);
+    expect(employerRestrictedUpdateFields(EMPLOYER, 'OPEN', { designationCode: 'DRIVER' })).toEqual(
+      ['designationCode'],
+    );
   });
 
   it('employer + PAUSED is restricted like OPEN', () => {
@@ -339,6 +452,12 @@ describe('employer field restrictions', () => {
     ).toEqual(['minExperienceYears']);
     expect(
       employerRestrictedRequirementsFields(EMPLOYER, 'OPEN', {
+        experienceLevel: 'EXPERT',
+        minExperienceMonths: 36,
+      }),
+    ).toEqual(['experienceLevel', 'minExperienceMonths']);
+    expect(
+      employerRestrictedRequirementsFields(EMPLOYER, 'OPEN', {
         educationLevelCode: 'BACHELORS',
         languageCodes: ['URDU'],
       }),
@@ -349,7 +468,9 @@ describe('employer field restrictions', () => {
     const full = {
       educationLevelCode: 'BACHELORS',
       minExperienceYears: 3,
-      languageCodes: ['URDU'],
+      experienceLevel: 'EXPERT' as const,
+      minExperienceMonths: 36,
+      languageCodes: ['URDU' as const],
       otherRequirements: 'Must hold a valid licence.',
     };
     expect(employerRestrictedRequirementsFields(EMPLOYER, 'DRAFT', full)).toEqual([]);

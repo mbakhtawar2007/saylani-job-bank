@@ -1,10 +1,14 @@
 import 'server-only';
 import {
+  deriveMedicalCoverage,
+  EXPERIENCE_LEVEL_MIN_MONTHS,
+  experienceLevelToMinYears,
   type CreateJobInput,
   type JobLocationInput,
   type JobRequirementsInput,
   type JobSkillsInput,
   type JobStatusInput,
+  type MedicalCoverageType,
   type PaginationMeta,
   type UpdateJobInput,
 } from '@jobbank/shared';
@@ -16,8 +20,8 @@ import { runCommand } from '@/domains/shared/audit';
 import { ForbiddenError, NotFoundError, ValidationError } from '@/domains/shared/errors';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
 import { assertPermission, type Actor } from '@/domains/shared/scope';
-import { assertActiveMasterData } from '@/domains/settings';
-import { db } from '@/lib/db';
+import { assertActiveMasterData, findMasterDataByCodes } from '@/domains/settings';
+import { db, type DbExecutor } from '@/lib/db';
 import type { RequestContext } from '@/domains/shared/audit';
 import { jobMachine } from './machine';
 import { buildJobView, j, jl, jr, js, loadJob, jobsByCompany, type JobView } from './repository';
@@ -30,6 +34,53 @@ import {
 } from './rules';
 
 type SignedIn = RequestContext & { actor: Actor };
+
+/**
+ * Salary must correspond to the designation (2026-11-10): when the
+ * designation exists in DESIGNATION master data with a salary range, the
+ * job's salary must fall inside it. A designation code with no master-data
+ * row (free text, until the user supplies the designation list) cannot be
+ * range-checked, so it passes — the check is scaffolding, not a block.
+ */
+async function assertDesignationSalaryRange(
+  tx: DbExecutor,
+  designationCode: string | null | undefined,
+  salaryMin: number | null | undefined,
+  salaryMax: number | null | undefined,
+): Promise<void> {
+  if (!designationCode) return;
+  const [item] = await findMasterDataByCodes('DESIGNATION', [designationCode], tx);
+  if (!item) return;
+  const meta = (item.meta ?? {}) as { salaryMin?: unknown; salaryMax?: unknown };
+  const rangeMin = typeof meta.salaryMin === 'number' ? meta.salaryMin : null;
+  const rangeMax = typeof meta.salaryMax === 'number' ? meta.salaryMax : null;
+  const issues: { path: string; message: string }[] = [];
+  if (rangeMin !== null && salaryMin != null && salaryMin < rangeMin) {
+    issues.push({
+      path: 'salaryMin',
+      message: `Minimum salary for ${item.label} is PKR ${rangeMin.toLocaleString('en-PK')}`,
+    });
+  }
+  if (rangeMax !== null && salaryMax != null && salaryMax > rangeMax) {
+    issues.push({
+      path: 'salaryMax',
+      message: `Maximum salary for ${item.label} is PKR ${rangeMax.toLocaleString('en-PK')}`,
+    });
+  }
+  if (issues.length > 0) throw new ValidationError(issues);
+}
+
+/** Legacy cover value for a job: explicit value wins, else derived from the OPD / IPD limits. */
+function resolveMedicalCoverage(input: {
+  medicalCoverage?: MedicalCoverageType;
+  opdLimit?: number | null;
+  ipdLimit?: number | null;
+}): MedicalCoverageType {
+  if (input.opdLimit != null || input.ipdLimit != null) {
+    return deriveMedicalCoverage(input.opdLimit, input.ipdLimit);
+  }
+  return input.medicalCoverage ?? 'NONE';
+}
 
 // ─── Queries ────────────────────────────────────────────────────────────
 
@@ -98,6 +149,7 @@ export async function createJob(ctx: SignedIn, input: CreateJobInput): Promise<J
       throw new ForbiddenError('Only verified companies can post jobs');
     // C4/H13: the category must be a real, active master-data code.
     await assertActiveMasterData(tx, 'JOB_CATEGORY', [input.categoryCode], () => 'categoryCode');
+    await assertDesignationSalaryRange(tx, input.designationCode, input.salaryMin, input.salaryMax);
     const [row] = await tx
       .insert(j)
       .values({
@@ -108,6 +160,8 @@ export async function createJob(ctx: SignedIn, input: CreateJobInput): Promise<J
         description: input.description,
         jobType: input.jobType,
         shift: input.shift,
+        shiftHours: input.shiftHours ?? null,
+        designationCode: input.designationCode ?? null,
         genderPreference: input.genderPreference ?? 'ANY',
         vacancies: input.vacancies,
         salaryMin: input.salaryMin ?? null,
@@ -117,8 +171,16 @@ export async function createJob(ctx: SignedIn, input: CreateJobInput): Promise<J
         fuelAllowance: input.fuelAllowance ?? false,
         flexibleHours: input.flexibleHours ?? false,
         annualLeaveDays: input.annualLeaveDays ?? null,
-        medicalCoverage: input.medicalCoverage ?? 'NONE',
+        sickLeaveDays: input.sickLeaveDays ?? null,
+        casualLeaveDays: input.casualLeaveDays ?? null,
+        medicalCoverage: resolveMedicalCoverage(input),
+        opdLimit: input.opdLimit ?? null,
+        ipdLimit: input.ipdLimit ?? null,
+        medicalCoverageScope: input.medicalCoverageScope ?? null,
         bonusTier: input.bonusTier ?? 'NONE',
+        bonusBasis: input.bonusBasis ?? null,
+        bonusAmountPkr: input.bonusAmountPkr ?? null,
+        bonusFrequency: input.bonusFrequency ?? null,
         workFromHome: input.workFromHome ?? false,
         providentFund: input.providentFund ?? false,
         transportAllowance: input.transportAllowance ?? false,
@@ -199,6 +261,28 @@ export async function updateJob(
     if (input.categoryCode !== undefined) {
       await assertActiveMasterData(tx, 'JOB_CATEGORY', [input.categoryCode], () => 'categoryCode');
     }
+    // Salary must correspond to the (possibly changed) designation, checked
+    // against the merged salary/designation, like the merged salary range above.
+    if (
+      input.designationCode !== undefined ||
+      input.salaryMin !== undefined ||
+      input.salaryMax !== undefined
+    ) {
+      await assertDesignationSalaryRange(
+        tx,
+        input.designationCode ?? row.designationCode,
+        mergedMin,
+        mergedMax,
+      );
+    }
+    // A changed OPD / IPD limit re-derives the legacy cover label.
+    const derivedCoverage =
+      input.opdLimit !== undefined || input.ipdLimit !== undefined
+        ? deriveMedicalCoverage(
+            input.opdLimit ?? row.opdLimit ?? null,
+            input.ipdLimit ?? row.ipdLimit ?? null,
+          )
+        : undefined;
     const [updated] = await tx
       .update(j)
       .set({
@@ -207,6 +291,10 @@ export async function updateJob(
         ...(input.description !== undefined && { description: input.description }),
         ...(input.jobType !== undefined && { jobType: input.jobType }),
         ...(input.shift !== undefined && { shift: input.shift }),
+        ...(input.shiftHours !== undefined && { shiftHours: input.shiftHours }),
+        ...(input.designationCode !== undefined && {
+          designationCode: input.designationCode,
+        }),
         ...(input.genderPreference !== undefined && { genderPreference: input.genderPreference }),
         ...(input.vacancies !== undefined && { vacancies: input.vacancies }),
         ...(input.salaryMin !== undefined && { salaryMin: input.salaryMin }),
@@ -217,8 +305,19 @@ export async function updateJob(
         ...(input.fuelAllowance !== undefined && { fuelAllowance: input.fuelAllowance }),
         ...(input.flexibleHours !== undefined && { flexibleHours: input.flexibleHours }),
         ...(input.annualLeaveDays !== undefined && { annualLeaveDays: input.annualLeaveDays }),
+        ...(input.sickLeaveDays !== undefined && { sickLeaveDays: input.sickLeaveDays }),
+        ...(input.casualLeaveDays !== undefined && { casualLeaveDays: input.casualLeaveDays }),
         ...(input.medicalCoverage !== undefined && { medicalCoverage: input.medicalCoverage }),
+        ...(derivedCoverage !== undefined && { medicalCoverage: derivedCoverage }),
+        ...(input.opdLimit !== undefined && { opdLimit: input.opdLimit }),
+        ...(input.ipdLimit !== undefined && { ipdLimit: input.ipdLimit }),
+        ...(input.medicalCoverageScope !== undefined && {
+          medicalCoverageScope: input.medicalCoverageScope,
+        }),
         ...(input.bonusTier !== undefined && { bonusTier: input.bonusTier }),
+        ...(input.bonusBasis !== undefined && { bonusBasis: input.bonusBasis }),
+        ...(input.bonusAmountPkr !== undefined && { bonusAmountPkr: input.bonusAmountPkr }),
+        ...(input.bonusFrequency !== undefined && { bonusFrequency: input.bonusFrequency }),
         ...(input.workFromHome !== undefined && { workFromHome: input.workFromHome }),
         ...(input.providentFund !== undefined && { providentFund: input.providentFund }),
         ...(input.transportAllowance !== undefined && {
@@ -502,16 +601,29 @@ export async function saveJobRequirements(
     // Published-job PUT: keep the stored restricted fields; DRAFT PUT (or
     // staff) replaces the row from the body, as before.
     const stored = storedRequirements[0];
+    // The experience band is the source of truth: its minimum years are
+    // derived so the matching engine (which reads years) keeps working,
+    // and its minimum months make the 3–6 month band representable.
+    const derivedYears =
+      input.experienceLevel !== undefined
+        ? experienceLevelToMinYears(input.experienceLevel)
+        : (input.minExperienceYears ?? null);
     const values = {
       jobId,
       educationLevelCode:
         stored !== undefined
           ? (stored.educationLevelCode ?? null)
           : (input.educationLevelCode ?? null),
-      minExperienceYears:
+      minExperienceYears: stored !== undefined ? (stored.minExperienceYears ?? null) : derivedYears,
+      experienceLevel:
+        stored !== undefined ? (stored.experienceLevel ?? null) : (input.experienceLevel ?? null),
+      minExperienceMonths:
         stored !== undefined
-          ? (stored.minExperienceYears ?? null)
-          : (input.minExperienceYears ?? null),
+          ? (stored.minExperienceMonths ?? null)
+          : (input.minExperienceMonths ??
+            (input.experienceLevel !== undefined
+              ? EXPERIENCE_LEVEL_MIN_MONTHS[input.experienceLevel]
+              : null)),
       languageCodes:
         stored !== undefined ? (stored.languageCodes ?? null) : (input.languageCodes ?? null),
       otherRequirements:
@@ -527,6 +639,8 @@ export async function saveJobRequirements(
         set: {
           educationLevelCode: values.educationLevelCode,
           minExperienceYears: values.minExperienceYears,
+          experienceLevel: values.experienceLevel,
+          minExperienceMonths: values.minExperienceMonths,
           languageCodes: values.languageCodes,
           otherRequirements: values.otherRequirements,
           updatedAt: new Date(),
