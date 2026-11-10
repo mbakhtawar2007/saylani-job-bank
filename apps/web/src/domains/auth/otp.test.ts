@@ -35,7 +35,13 @@ describe('OTP codes', () => {
     try {
       await issueOtp('+923001234567', null);
       expect(send).toHaveBeenCalledWith('+923001234567', expect.stringMatching(/\b\d{6}\b/));
-      expect(log).not.toHaveBeenCalled();
+      // Merge (2026-11-10): HEAD's issueOtp logs a masked-phone line
+      // ("Issuing OTP for +92300***4567 (expires in 300s)") by design —
+      // the rule is that no log line carries the full phone number or
+      // the code itself, not that nothing is logged at all.
+      const logged = log.mock.calls.flat().map(String).join('\n');
+      expect(logged).not.toContain('+923001234567');
+      expect(logged).not.toMatch(/\b\d{6}\b/);
     } finally {
       log.mockRestore();
     }

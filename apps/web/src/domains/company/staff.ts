@@ -13,7 +13,6 @@ import {
   type Role,
   type StaffOnboardCompanyInput,
   type UpdateCompanyInput,
-  type VerificationState,
 } from '@jobbank/shared';
 import {
   and,

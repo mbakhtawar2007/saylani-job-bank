@@ -593,7 +593,7 @@ export const staffApplicantProfileUpdateSchema = assistedApplicantRegistrationSc
   .omit({ branchId: true, phone: true })
   .extend({
     gender: z.enum(GENDERS, 'Choose an option'),
-    address: applicantLocationSchema.omit({ branchId: true }),
+    address: applicantLocationSchema,
     preferences: preferencesSchema.nullable().optional(),
     recordIds: profileRecordIdsSchema,
   })

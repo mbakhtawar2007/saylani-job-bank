@@ -1,6 +1,5 @@
 import 'server-only';
 import {
-import {
   deriveMedicalCoverage,
   EXPERIENCE_LEVEL_MIN_MONTHS,
   experienceLevelToMinYears,
@@ -303,7 +302,6 @@ export async function getJobDetail(actor: Actor, jobId: string): Promise<JobView
   if (actor.companyId && isPureEmployer(actor) && row.companyId !== actor.companyId) {
     throw new NotFoundError('Job', jobId);
   }
-  }
   await assertCityAccess(actor, row.branchId, { entityType: 'job', entityId: row.id });
   return buildJobView(db, row);
 }
@@ -411,12 +409,11 @@ export async function staffCreateJob(
       }
     }
 
->>>>>>> rafeh/main
     const [row] = await tx
       .insert(j)
       .values({
-        companyId: company.id,
-        branchId: company.branchId,
+        companyId: lockedCompany.id,
+        branchId: lockedCompany.branchId,
         title: input.title,
         categoryCode: input.categoryCode,
         description: input.description,

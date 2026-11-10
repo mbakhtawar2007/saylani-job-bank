@@ -17,6 +17,7 @@ const withDatabase = (url: string | undefined, name: string) => {
   parsed.pathname = `/${name}`;
   return parsed.toString();
 };
+const testDb = process.env.TEST_DATABASE_NAME ?? 'jobbank_test';
 const testMigratorUrl =
   process.env.TEST_DATABASE_MIGRATOR_URL ??
   withDatabase(process.env.DATABASE_MIGRATOR_URL ?? rootEnv.DATABASE_MIGRATOR_URL, testDb);

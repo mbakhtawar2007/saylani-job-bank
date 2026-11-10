@@ -4,14 +4,21 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import app.api as api_module
 from app.api import router
+
+TOKEN = "a" * 40
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    # Merge (2026-11-10): the kept implementation gates /internal routes
+    # on get_settings().api_token (MATCHING_API_TOKEN, env-based), not on
+    # app.state.settings.internal_api_token, which Rafeh's version used.
+    # Patch get_settings so the gate reads the test token.
+    monkeypatch.setattr(api_module, "get_settings", lambda: SimpleNamespace(api_token=TOKEN))
     app = FastAPI()
     app.include_router(router)
-    app.state.settings = SimpleNamespace(internal_api_token="a" * 40)
     app.state.pool = object()
     with TestClient(app) as test_client:
         yield test_client
@@ -31,8 +38,8 @@ def test_internal_routes_reject_missing_and_invalid_credentials(client, method, 
 
 
 @pytest.mark.parametrize("token", [None, "too-short"])
-def test_missing_secret_fails_closed(client, token):
-    client.app.state.settings.internal_api_token = token
+def test_missing_secret_fails_closed(client, token, monkeypatch):
+    monkeypatch.setattr(api_module, "get_settings", lambda: SimpleNamespace(api_token=token))
     response = client.get("/internal/matches/jobs/job-1", headers={"Authorization": "Bearer x"})
     assert response.status_code == 503
 
@@ -48,7 +55,7 @@ def test_valid_token_reaches_matching_logic(client, monkeypatch):
     monkeypatch.setattr("app.api.run_job_match", run_job_match)
     response = client.post(
         "/internal/matches/runs",
-        headers={"Authorization": f"Bearer {'a' * 40}"},
+        headers={"Authorization": f"Bearer {TOKEN}"},
         json={"job_id": "job-1"},
     )
     assert response.status_code == 200

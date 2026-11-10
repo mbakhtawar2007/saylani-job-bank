@@ -224,6 +224,9 @@ export async function createApplicantRegistrationForm(
           ),
           shifts: profile.preferences.shifts,
           jobTypes: profile.preferences.jobTypes,
+          // Merge (2026-11-10): willingRadiusM was dropped by HEAD
+          // migration 0036, so the print view always gets null here.
+          willingRadiusM: null,
         }
       : null,
     verificationQrDataUrl,

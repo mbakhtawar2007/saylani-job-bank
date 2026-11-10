@@ -15,7 +15,7 @@ const form: RegistrationFormData = {
   registrationReference: 'SJB-2026-0123456789ABCDEF',
   registeredAt: '2026-10-12T12:00:00.000Z',
   registrationSource: 'Staff-assisted registration',
-  status: 'DRAFT',
+  status: 'ACTIVE',
   branchName: 'Gulshan Branch',
   registeredByName: 'Registration Administrator',
   personal: {

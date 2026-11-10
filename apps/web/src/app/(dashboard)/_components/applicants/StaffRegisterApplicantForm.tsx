@@ -242,7 +242,8 @@ export function StaffRegisterApplicantForm({
         ? {
             ...preferences,
             minSalaryPkr: preferences.minSalaryPkr ? Number(preferences.minSalaryPkr) : null,
-            willingRadiusM: applicant?.preferences?.willingRadiusM ?? null,
+            // Merge (2026-11-10): willingRadiusM was dropped by HEAD migration 0036.
+            willingRadiusM: null,
             availableFrom: preferences.availableFrom || null,
           }
         : applicant

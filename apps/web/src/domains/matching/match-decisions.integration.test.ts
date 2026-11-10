@@ -16,7 +16,6 @@ import { call, randomPhone, signIn, signInApplicant, Jar } from '@/test/api-clie
 const us = schema.users;
 const ap = schema.applicants;
 const apn = schema.applications;
-const co = schema.companies;
 const cm = schema.companyMembers;
 const j = schema.jobs;
 const mr = schema.matchRuns;

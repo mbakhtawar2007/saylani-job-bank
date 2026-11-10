@@ -420,6 +420,7 @@ export const applicantVerificationTokens = pgTable(
     check(
       'applicant_verification_tokens_revocation_consistent',
       sql`(${t.isActive} and ${t.revokedAt} is null and ${t.revokedBy} is null)
-       or (not ${t.isActive} and ${t.revokedAt} is not null)`,    ),
+       or (not ${t.isActive} and ${t.revokedAt} is not null)`,
+    ),
   ],
 );

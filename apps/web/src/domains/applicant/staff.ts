@@ -34,7 +34,7 @@ import {
 import { z } from 'zod';
 import { isPlaceholderEmail, placeholderEmailFor } from '@/domains/auth';
 import { getBranchContact, type BranchContact } from '@/domains/branch';
-import { assertActiveMasterData, masterDataLabels, resolveMatchRadius } from '@/domains/settings';
+import { assertActiveMasterData, masterDataLabels } from '@/domains/settings';
 import { recordAudit, runCommand } from '@/domains/shared/audit';
 import {
   ConflictError,
@@ -149,10 +149,6 @@ export async function registerApplicantForStaff(
   if (!phone || !isSupportedPkMobile(phone)) {
     throw new ValidationError([{ path: 'phone', message: 'Enter a Pakistani mobile number' }]);
   }
-  if (input.branchId !== input.address.branchId) {
-    throw new ValidationError([{ path: 'branchId', message: 'Choose one destination branch' }]);
-  }
-
   let applicantId: string;
   try {
     await runCommand(ctx, async (cmd) => {
@@ -233,7 +229,7 @@ export async function registerApplicantForStaff(
 
       await tx.insert(addr).values({
         applicantId: applicantId,
-        addressLine: input.address.addressLine,
+        addressLine: input.address.addressLine ?? '',
         cityCode: input.address.cityCode,
         areaCode: input.address.areaCode ?? null,
         location: toGeography(input.address.location),
@@ -317,17 +313,6 @@ export async function registerApplicantForStaff(
           input.preferences.categoryCodes,
           (i) => `preferences.categoryCodes.${i}`,
         );
-        if (input.preferences.willingRadiusM !== null) {
-          const { maxM } = await resolveMatchRadius({ branchId: branch.id });
-          if (input.preferences.willingRadiusM > maxM) {
-            throw new ValidationError([
-              {
-                path: 'preferences.willingRadiusM',
-                message: `Your branch matches jobs within ${maxM / 1000} km at most`,
-              },
-            ]);
-          }
-        }
         await tx.insert(schema.applicantPreferences).values({
           applicantId,
           ...input.preferences,
@@ -422,26 +407,6 @@ export async function staffUpdateApplicantProfile(
         (index) => `languages.items.${index}.languageCode`,
       );
 
-      if (input.preferences?.willingRadiusM != null) {
-        if (!row.branchId) {
-          throw new ValidationError([
-            {
-              path: 'preferences.willingRadiusM',
-              message: 'Assign a branch before setting travel distance',
-            },
-          ]);
-        }
-        const { maxM } = await resolveMatchRadius({ branchId: row.branchId });
-        if (input.preferences.willingRadiusM > maxM) {
-          throw new ValidationError([
-            {
-              path: 'preferences.willingRadiusM',
-              message: `This branch matches jobs within ${maxM / 1000} km at most`,
-            },
-          ]);
-        }
-      }
-
       const identityChanged = IDENTITY_FIELDS.some(
         (field) => input[field] !== row[field as keyof ApplicantRow],
       );
@@ -470,7 +435,7 @@ export async function staffUpdateApplicantProfile(
         .insert(addr)
         .values({
           applicantId: row.id,
-          addressLine: input.address.addressLine,
+          addressLine: input.address.addressLine ?? '',
           cityCode: input.address.cityCode,
           areaCode: input.address.areaCode ?? null,
           location: toGeography(input.address.location),
@@ -478,7 +443,7 @@ export async function staffUpdateApplicantProfile(
         .onConflictDoUpdate({
           target: addr.applicantId,
           set: {
-            addressLine: input.address.addressLine,
+            addressLine: input.address.addressLine ?? '',
             cityCode: input.address.cityCode,
             areaCode: input.address.areaCode ?? null,
             location: toGeography(input.address.location),
@@ -980,6 +945,7 @@ export async function staffRegisterApplicant(
         .values({
           userId: user!.id,
           branchId: input.branchId,
+          registrationReference: createRegistrationReference(),
           fullName: input.fullName,
           fatherName: input.fatherName,
           cnic: input.cnic,
