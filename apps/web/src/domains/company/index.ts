@@ -42,6 +42,7 @@ export type {
   CompanyView,
   VerificationSummary,
 } from './repository';
+export { companyDocumentTypes, requireOwnCompany } from './repository';
 export {
   companyEditability,
   conflictReason,

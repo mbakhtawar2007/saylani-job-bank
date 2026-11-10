@@ -4,6 +4,7 @@ import { distanceBand, distanceTone, formatDistance } from './distance';
 import {
   formatPkMobileDisplay,
   formatPkMobileNational,
+  isSupportedPkMobile,
   maskPkMobile,
   normalizePkMobile,
 } from './phone';
@@ -29,6 +30,11 @@ describe('normalizePkMobile', () => {
     expect(maskPkMobile('+923001234567')).toBe('+92300***4567');
     expect(maskPkMobile('03001234567')).toBe('030012***4567');
     expect(maskPkMobile('short')).toBe('***');
+  });
+
+  it('recognizes only listed original allocation prefixes', () => {
+    expect(isSupportedPkMobile('+923441234567')).toBe(true);
+    expect(isSupportedPkMobile('+923991234567')).toBe(false);
   });
 });
 

@@ -32,11 +32,15 @@ export {
 } from './rules';
 export {
   forceCloseJob,
+  getCompanyJobDetail,
   getJobDetail,
   JOB_SORTABLE,
   jobFilters,
   listJobs,
+  listCompanyJobs,
   staffCreateJob,
+  staffChangeJobStatus,
+  staffUpdateJob,
   type JobListItem,
 } from './staff';
 export {

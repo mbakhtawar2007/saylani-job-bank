@@ -1,10 +1,12 @@
 import { permissionsFor } from '@jobbank/shared';
 import { schema } from '@jobbank/db';
+import { randomUUID } from 'node:crypto';
 import { and, eq, isNull } from 'drizzle-orm';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PATCH as decideMatch } from '@/app/api/v1/jobs/[id]/matches/[applicantId]/route';
 import { POST as respondOffer } from '@/app/api/v1/offers/[jobId]/response/route';
 import { countHiresByMonth } from '@/domains/job';
+import { GET as listNotifications } from '@/app/api/v1/notifications/route';
 import { resetMemoryRateLimits } from '@/domains/shared/rate-limit';
 import type { Actor } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
@@ -46,36 +48,12 @@ beforeAll(async () => {
     await db.select({ id: us.id }).from(us).where(eq(us.email, 'employer@jobbank.local'))
   )[0]!.id;
 
-  const [existing] = await db
-    .select({ id: co.id })
-    .from(co)
-    .where(and(eq(co.legalName, 'Decide Flow Traders'), eq(co.createdBy, employerUserId)))
-    .limit(1);
-  if (existing) {
-    companyId = existing.id;
-  } else {
-    const company = (
-      await db
-        .insert(co)
-        .values({
-          branchId: KHI,
-          legalName: 'Decide Flow Traders',
-          legalStructure: 'PRIVATE_LIMITED',
-          ntn: String(Math.floor(1e6 + Math.random() * 9e6)),
-          industryCode: 'RETAIL',
-          sizeBand: '1_10',
-          status: 'VERIFIED',
-          verifiedAt: new Date(),
-          createdBy: employerUserId,
-        })
-        .returning({ id: co.id })
-    )[0]!;
-    companyId = company.id;
-  }
-  await db
-    .insert(cm)
-    .values({ companyId, userId: employerUserId, role: 'OWNER' })
-    .onConflictDoNothing();
+  const [membership] = await db
+    .select({ companyId: cm.companyId })
+    .from(cm)
+    .where(eq(cm.userId, employerUserId));
+  if (!membership) throw new Error('Seeded employer has no company membership');
+  companyId = membership.companyId;
 
   employerJar = await signIn('employer@jobbank.local');
 });
@@ -95,6 +73,7 @@ async function seedFixture() {
       .insert(ap)
       .values({
         userId: applicantUser.id,
+        registrationReference: `SJB-${randomUUID()}`,
         branchId: KHI,
         fullName: 'Decision Tester',
         fatherName: 'Test Father',
@@ -501,5 +480,25 @@ describe('employer match decisions (hire / reject)', () => {
 
     const after = await countHiresByMonth(employerActor(), year);
     expect(after[month - 1]! - before[month - 1]!).toBe(0);
+  });
+
+  it('reports the unread count across all pages', async () => {
+    const f = await seedFixture();
+    await db.insert(nt).values(
+      Array.from({ length: 10 }, (_, index) => ({
+        userId: f.applicantUserId,
+        type: 'MATCH_HIRED',
+        title: `Test notification ${index}`,
+        readAt: index < 8 ? new Date() : null,
+        createdAt: new Date(Date.now() - index * 1000),
+      })),
+    );
+    const response = await call(listNotifications, '/api/v1/notifications?pageSize=8', {
+      jar: f.applicantJar,
+    });
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(response.body.data).toHaveLength(8);
+    expect(response.body.meta.total).toBe(10);
+    expect(response.body.meta.unread).toBe(2);
   });
 });

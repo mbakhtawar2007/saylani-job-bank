@@ -1,5 +1,5 @@
 import type { Role } from '@jobbank/shared';
-import { StatusPill } from '@/components/atoms';
+import { Button, Link, StatusPill } from '@/components/atoms';
 import { DetailPageLayout } from '@/components/templates';
 import {
   APPLICANT_SORTABLE,
@@ -21,7 +21,9 @@ import { loadForPage } from '../../_lib/page-context';
 import { ApplicantDetailView } from './ApplicantDetailView';
 import { ApplicantsTable } from './ApplicantsTable';
 import { APPLICANT_STATUS_PILL } from './labels';
-import { profileLabels } from './lists';
+import { profileLabels, profileLists } from './lists';
+import { StaffRegisterApplicantForm } from './StaffRegisterApplicantForm';
+import { redirect } from 'next/navigation';
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -62,13 +64,28 @@ export async function ApplicantListPage({
 
   return (
     <div className="grid w-full gap-6">
-      <header className="grid gap-1">
-        <h1 className="text-fg text-2xl font-semibold">Applicants</h1>
-        <p className="text-fg-muted text-sm">
-          {isSuperAdmin(actor) && !actor.activeBranchId
-            ? 'Job seekers across all branches. Use the branch switcher to focus on one branch.'
-            : 'Job seekers registered with your branch.'}
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="grid gap-1">
+          <h1 className="text-fg text-2xl font-semibold">Applicants</h1>
+          <p className="text-fg-muted text-sm">
+            {isSuperAdmin(actor) && !actor.activeBranchId
+              ? 'Job seekers across all branches. Use the branch switcher to focus on one branch.'
+              : 'Job seekers registered with your branch.'}
+          </p>
+        </div>
+        {actor.permissions.has('applicant:create') && (
+          <Button asChild size="sm">
+            <Link
+              href={
+                role === 'SUPER_ADMIN'
+                  ? '/super-admin/applicants/new'
+                  : '/branch-admin/applicants/new'
+              }
+            >
+              <span className="font-medium">Register job seeker</span>
+            </Link>
+          </Button>
+        )}
       </header>
       <ApplicantsTable
         rows={data}
@@ -151,5 +168,57 @@ export async function ApplicantDetailPage({
         listPath={basePath}
       />
     </DetailPageLayout>
+  );
+}
+
+export async function ApplicantEditPage({
+  role,
+  basePath,
+  params,
+}: {
+  role: Role;
+  basePath: string;
+  params: Promise<{ id: string }>;
+}) {
+  const { actor } = await requireRole(role);
+  if (!actor.permissions.has('applicant:manage')) redirect('/forbidden');
+  const { id } = await params;
+  const [applicant, lists] = await Promise.all([
+    loadForPage(actor, () => getApplicantForStaff(actor, id)),
+    profileLists(actor),
+  ]);
+  return (
+    <div className="grid w-full gap-6">
+      <header>
+        <h1 className="text-fg text-2xl font-semibold">Edit job seeker profile</h1>
+        <p className="text-fg-muted mt-1 text-sm">
+          Update the existing profile for {applicant.personal.fullName}.
+        </p>
+      </header>
+      <StaffRegisterApplicantForm
+        applicant={applicant}
+        branches={
+          applicant.branch ? [{ value: applicant.branch.id, label: applicant.branch.name }] : []
+        }
+        cities={lists.cities}
+        areas={lists.areas}
+        educationLevels={lists.educationLevels}
+        skills={lists.skills}
+        languages={lists.languages}
+        categories={lists.categories}
+        basePath={basePath}
+      />
+    </div>
+  );
+}
+
+export function ApplicantEditLoading() {
+  return (
+    <div className="grid w-full gap-6" role="status" aria-label="Loading applicant profile">
+      <div className="bg-surface-muted h-8 w-64 animate-pulse rounded" />
+      <div className="bg-surface-muted h-40 animate-pulse rounded-xl" />
+      <div className="bg-surface-muted h-40 animate-pulse rounded-xl" />
+      <span className="sr-only">Loading applicant profile...</span>
+    </div>
   );
 }

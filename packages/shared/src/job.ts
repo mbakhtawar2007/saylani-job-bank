@@ -82,6 +82,23 @@ export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
 
 export const OPEN_JOB_STATUSES = ['OPEN'] as const satisfies readonly JobStatus[];
 
+export type JobStatusTransition = 'publish' | 'pause' | 'resume' | 'close';
+
+export function allowedTransitions(status: JobStatus): JobStatusTransition[] {
+  switch (status) {
+    case 'DRAFT':
+      return ['publish'];
+    case 'OPEN':
+      return ['pause', 'close'];
+    case 'PAUSED':
+      return ['resume', 'close'];
+    case 'FILLED':
+    case 'CLOSED':
+    case 'EXPIRED':
+      return [];
+  }
+}
+
 // ─── Job type / shift ───────────────────────────────────────────────────
 
 // JOB_TYPES / JobType / JOB_TYPE_LABELS already exported from applicant.ts

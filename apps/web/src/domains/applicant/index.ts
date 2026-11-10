@@ -42,13 +42,22 @@ export {
   type IssueApplicantTokenResult,
 } from './tokens';
 export {
+  createApplicantRegistrationForm,
+  ensureApplicantVerificationToken,
+  getPublicApplicantVerification,
+  resolveApplicantVerification,
+} from './verification';
+export type { PublicApplicantVerification, RegistrationFormData } from './registration-form.types';
+export {
   APPLICANT_SORTABLE,
   applicantFilters,
   changeApplicantPhone,
   getApplicantForStaff,
   listApplicants,
   markApplicantRegistrationVerifiedSigned,
+  registerApplicantForStaff,
   staffRegisterApplicant,
+  staffUpdateApplicantProfile,
   staffSetApplicantStatus,
   staffUpdateApplicant,
   transferApplicant,

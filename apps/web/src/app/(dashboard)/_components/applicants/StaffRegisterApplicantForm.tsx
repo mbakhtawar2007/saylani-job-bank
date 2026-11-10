@@ -1,0 +1,1196 @@
+'use client';
+
+import {
+  assistedApplicantRegistrationSchema,
+  ASSISTED_REGISTRATION_GENDERS,
+  GENDER_LABELS,
+  JOB_TYPE_LABELS,
+  JOB_TYPES,
+  LANGUAGE_PROFICIENCIES,
+  LANGUAGE_PROFICIENCY_LABELS,
+  SHIFT_LABELS,
+  SHIFTS,
+  SKILL_LEVEL_LABELS,
+  SKILL_LEVELS,
+  staffApplicantProfileUpdateSchema,
+  type ApplicantStatus,
+  type Gender,
+} from '@jobbank/shared';
+import { ArrowLeft, Check, Plus, Printer, Trash2, UserPlus } from 'lucide-react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useState, type FormEvent } from 'react';
+import { Button, Checkbox, Input, RadioGroup, Select, Textarea } from '@/components/atoms';
+import type { SelectOption } from '@/components/atoms';
+import { CNICInput, FormField, PhoneInput, toast } from '@/components/molecules';
+import type { ApplicantStaffView } from '@/domains/applicant';
+import { MapPinPicker } from '@/components/organisms';
+import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { errorMessage, toFieldErrors, type FieldErrors } from './form';
+import { APPLICANT_STATUS_PILL } from './labels';
+
+type EducationRow = {
+  id: string | null;
+  levelCode: string;
+  institution: string;
+  fieldOfStudy: string;
+  completionYear: string;
+  isCurrent: boolean;
+  grade: string;
+};
+
+type ExperienceRow = {
+  id: string | null;
+  employerName: string;
+  jobTitle: string;
+  categoryCode: string;
+  startMonth: string;
+  endMonth: string;
+  isCurrent: boolean;
+  description: string;
+};
+
+type CertificationRow = {
+  id: string | null;
+  name: string;
+  issuer: string;
+  issuedMonth: string;
+  expiresMonth: string;
+};
+
+interface Props {
+  branches: SelectOption[];
+  cities: SelectOption[];
+  areas: SelectOption[];
+  educationLevels: SelectOption[];
+  skills: SelectOption[];
+  languages: SelectOption[];
+  categories: SelectOption[];
+  basePath: string;
+  applicant?: ApplicantStaffView;
+}
+
+export function StaffRegisterApplicantForm({
+  branches,
+  cities,
+  areas,
+  educationLevels,
+  skills,
+  languages,
+  categories,
+  basePath,
+  applicant,
+}: Props) {
+  const router = useRouter();
+  const editing = Boolean(applicant);
+  const [review, setReview] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [registered, setRegistered] = useState<{
+    id: string;
+    fullName: string;
+    reference: string;
+    branchName: string | null;
+    status: ApplicantStatus;
+  } | null>(null);
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [alert, setAlert] = useState<string | null>(null);
+  const [education, setEducation] = useState<EducationRow[]>(
+    () =>
+      applicant?.education.map((item, index) => ({
+        id: applicant.recordIds.education[index] ?? null,
+        levelCode: item.levelCode,
+        institution: item.institution ?? '',
+        fieldOfStudy: item.fieldOfStudy ?? '',
+        completionYear: item.completionYear?.toString() ?? '',
+        isCurrent: item.isCurrent,
+        grade: item.grade ?? '',
+      })) ?? [],
+  );
+  const [experience, setExperience] = useState<ExperienceRow[]>(
+    () =>
+      applicant?.experience.map((item, index) => ({
+        id: applicant.recordIds.experience[index] ?? null,
+        employerName: item.employerName,
+        jobTitle: item.jobTitle,
+        categoryCode: item.categoryCode ?? '',
+        startMonth: item.startMonth,
+        endMonth: item.endMonth ?? '',
+        isCurrent: item.isCurrent,
+        description: item.description ?? '',
+      })) ?? [],
+  );
+  const [hasNoExperience, setHasNoExperience] = useState(applicant?.hasNoExperience ?? false);
+  const [skillsList, setSkillsList] = useState<
+    { skillCode: string; level: string; years: string }[]
+  >(
+    () =>
+      applicant?.skills.map((item) => ({
+        skillCode: item.skillCode,
+        level: item.level,
+        years: item.years.toString(),
+      })) ?? [],
+  );
+  const [languagesList, setLanguagesList] = useState<
+    { languageCode: string; proficiency: string }[]
+  >(
+    () =>
+      applicant?.languages.map((item) => ({
+        languageCode: item.languageCode,
+        proficiency: item.proficiency,
+      })) ?? [],
+  );
+  const [certifications, setCertifications] = useState<CertificationRow[]>(
+    () =>
+      applicant?.certifications.map((item, index) => ({
+        id: applicant.recordIds.certifications[index] ?? null,
+        name: item.name,
+        issuer: item.issuer ?? '',
+        issuedMonth: item.issuedMonth ?? '',
+        expiresMonth: item.expiresMonth ?? '',
+      })) ?? [],
+  );
+  const [preferences, setPreferences] = useState<{
+    categoryCodes: string[];
+    minSalaryPkr: string;
+    shifts: string[];
+    jobTypes: string[];
+    availableFrom: string;
+  }>({
+    categoryCodes: applicant?.preferences?.categoryCodes ?? [],
+    minSalaryPkr: applicant?.preferences?.minSalaryPkr?.toString() ?? '',
+    shifts: applicant?.preferences?.shifts ?? [],
+    jobTypes: applicant?.preferences?.jobTypes ?? [],
+    availableFrom: applicant?.preferences?.availableFrom ?? '',
+  });
+  const [form, setForm] = useState({
+    branchId: applicant?.branch?.id ?? branches[0]?.value ?? '',
+    fullName: applicant?.personal.fullName ?? '',
+    fatherName: applicant?.personal.fatherName ?? '',
+    cnic: applicant?.personal.cnic ?? '',
+    dateOfBirth: applicant?.personal.dateOfBirth ?? '',
+    gender: applicant?.personal.gender ?? ('' as Gender | ''),
+    phone: applicant?.personal.phone ?? '',
+    email: applicant?.personal.email ?? '',
+    addressLine: applicant?.address?.addressLine ?? '',
+    cityCode: applicant?.address?.cityCode ?? '',
+    areaCode: applicant?.address?.areaCode ?? '',
+    lat: applicant?.address?.location.lat ?? 24.8607,
+    lng: applicant?.address?.location.lng ?? 67.0011,
+  });
+
+  const set = (changes: Partial<typeof form>) => setForm((current) => ({ ...current, ...changes }));
+  const setPreferredCategory = (index: number, value: string) =>
+    setPreferences((current) => {
+      const categoryCodes = [...current.categoryCodes];
+      if (value) categoryCodes[index] = value;
+      else categoryCodes.splice(index, 1);
+      return { ...current, categoryCodes };
+    });
+
+  const parse = () => {
+    const raw = {
+      branchId: form.branchId,
+      fullName: form.fullName,
+      fatherName: form.fatherName,
+      cnic: form.cnic,
+      dateOfBirth: form.dateOfBirth,
+      gender: form.gender,
+      phone: form.phone,
+      email: form.email,
+      address: {
+        addressLine: form.addressLine,
+        cityCode: form.cityCode,
+        areaCode: form.areaCode || null,
+        branchId: form.branchId,
+        location: { lat: form.lat, lng: form.lng },
+      },
+      education: {
+        items: education.map((item) => ({
+          levelCode: item.levelCode,
+          institution: item.institution || null,
+          fieldOfStudy: item.fieldOfStudy || null,
+          completionYear: item.completionYear ? Number(item.completionYear) : null,
+          isCurrent: item.isCurrent,
+          grade: item.grade || null,
+        })),
+      },
+      experience: {
+        hasNoExperience,
+        items: hasNoExperience
+          ? []
+          : experience.map((item) => ({
+              employerName: item.employerName,
+              jobTitle: item.jobTitle,
+              categoryCode: item.categoryCode || null,
+              startMonth: item.startMonth,
+              endMonth: item.isCurrent ? null : item.endMonth || null,
+              isCurrent: item.isCurrent,
+              description: item.description || null,
+            })),
+      },
+      skills: { items: skillsList.map((item) => ({ ...item, years: Number(item.years) })) },
+      languages: { items: languagesList },
+      certifications: {
+        items: certifications.map((item) => ({
+          name: item.name,
+          issuer: item.issuer || null,
+          issuedMonth: item.issuedMonth || null,
+          expiresMonth: item.expiresMonth || null,
+        })),
+      },
+      preferences: preferences.categoryCodes.length
+        ? {
+            ...preferences,
+            minSalaryPkr: preferences.minSalaryPkr ? Number(preferences.minSalaryPkr) : null,
+            willingRadiusM: applicant?.preferences?.willingRadiusM ?? null,
+            availableFrom: preferences.availableFrom || null,
+          }
+        : applicant
+          ? null
+          : undefined,
+    };
+    const parsed = applicant
+      ? staffApplicantProfileUpdateSchema.safeParse({
+          ...raw,
+          recordIds: {
+            education: education.map((item) => item.id),
+            experience: hasNoExperience ? [] : experience.map((item) => item.id),
+            certifications: certifications.map((item) => item.id),
+          },
+        })
+      : assistedApplicantRegistrationSchema.safeParse(raw);
+    if (!parsed.success) {
+      setErrors(
+        toFieldErrors(
+          parsed.error.issues.map((issue) => ({
+            path: issue.path.join('.'),
+            message: issue.message,
+          })),
+        ),
+      );
+      return null;
+    }
+    setErrors({});
+    return parsed.data;
+  };
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const payload = parse();
+    if (!payload) {
+      setReview(false);
+      return;
+    }
+    setSaving(true);
+    setAlert(null);
+    try {
+      if (applicant) {
+        await apiFetch(`/api/v1/applicants/${applicant.id}/profile`, {
+          method: 'PATCH',
+          body: payload,
+        });
+        toast.success('Applicant profile updated');
+        router.push(`${basePath}/${applicant.id}`);
+        router.refresh();
+        return;
+      }
+
+      const { data } = await apiFetch<{
+        id: string;
+        personal: { fullName: string };
+        registrationReference: string;
+        branch: { name: string } | null;
+        status: ApplicantStatus;
+      }>('/api/v1/applicants/staff-register', {
+        method: 'POST',
+        body: payload,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      setRegistered({
+        id: data.id,
+        fullName: data.personal.fullName,
+        reference: data.registrationReference,
+        branchName: data.branch?.name ?? null,
+        status: data.status,
+      });
+    } catch (error) {
+      if (error instanceof ApiClientError && error.issues.length > 0) {
+        setErrors(toFieldErrors(error.issues));
+      } else {
+        setAlert(errorMessage(error));
+      }
+      setReview(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const branchName =
+    applicant?.branch?.name ??
+    branches.find((branch) => branch.value === form.branchId)?.label ??
+    'Not assigned';
+  const selectedCity = cities.find((city) => city.value === form.cityCode)?.label;
+  const selectedArea = areas.find((area) => area.value === form.areaCode)?.label;
+
+  if (registered) {
+    return (
+      <section
+        className="border-border bg-surface shadow-card grid gap-5 rounded-xl border p-6"
+        role="status"
+      >
+        <div className="grid gap-2">
+          <h2 className="text-fg text-xl font-semibold">Job seeker registered successfully</h2>
+          <p className="text-fg-muted text-sm">{registered.fullName}</p>
+        </div>
+        <dl className="grid gap-3 text-sm sm:grid-cols-3">
+          <div>
+            <dt className="text-fg-muted">Registration reference</dt>
+            <dd className="text-fg font-medium">{registered.reference}</dd>
+          </div>
+          <div>
+            <dt className="text-fg-muted">Assigned branch</dt>
+            <dd className="text-fg font-medium">{registered.branchName ?? 'Not assigned'}</dd>
+          </div>
+          <div>
+            <dt className="text-fg-muted">Registration status</dt>
+            <dd className="text-fg font-medium">
+              {APPLICANT_STATUS_PILL[registered.status].label}
+            </dd>
+          </div>
+        </dl>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild leftIcon={<Printer />}>
+            <Link href={`/print/applicants/${registered.id}/registration`}>
+              Print Job Seeker Form
+            </Link>
+          </Button>
+          <Button asChild variant="secondary">
+            <Link href={`${basePath}/${registered.id}`}>View Applicant</Link>
+          </Button>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <form className="grid gap-6" onSubmit={submit} noValidate>
+      {alert && (
+        <p role="alert" className="bg-danger-soft text-danger-soft-fg rounded-lg px-4 py-3 text-sm">
+          {alert}
+        </p>
+      )}
+      {!review ? (
+        <>
+          <section className="border-border bg-surface shadow-card grid gap-4 rounded-xl border p-5">
+            <h2 className="text-fg text-base font-semibold">Branch assignment</h2>
+            {applicant ? (
+              <p className="text-fg-muted text-sm">
+                Assigned branch: {branchName}. Profile editing does not change branch assignment.
+              </p>
+            ) : (
+              <FormField label="Destination branch" required error={errors.branchId}>
+                <Select
+                  value={form.branchId}
+                  onChange={(event) => set({ branchId: event.target.value })}
+                  options={branches}
+                  placeholder="Choose a branch"
+                />
+              </FormField>
+            )}
+          </section>
+          <section className="border-border bg-surface shadow-card grid gap-4 rounded-xl border p-5 sm:grid-cols-2">
+            <h2 className="text-fg text-base font-semibold sm:col-span-2">Personal information</h2>
+            <FormField label="Full name" required error={errors.fullName} className="sm:col-span-2">
+              <Input
+                value={form.fullName}
+                onChange={(event) => set({ fullName: event.target.value })}
+              />
+            </FormField>
+            <FormField
+              label="Father's or husband's name"
+              required
+              error={errors.fatherName}
+              className="sm:col-span-2"
+            >
+              <Input
+                value={form.fatherName}
+                onChange={(event) => set({ fatherName: event.target.value })}
+              />
+            </FormField>
+            <FormField label="CNIC" required error={errors.cnic}>
+              <CNICInput value={form.cnic} onChange={(value) => set({ cnic: value.digits })} />
+            </FormField>
+            <FormField label="Date of birth" required error={errors.dateOfBirth}>
+              <Input
+                type="date"
+                value={form.dateOfBirth}
+                onChange={(event) => set({ dateOfBirth: event.target.value })}
+              />
+            </FormField>
+            <FormField
+              label="Gender"
+              required
+              error={errors.gender}
+              hint={
+                form.gender === 'UNDISCLOSED'
+                  ? 'Gender is currently unspecified. Choose an option to change it, or leave it unchanged.'
+                  : undefined
+              }
+              className="sm:col-span-2"
+            >
+              <RadioGroup
+                aria-label="Gender"
+                orientation="horizontal"
+                value={form.gender}
+                onValueChange={(value) => set({ gender: value as Gender })}
+                options={ASSISTED_REGISTRATION_GENDERS.map((gender) => ({
+                  value: gender,
+                  label: GENDER_LABELS[gender],
+                }))}
+              />
+            </FormField>
+          </section>
+          <section className="border-border bg-surface shadow-card grid gap-4 rounded-xl border p-5 sm:grid-cols-2">
+            <h2 className="text-fg text-base font-semibold sm:col-span-2">Contact information</h2>
+            <FormField
+              label="Mobile number"
+              required
+              error={errors.phone}
+              hint={
+                applicant
+                  ? 'Sign-in mobile is not changed here. Use the separate Change mobile action when account recovery is required.'
+                  : 'The administrator has confirmed this number. The applicant will verify it with OTP on first login.'
+              }
+              className="sm:col-span-2"
+            >
+              {applicant ? (
+                <Input value={form.phone} disabled />
+              ) : (
+                <PhoneInput segmented onChange={(value) => set({ phone: value.e164 ?? '' })} />
+              )}
+            </FormField>
+            <FormField
+              label="Email"
+              error={errors.email}
+              hint={
+                applicant
+                  ? 'This updates the contact email on the profile only; sign-in credentials are unchanged.'
+                  : undefined
+              }
+            >
+              <Input
+                type="email"
+                placeholder="Email (Optional)"
+                value={form.email}
+                onChange={(event) => set({ email: event.target.value })}
+              />
+            </FormField>
+          </section>
+          <section className="border-border bg-surface shadow-card grid gap-4 rounded-xl border p-5 sm:grid-cols-2">
+            <h2 className="text-fg text-base font-semibold sm:col-span-2">Residential address</h2>
+            <FormField
+              label="Address"
+              required
+              error={errors['address.addressLine']}
+              className="sm:col-span-2"
+            >
+              <Input
+                value={form.addressLine}
+                onChange={(event) => set({ addressLine: event.target.value })}
+              />
+            </FormField>
+            <FormField label="City" required error={errors['address.cityCode']}>
+              <Select
+                value={form.cityCode}
+                onChange={(event) => set({ cityCode: event.target.value })}
+                options={cities}
+                placeholder="Choose a city"
+              />
+            </FormField>
+            <FormField label="Area" error={errors['address.areaCode']}>
+              <Select
+                value={form.areaCode}
+                onChange={(event) => set({ areaCode: event.target.value })}
+                options={areas}
+                placeholder="Choose an area"
+              />
+            </FormField>
+            <div className="sm:col-span-2">
+              <FormField label="Home location" required error={errors['address.location']}>
+                <MapPinPicker
+                  value={{ lat: form.lat, lng: form.lng }}
+                  onChange={(location) => set(location)}
+                  label="Applicant home location"
+                />
+              </FormField>
+            </div>
+          </section>
+          <section className="border-border bg-surface shadow-card grid gap-4 rounded-xl border p-5">
+            <div>
+              <h2 className="text-fg text-base font-semibold">Education</h2>
+              <p className="text-fg-muted text-sm">
+                Add schooling, college, university, or vocational education.
+              </p>
+            </div>
+            {education.map((item, index) => (
+              <div
+                key={index}
+                className="border-border grid gap-4 rounded-lg border p-4 sm:grid-cols-2"
+              >
+                <FormField label="Education level" required>
+                  <Select
+                    value={item.levelCode}
+                    options={educationLevels}
+                    placeholder="Choose a level"
+                    onChange={(event) =>
+                      setEducation((rows) =>
+                        rows.map((row, i) =>
+                          i === index ? { ...row, levelCode: event.target.value } : row,
+                        ),
+                      )
+                    }
+                  />
+                </FormField>
+                <FormField label="Institution">
+                  <Input
+                    value={item.institution}
+                    onChange={(event) =>
+                      setEducation((rows) =>
+                        rows.map((row, i) =>
+                          i === index ? { ...row, institution: event.target.value } : row,
+                        ),
+                      )
+                    }
+                  />
+                </FormField>
+                <FormField label="Field of study">
+                  <Input
+                    value={item.fieldOfStudy}
+                    onChange={(event) =>
+                      setEducation((rows) =>
+                        rows.map((row, i) =>
+                          i === index ? { ...row, fieldOfStudy: event.target.value } : row,
+                        ),
+                      )
+                    }
+                  />
+                </FormField>
+                <FormField label="Completion year">
+                  <Input
+                    type="number"
+                    value={item.completionYear}
+                    onChange={(event) =>
+                      setEducation((rows) =>
+                        rows.map((row, i) =>
+                          i === index ? { ...row, completionYear: event.target.value } : row,
+                        ),
+                      )
+                    }
+                  />
+                </FormField>
+                <FormField label="Grade or marks">
+                  <Input
+                    value={item.grade}
+                    onChange={(event) =>
+                      setEducation((rows) =>
+                        rows.map((row, i) =>
+                          i === index ? { ...row, grade: event.target.value } : row,
+                        ),
+                      )
+                    }
+                  />
+                </FormField>
+                <div className="flex items-end justify-between">
+                  <Checkbox
+                    label="Still studying"
+                    checked={item.isCurrent}
+                    onCheckedChange={(checked) =>
+                      setEducation((rows) =>
+                        rows.map((row, i) =>
+                          i === index ? { ...row, isCurrent: checked === true } : row,
+                        ),
+                      )
+                    }
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    leftIcon={<Trash2 />}
+                    onClick={() => setEducation((rows) => rows.filter((_, i) => i !== index))}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              </div>
+            ))}
+            <Button
+              type="button"
+              variant="secondary"
+              leftIcon={<Plus />}
+              onClick={() =>
+                setEducation((rows) => [
+                  ...rows,
+                  {
+                    id: null,
+                    levelCode: '',
+                    institution: '',
+                    fieldOfStudy: '',
+                    completionYear: '',
+                    isCurrent: false,
+                    grade: '',
+                  },
+                ])
+              }
+            >
+              Add education
+            </Button>
+          </section>
+          <section className="border-border bg-surface shadow-card grid gap-4 rounded-xl border p-5">
+            <div>
+              <h2 className="text-fg text-base font-semibold">Work experience</h2>
+              <p className="text-fg-muted text-sm">
+                Informal and formal work experience can be included.
+              </p>
+            </div>
+            <Checkbox
+              label="No work experience yet"
+              checked={hasNoExperience}
+              onCheckedChange={(checked) => setHasNoExperience(checked === true)}
+            />
+            {!hasNoExperience &&
+              experience.map((item, index) => (
+                <div
+                  key={index}
+                  className="border-border grid gap-4 rounded-lg border p-4 sm:grid-cols-2"
+                >
+                  <FormField label="Employer" required>
+                    <Input
+                      value={item.employerName}
+                      onChange={(event) =>
+                        setExperience((rows) =>
+                          rows.map((row, i) =>
+                            i === index ? { ...row, employerName: event.target.value } : row,
+                          ),
+                        )
+                      }
+                    />
+                  </FormField>
+                  <FormField label="Job title" required>
+                    <Input
+                      value={item.jobTitle}
+                      onChange={(event) =>
+                        setExperience((rows) =>
+                          rows.map((row, i) =>
+                            i === index ? { ...row, jobTitle: event.target.value } : row,
+                          ),
+                        )
+                      }
+                    />
+                  </FormField>
+                  <FormField label="Kind of work">
+                    <Select
+                      value={item.categoryCode}
+                      options={categories}
+                      placeholder="Choose a category"
+                      onChange={(event) =>
+                        setExperience((rows) =>
+                          rows.map((row, i) =>
+                            i === index ? { ...row, categoryCode: event.target.value } : row,
+                          ),
+                        )
+                      }
+                    />
+                  </FormField>
+                  <FormField label="Started" required>
+                    <Input
+                      type="month"
+                      value={item.startMonth}
+                      onChange={(event) =>
+                        setExperience((rows) =>
+                          rows.map((row, i) =>
+                            i === index ? { ...row, startMonth: event.target.value } : row,
+                          ),
+                        )
+                      }
+                    />
+                  </FormField>
+                  {!item.isCurrent && (
+                    <FormField label="Ended" required>
+                      <Input
+                        type="month"
+                        value={item.endMonth}
+                        onChange={(event) =>
+                          setExperience((rows) =>
+                            rows.map((row, i) =>
+                              i === index ? { ...row, endMonth: event.target.value } : row,
+                            ),
+                          )
+                        }
+                      />
+                    </FormField>
+                  )}
+                  <FormField label="What did they do?" className="sm:col-span-2">
+                    <Textarea
+                      rows={2}
+                      value={item.description}
+                      onChange={(event) =>
+                        setExperience((rows) =>
+                          rows.map((row, i) =>
+                            i === index ? { ...row, description: event.target.value } : row,
+                          ),
+                        )
+                      }
+                    />
+                  </FormField>
+                  <div className="flex items-center justify-between sm:col-span-2">
+                    <Checkbox
+                      label="Currently working here"
+                      checked={item.isCurrent}
+                      onCheckedChange={(checked) =>
+                        setExperience((rows) =>
+                          rows.map((row, i) =>
+                            i === index
+                              ? { ...row, isCurrent: checked === true, endMonth: '' }
+                              : row,
+                          ),
+                        )
+                      }
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      leftIcon={<Trash2 />}
+                      onClick={() => setExperience((rows) => rows.filter((_, i) => i !== index))}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            {!hasNoExperience && (
+              <Button
+                type="button"
+                variant="secondary"
+                leftIcon={<Plus />}
+                onClick={() =>
+                  setExperience((rows) => [
+                    ...rows,
+                    {
+                      id: null,
+                      employerName: '',
+                      jobTitle: '',
+                      categoryCode: '',
+                      startMonth: '',
+                      endMonth: '',
+                      isCurrent: false,
+                      description: '',
+                    },
+                  ])
+                }
+              >
+                Add work experience
+              </Button>
+            )}
+          </section>
+          <section className="border-border bg-surface shadow-card grid gap-4 rounded-xl border p-5">
+            <div>
+              <h2 className="text-fg text-base font-semibold">Skills and additional information</h2>
+              <p className="text-fg-muted text-sm">
+                Capture skills, languages, and job preferences during registration.
+              </p>
+            </div>
+            {skillsList.map((item, index) => (
+              <div key={index} className="grid gap-4 sm:grid-cols-[2fr_1fr_1fr_auto]">
+                <Select
+                  value={item.skillCode}
+                  options={skills}
+                  placeholder="Choose a skill"
+                  onChange={(event) =>
+                    setSkillsList((rows) =>
+                      rows.map((row, i) =>
+                        i === index ? { ...row, skillCode: event.target.value } : row,
+                      ),
+                    )
+                  }
+                />
+                <Select
+                  value={item.level}
+                  options={SKILL_LEVELS.map((level) => ({
+                    value: level,
+                    label: SKILL_LEVEL_LABELS[level],
+                  }))}
+                  placeholder="Level"
+                  onChange={(event) =>
+                    setSkillsList((rows) =>
+                      rows.map((row, i) =>
+                        i === index ? { ...row, level: event.target.value } : row,
+                      ),
+                    )
+                  }
+                />
+                <Input
+                  type="number"
+                  min={0}
+                  max={50}
+                  value={item.years}
+                  placeholder="Years"
+                  onChange={(event) =>
+                    setSkillsList((rows) =>
+                      rows.map((row, i) =>
+                        i === index ? { ...row, years: event.target.value } : row,
+                      ),
+                    )
+                  }
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  leftIcon={<Trash2 />}
+                  onClick={() => setSkillsList((rows) => rows.filter((_, i) => i !== index))}
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+            <Button
+              type="button"
+              variant="secondary"
+              leftIcon={<Plus />}
+              onClick={() =>
+                setSkillsList((rows) => [...rows, { skillCode: '', level: '', years: '0' }])
+              }
+            >
+              Add skill
+            </Button>
+            {languagesList.map((item, index) => (
+              <div key={index} className="grid gap-4 sm:grid-cols-[1fr_1fr_auto]">
+                <Select
+                  value={item.languageCode}
+                  options={languages}
+                  placeholder="Choose a language"
+                  onChange={(event) =>
+                    setLanguagesList((rows) =>
+                      rows.map((row, i) =>
+                        i === index ? { ...row, languageCode: event.target.value } : row,
+                      ),
+                    )
+                  }
+                />
+                <Select
+                  value={item.proficiency}
+                  options={LANGUAGE_PROFICIENCIES.map((level) => ({
+                    value: level,
+                    label: LANGUAGE_PROFICIENCY_LABELS[level],
+                  }))}
+                  placeholder="Proficiency"
+                  onChange={(event) =>
+                    setLanguagesList((rows) =>
+                      rows.map((row, i) =>
+                        i === index ? { ...row, proficiency: event.target.value } : row,
+                      ),
+                    )
+                  }
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  leftIcon={<Trash2 />}
+                  onClick={() => setLanguagesList((rows) => rows.filter((_, i) => i !== index))}
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+            <Button
+              type="button"
+              variant="secondary"
+              leftIcon={<Plus />}
+              onClick={() =>
+                setLanguagesList((rows) => [...rows, { languageCode: '', proficiency: '' }])
+              }
+            >
+              Add language
+            </Button>
+            <div className="border-border grid gap-4 border-t pt-4">
+              <h3 className="text-fg text-sm font-semibold">Certificates and courses</h3>
+              {certifications.map((item, index) => (
+                <div key={index} className="grid gap-4 sm:grid-cols-2">
+                  <FormField label="Certificate or course" required>
+                    <Input
+                      value={item.name}
+                      onChange={(event) =>
+                        setCertifications((rows) =>
+                          rows.map((row, i) =>
+                            i === index ? { ...row, name: event.target.value } : row,
+                          ),
+                        )
+                      }
+                    />
+                  </FormField>
+                  <FormField label="Issued by">
+                    <Input
+                      value={item.issuer}
+                      onChange={(event) =>
+                        setCertifications((rows) =>
+                          rows.map((row, i) =>
+                            i === index ? { ...row, issuer: event.target.value } : row,
+                          ),
+                        )
+                      }
+                    />
+                  </FormField>
+                  <FormField label="Issued month">
+                    <Input
+                      type="month"
+                      value={item.issuedMonth}
+                      onChange={(event) =>
+                        setCertifications((rows) =>
+                          rows.map((row, i) =>
+                            i === index ? { ...row, issuedMonth: event.target.value } : row,
+                          ),
+                        )
+                      }
+                    />
+                  </FormField>
+                  <div className="flex items-end justify-between">
+                    <FormField label="Expires month">
+                      <Input
+                        type="month"
+                        value={item.expiresMonth}
+                        onChange={(event) =>
+                          setCertifications((rows) =>
+                            rows.map((row, i) =>
+                              i === index ? { ...row, expiresMonth: event.target.value } : row,
+                            ),
+                          )
+                        }
+                      />
+                    </FormField>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      leftIcon={<Trash2 />}
+                      onClick={() =>
+                        setCertifications((rows) => rows.filter((_, i) => i !== index))
+                      }
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="secondary"
+                leftIcon={<Plus />}
+                onClick={() =>
+                  setCertifications((rows) => [
+                    ...rows,
+                    { id: null, name: '', issuer: '', issuedMonth: '', expiresMonth: '' },
+                  ])
+                }
+              >
+                Add certificate
+              </Button>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              {applicant ? (
+                <div className="grid gap-3">
+                  {preferences.categoryCodes.map((categoryCode, index) => (
+                    <div key={`${categoryCode}-${index}`} className="flex items-end gap-2">
+                      <FormField label={`Preferred job category ${index + 1}`} className="flex-1">
+                        <Select
+                          value={categoryCode}
+                          options={categories.filter(
+                            (option) =>
+                              option.value === categoryCode ||
+                              !preferences.categoryCodes.includes(option.value),
+                          )}
+                          placeholder="Choose a category"
+                          onChange={(event) => setPreferredCategory(index, event.target.value)}
+                        />
+                      </FormField>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        leftIcon={<Trash2 />}
+                        onClick={() =>
+                          setPreferences((current) => ({
+                            ...current,
+                            categoryCodes: current.categoryCodes.filter((_, i) => i !== index),
+                          }))
+                        }
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                  {preferences.categoryCodes.length < 10 && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      leftIcon={<Plus />}
+                      onClick={() =>
+                        setPreferences((current) => ({
+                          ...current,
+                          categoryCodes: [...current.categoryCodes, ''],
+                        }))
+                      }
+                    >
+                      Add preferred job category
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <FormField label="Preferred job category">
+                  <Select
+                    value={preferences.categoryCodes[0] ?? ''}
+                    options={categories}
+                    placeholder="Choose a category"
+                    onChange={(event) =>
+                      setPreferences((current) => ({
+                        ...current,
+                        categoryCodes: event.target.value ? [event.target.value] : [],
+                      }))
+                    }
+                  />
+                </FormField>
+              )}
+              <FormField label="Minimum monthly salary (PKR)">
+                <Input
+                  type="number"
+                  value={preferences.minSalaryPkr}
+                  onChange={(event) =>
+                    setPreferences((current) => ({ ...current, minSalaryPkr: event.target.value }))
+                  }
+                />
+              </FormField>
+              <FormField label="Available from">
+                <Input
+                  type="date"
+                  value={preferences.availableFrom}
+                  onChange={(event) =>
+                    setPreferences((current) => ({ ...current, availableFrom: event.target.value }))
+                  }
+                />
+              </FormField>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <fieldset>
+                <legend className="text-fg mb-2 text-sm font-medium">Shifts</legend>
+                {SHIFTS.map((shift) => (
+                  <Checkbox
+                    key={shift}
+                    label={SHIFT_LABELS[shift]}
+                    checked={preferences.shifts.includes(shift)}
+                    onCheckedChange={(checked) =>
+                      setPreferences((current) => ({
+                        ...current,
+                        shifts:
+                          checked === true
+                            ? [...current.shifts, shift]
+                            : current.shifts.filter((value) => value !== shift),
+                      }))
+                    }
+                  />
+                ))}
+              </fieldset>
+              <fieldset>
+                <legend className="text-fg mb-2 text-sm font-medium">Job types</legend>
+                {JOB_TYPES.map((jobType) => (
+                  <Checkbox
+                    key={jobType}
+                    label={JOB_TYPE_LABELS[jobType]}
+                    checked={preferences.jobTypes.includes(jobType)}
+                    onCheckedChange={(checked) =>
+                      setPreferences((current) => ({
+                        ...current,
+                        jobTypes:
+                          checked === true
+                            ? [...current.jobTypes, jobType]
+                            : current.jobTypes.filter((value) => value !== jobType),
+                      }))
+                    }
+                  />
+                ))}
+              </fieldset>
+            </div>
+          </section>
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              onClick={() => {
+                if (parse()) setReview(true);
+              }}
+              rightIcon={<Check />}
+            >
+              {editing ? 'Review profile update' : 'Review registration'}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <section className="border-border bg-surface shadow-card grid gap-4 rounded-xl border p-5">
+          <h2 className="text-fg text-base font-semibold">
+            {editing ? 'Review profile update' : 'Review registration'}
+          </h2>
+          <dl className="grid gap-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-fg-muted">Name</dt>
+              <dd>{form.fullName}</dd>
+            </div>
+            <div>
+              <dt className="text-fg-muted">CNIC</dt>
+              <dd>{form.cnic}</dd>
+            </div>
+            <div>
+              <dt className="text-fg-muted">Mobile</dt>
+              <dd>{form.phone}</dd>
+            </div>
+            <div>
+              <dt className="text-fg-muted">Email</dt>
+              <dd>{form.email || 'Not provided'}</dd>
+            </div>
+            <div>
+              <dt className="text-fg-muted">Branch</dt>
+              <dd>{branchName}</dd>
+            </div>
+            <div>
+              <dt className="text-fg-muted">Location</dt>
+              <dd>{[selectedArea, selectedCity].filter(Boolean).join(', ')}</dd>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="text-fg-muted">Address</dt>
+              <dd>{form.addressLine}</dd>
+            </div>
+          </dl>
+          <p className="bg-info-soft text-info-soft-fg rounded-lg px-4 py-3 text-sm">
+            {applicant
+              ? 'Profile editing does not change sign-in credentials, linked accounts, or first-login OTP verification.'
+              : 'No OTP is sent during this registration. The applicant must verify this mobile number when they first sign in.'}
+          </p>
+          <div className="flex flex-wrap justify-between gap-2">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                leftIcon={<ArrowLeft />}
+                onClick={() => setReview(false)}
+                disabled={saving}
+              >
+                Edit details
+              </Button>
+              {applicant && (
+                <Button asChild variant="ghost" disabled={saving}>
+                  <Link href={`${basePath}/${applicant.id}`}>Cancel</Link>
+                </Button>
+              )}
+            </div>
+            <Button type="submit" loading={saving} leftIcon={applicant ? <Check /> : <UserPlus />}>
+              {applicant ? 'Update Profile' : 'Register job seeker'}
+            </Button>
+          </div>
+        </section>
+      )}
+    </form>
+  );
+}

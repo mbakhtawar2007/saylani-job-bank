@@ -32,6 +32,7 @@ import {
   cert,
   cnicOwner,
   completenessFor,
+  createRegistrationReference,
   edu,
   exp,
   findApplicantForUser,
@@ -142,6 +143,7 @@ export async function registerApplicant(
         .insert(a)
         .values({
           userId: ctx.actor.userId,
+          registrationReference: createRegistrationReference(),
           fullName: input.fullName,
           fatherName: input.fatherName,
           cnic: input.cnic,

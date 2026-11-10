@@ -5,6 +5,25 @@
 
 const NATIONAL_MOBILE = /^3\d{9}$/;
 
+/** Original Pakistani mobile allocations; MNP means these do not identify the current operator. */
+export const PAKISTAN_MOBILE_PREFIXES = [
+  ...Array.from({ length: 10 }, (_, i) => ({ prefix: `30${i}`, network: 'Jazz' })),
+  ...Array.from({ length: 10 }, (_, i) => ({ prefix: `31${i}`, network: 'Zong' })),
+  ...Array.from({ length: 10 }, (_, i) => ({ prefix: `32${i}`, network: 'Jazz' })),
+  ...Array.from({ length: 9 }, (_, i) => ({ prefix: `33${i}`, network: 'Ufone' })),
+  { prefix: '339', network: 'ONIC' },
+  ...Array.from({ length: 10 }, (_, i) => ({ prefix: `34${i}`, network: 'Telenor' })),
+  ...Array.from({ length: 3 }, (_, i) => ({ prefix: `35${5 + i}`, network: 'SCOM' })),
+  ...Array.from({ length: 6 }, (_, i) => ({ prefix: `36${i}`, network: 'Zong' })),
+  ...Array.from({ length: 9 }, (_, i) => ({ prefix: `37${i + 1}`, network: 'ONIC' })),
+] as const;
+
+const supportedPrefixes = new Set(PAKISTAN_MOBILE_PREFIXES.map(({ prefix }) => prefix));
+
+export function isSupportedPkMobile(e164: string): boolean {
+  return supportedPrefixes.has(e164.slice(3, 6));
+}
+
 /** Extracts the 10-digit national mobile number from any common way people type it. */
 export function toNationalMobileDigits(input: string): string {
   let digits = input.replace(/\D/g, '');

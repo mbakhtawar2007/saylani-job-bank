@@ -14,6 +14,8 @@ import { pkMobileSchema } from './phone';
 
 export const APPLICANT_STATUSES = ['ACTIVE', 'INACTIVE', 'RESTRICTED'] as const;
 export type ApplicantStatus = (typeof APPLICANT_STATUSES)[number];
+export const APPLICANT_REGISTRATION_SOURCES = ['SELF_SERVICE', 'STAFF_ASSISTED'] as const;
+export type ApplicantRegistrationSource = (typeof APPLICANT_REGISTRATION_SOURCES)[number];
 
 export const APPLICANT_STATUS_LABELS: Record<ApplicantStatus, string> = {
   ACTIVE: 'Active',
@@ -43,6 +45,7 @@ export type IdentityOutcome = (typeof IDENTITY_OUTCOMES)[number];
 
 export const GENDERS = ['MALE', 'FEMALE', 'UNDISCLOSED'] as const;
 export type Gender = (typeof GENDERS)[number];
+export const ASSISTED_REGISTRATION_GENDERS = ['MALE', 'FEMALE'] as const;
 
 export const GENDER_LABELS: Record<Gender, string> = {
   MALE: 'Male',
@@ -549,6 +552,62 @@ export const cancelApplicantTokenSchema = z.object({
 });
 export type CancelApplicantTokenInput = z.infer<typeof cancelApplicantTokenSchema>;
 
+export const assistedApplicantRegistrationSchema = z.object({
+  branchId: z.uuid(),
+  ...personalFields,
+  gender: z.enum(ASSISTED_REGISTRATION_GENDERS, 'Choose Male or Female'),
+  phone: z.string().min(10).max(20),
+  address: applicantLocationSchema,
+  education: educationSchema.optional().default({ items: [] }),
+  experience: experienceSchema.optional().default({ hasNoExperience: false, items: [] }),
+  skills: skillsSchema.optional().default({ items: [] }),
+  languages: languagesSchema.optional().default({ items: [] }),
+  certifications: certificationsSchema.optional().default({ items: [] }),
+  preferences: preferencesSchema.optional(),
+});
+export type AssistedApplicantRegistrationInput = z.infer<
+  typeof assistedApplicantRegistrationSchema
+>;
+
+const profileRecordIdsSchema = z
+  .object({
+    education: z.array(z.uuid().nullable()).max(10),
+    experience: z.array(z.uuid().nullable()).max(15),
+    certifications: z.array(z.uuid().nullable()).max(15),
+  })
+  .superRefine((records, ctx) => {
+    for (const [section, ids] of Object.entries(records)) {
+      const present = ids.filter((id): id is string => id !== null);
+      if (new Set(present).size !== present.length) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [section],
+          message: 'A profile record cannot be submitted more than once',
+        });
+      }
+    }
+  });
+
+/** Full staff profile update; sign-in phone and branch assignment are intentionally excluded. */
+export const staffApplicantProfileUpdateSchema = assistedApplicantRegistrationSchema
+  .omit({ branchId: true, phone: true })
+  .extend({
+    gender: z.enum(GENDERS, 'Choose an option'),
+    address: applicantLocationSchema.omit({ branchId: true }),
+    preferences: preferencesSchema.nullable().optional(),
+    recordIds: profileRecordIdsSchema,
+  })
+  .refine(
+    (profile) =>
+      profile.recordIds.education.length === profile.education.items.length &&
+      profile.recordIds.experience.length === profile.experience.items.length &&
+      profile.recordIds.certifications.length === profile.certifications.items.length,
+    {
+      path: ['recordIds'],
+      message: 'Profile record identifiers must match the submitted records',
+    },
+  );
+export type StaffApplicantProfileUpdateInput = z.infer<typeof staffApplicantProfileUpdateSchema>;
 // ─── Documents ─────────────────────────────────────────────────────────
 
 export const presignDocumentSchema = z.object({
@@ -582,7 +641,11 @@ export const identityVerificationSchema = z
 export type IdentityVerificationInput = z.infer<typeof identityVerificationSchema>;
 
 export const changePhoneSchema = z.object({ phone: pkMobileSchema, reason });
-export const transferApplicantSchema = z.object({ branchId: z.uuid('Choose a branch'), reason });
+export const transferApplicantSchema = z.object({
+  branchId: z.uuid('Choose a branch'),
+  expectedBranchId: z.uuid('Invalid current branch').optional(),
+  reason,
+});
 
 // ─── Completeness & activation ─────────────────────────────────────────
 

@@ -17,8 +17,11 @@ const withDatabase = (url: string | undefined, name: string) => {
   parsed.pathname = `/${name}`;
   return parsed.toString();
 };
-const testDb = process.env.TEST_DATABASE_NAME ?? 'jobbank_test';
-const testMigratorUrl = withDatabase(rootEnv.DATABASE_MIGRATOR_URL, testDb);
+const testMigratorUrl =
+  process.env.TEST_DATABASE_MIGRATOR_URL ??
+  withDatabase(process.env.DATABASE_MIGRATOR_URL ?? rootEnv.DATABASE_MIGRATOR_URL, testDb);
+const testRuntimeUrl = withDatabase(process.env.DATABASE_URL ?? rootEnv.DATABASE_URL, testDb);
+// globalSetup runs in this (main) process, where `test.env` does not apply.
 process.env.TEST_DATABASE_MIGRATOR_URL ??= testMigratorUrl;
 
 export default defineConfig({
@@ -57,9 +60,10 @@ export default defineConfig({
           hookTimeout: 60_000,
           env: {
             ...rootEnv,
+            ...process.env,
             NODE_ENV: 'test',
             LOG_LEVEL: 'silent',
-            DATABASE_URL: withDatabase(rootEnv.DATABASE_URL, testDb),
+            DATABASE_URL: testRuntimeUrl,
             TEST_DATABASE_MIGRATOR_URL: testMigratorUrl,
             BETTER_AUTH_SECRET: 'integration-test-secret-integration-test-secret',
             // Seed password for the test DB (from CI env or root .env). No default:

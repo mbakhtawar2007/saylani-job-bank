@@ -39,10 +39,10 @@ const timestamps = {
 const list = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).join(', '));
 
 /**
- * M7: an employer's company. Created as a DRAFT by the employer's registration wizard; the
- * branch is chosen at the head-office step. While a verification round is open, `status`
- * mirrors the round's state. Only VERIFIED companies are visible to Branch Admin and may
- * post jobs (PRD rule 2) — see `company_is_verified()` for the M8 database check.
+ * M7: an employer's company. Employer wizard registrations start as DRAFT; staff-assisted
+ * registrations may provision a company as VERIFIED after reviewing the supplied details.
+ * While a verification round is open, `status` mirrors the round's state. Only VERIFIED
+ * companies are visible to Branch Admin and may post jobs (PRD rule 2).
  */
 export const companies = pgTable(
   'companies',

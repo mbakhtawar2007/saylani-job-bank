@@ -9,6 +9,7 @@ import {
   companyLocations,
   companyMembers,
   companies,
+  jobs,
   twoFactors,
   userRoles,
   users,
@@ -180,6 +181,42 @@ export const devData: SeedStep = {
         );
       }
 
+      const initialSuperAdminPassword = process.env.INITIAL_SUPER_ADMIN_PASSWORD;
+      if (initialSuperAdminPassword) {
+        const password = await hashPassword(initialSuperAdminPassword);
+        const [superAdmin] = await tx
+          .insert(users)
+          .values({
+            email: 'rafehmengal@gmail.com',
+            name: 'Rafeh Super Admin',
+            emailVerified: true,
+            status: 'ACTIVE',
+          })
+          .onConflictDoUpdate({
+            target: users.email,
+            set: { name: 'Rafeh Super Admin', emailVerified: true, status: 'ACTIVE' },
+          })
+          .returning({ id: users.id });
+        await tx
+          .insert(accounts)
+          .values({
+            userId: superAdmin!.id,
+            providerId: 'credential',
+            accountId: superAdmin!.id,
+            password,
+          })
+          .onConflictDoUpdate({
+            target: [accounts.providerId, accounts.accountId],
+            set: { password },
+          });
+        await tx.delete(userRoles).where(eq(userRoles.userId, superAdmin!.id));
+        await tx.insert(userRoles).values({
+          userId: superAdmin!.id,
+          roleCode: 'SUPER_ADMIN',
+          branchId: null,
+        });
+      }
+
       // A pre-VERIFIED company for the seeded employer, so local testing can go
       // straight to posting jobs (PRD rule 2: only verified companies post).
       const [employer] = await tx
@@ -233,6 +270,177 @@ export const devData: SeedStep = {
             location: { lat: 24.9204, lng: 67.0932 },
           })
           .onConflictDoNothing();
+
+        const demoCompanies = [
+          [
+            '00000000-0000-4000-8000-00000000c002',
+            'TechNova Solutions',
+            '2234567-8',
+            'IT_SOFTWARE',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000c003',
+            'Pakistan Digital Services',
+            '3234567-8',
+            'IT_SOFTWARE',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000c004',
+            'BrightPath Technologies',
+            '4234567-8',
+            'EDUCATION',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000c005',
+            'Global Business Solutions',
+            '5234567-8',
+            'RETAIL',
+          ],
+        ] as const;
+        for (const [id, legalName, ntn, industryCode] of demoCompanies) {
+          await tx
+            .insert(companies)
+            .values({
+              id,
+              branchId: branchIds.get(id.endsWith('4') ? 'LHR-JOHAR' : 'KHI-GULSHAN')!,
+              legalName,
+              legalStructure: 'PRIVATE_LIMITED',
+              ntn,
+              industryCode,
+              sizeBand: '11_50',
+              description: 'Development company for testing company-specific job management.',
+              status: 'VERIFIED',
+              verifiedAt: new Date(),
+              createdBy: employer.id,
+            })
+            .onConflictDoNothing({ target: companies.id });
+          await tx
+            .insert(companyContacts)
+            .values({
+              companyId: id,
+              name: 'Development Contact',
+              designation: 'HR Manager',
+              phone: '+923001112224',
+              email: 'employer@jobbank.local',
+              isPrimary: true,
+            })
+            .onConflictDoNothing();
+        }
+
+        const demoJobs = [
+          [
+            '00000000-0000-4000-8000-00000000d001',
+            companyId,
+            'Retail Sales Associate',
+            'RETAIL_SALES',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000d002',
+            companyId,
+            'Customer Support Executive',
+            'RETAIL_SALES',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000d003',
+            companyId,
+            'Inventory Assistant',
+            'RETAIL_SALES',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000d004',
+            '00000000-0000-4000-8000-00000000c002',
+            'Frontend Developer',
+            'RETAIL_SALES',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000d005',
+            '00000000-0000-4000-8000-00000000c002',
+            'Backend Developer',
+            'RETAIL_SALES',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000d006',
+            '00000000-0000-4000-8000-00000000c002',
+            'QA Engineer',
+            'RETAIL_SALES',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000d007',
+            '00000000-0000-4000-8000-00000000c003',
+            'Data Analyst',
+            'EDUCATION',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000d008',
+            '00000000-0000-4000-8000-00000000c003',
+            'Software Engineer Intern',
+            'RETAIL_SALES',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000d009',
+            '00000000-0000-4000-8000-00000000c003',
+            'UI UX Designer',
+            'RETAIL_SALES',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000d010',
+            '00000000-0000-4000-8000-00000000c004',
+            'Teaching Assistant',
+            'EDUCATION',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000d011',
+            '00000000-0000-4000-8000-00000000c004',
+            'Admissions Officer',
+            'EDUCATION',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000d012',
+            '00000000-0000-4000-8000-00000000c004',
+            'Office Coordinator',
+            'EDUCATION',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000d013',
+            '00000000-0000-4000-8000-00000000c005',
+            'Business Development Executive',
+            'RETAIL_SALES',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000d014',
+            '00000000-0000-4000-8000-00000000c005',
+            'Operations Coordinator',
+            'RETAIL_SALES',
+          ],
+          [
+            '00000000-0000-4000-8000-00000000d015',
+            '00000000-0000-4000-8000-00000000c005',
+            'Security Supervisor',
+            'SECURITY',
+          ],
+        ] as const;
+        for (const [id, jobCompanyId, title, categoryCode] of demoJobs) {
+          const [jobCompany] = await tx
+            .select({ branchId: companies.branchId })
+            .from(companies)
+            .where(eq(companies.id, jobCompanyId));
+          await tx
+            .insert(jobs)
+            .values({
+              id,
+              companyId: jobCompanyId,
+              branchId: jobCompany!.branchId!,
+              title,
+              categoryCode,
+              description: `Development vacancy for ${title}.`,
+              jobType: 'FULL_TIME',
+              shift: 'DAY',
+              vacancies: 3,
+              status: 'DRAFT',
+              createdBy: employer.id,
+            })
+            .onConflictDoNothing({ target: jobs.id });
+        }
       }
     });
   },

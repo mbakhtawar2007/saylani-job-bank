@@ -375,7 +375,6 @@ describe('CompanyWizard', () => {
     await user.type(screen.getByLabelText(/Full address/), 'Zaitoon Ashraf IT Park, Mehmoodabad');
     await user.type(screen.getByLabelText(/^City/), 'Karachi');
 
-    const saveButton = screen.getByRole('button', { name: 'Save and continue' });
     await waitFor(() => expect(saveButton).toBeEnabled());
     await user.click(saveButton);
 
@@ -574,5 +573,75 @@ describe('CompanyWizard', () => {
       '/api/v1/companies/me/documents',
       expect.anything(),
     );
+
+  it('uses a distinct idempotency key for company creation and verification submission', async () => {
+    const company = {
+      id: 'company-1',
+      status: 'DRAFT',
+      branch: null,
+      details: {
+        legalName: 'Example Company',
+        tradeName: null,
+        legalStructure: 'PRIVATE_LIMITED',
+        ntn: '1234567-8',
+        registrationNo: null,
+        industryCode: 'IT',
+        sizeBand: '1_10',
+        website: null,
+        description: null,
+      },
+      contacts: [],
+      headOffice: null,
+      sites: [],
+      documents: [],
+      requiredDocuments: [],
+      missing: [],
+      verification: null,
+      editable: {
+        details: true,
+        legal: true,
+        contacts: true,
+        locations: true,
+        branch: true,
+        documents: true,
+      },
+      verifiedAt: null,
+      createdAt: '2026-10-01T00:00:00.000Z',
+    };
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/master-data?type=INDUSTRY')
+        return { data: [{ code: 'IT', label: 'Information technology' }] };
+      if (path === '/api/v1/companies/me/submit')
+        return { data: { ...company, status: 'SUBMITTED' } };
+      return { data: company };
+    });
+
+    const user = userEvent.setup();
+    render(<CompanyWizard initialStep="details" initialCompany={null} />);
+    await user.type(screen.getByLabelText(/Registered company name/), 'Example Company');
+    await user.selectOptions(screen.getByLabelText(/Business type/), 'PRIVATE_LIMITED');
+    await user.type(screen.getByLabelText(/NTN \(National Tax Number\)/), '1234567-8');
+    const industry = screen.getByLabelText(/Industry/);
+    await waitFor(() => expect(industry).toHaveTextContent('Information technology'));
+    await user.selectOptions(industry, 'IT');
+    await user.selectOptions(screen.getByLabelText(/Company size/), '1_10');
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    await user.click(saveButton);
+
+    await user.click(await screen.findByRole('button', { name: 'Review' }));
+    await user.click(screen.getByRole('button', { name: 'Submit for verification' }));
+
+    await waitFor(() => {
+      const registrationCall = apiFetchMock.mock.calls.find(
+        ([path]) => path === '/api/v1/companies/register',
+      );
+      const submissionCall = apiFetchMock.mock.calls.find(
+        ([path]) => path === '/api/v1/companies/me/submit',
+      );
+      expect(registrationCall).toBeDefined();
+      expect(submissionCall).toBeDefined();
+      expect(registrationCall![1].idempotencyKey).not.toBe(submissionCall![1].idempotencyKey);
+    });
+  });
   });
 });

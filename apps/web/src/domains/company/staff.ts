@@ -6,6 +6,7 @@ import {
   PUBLIC_COMPANY_STATUSES,
   ROLE_LABELS,
   ROLE_PRIORITY,
+  VERIFICATION_STATES,
   isResubmitNoteSufficient,
   type CompanyStatus,
   type OnboardedCompanyHeadOfficeInput,
@@ -47,8 +48,8 @@ import {
   assertPermission,
   assertRole,
   branchScope,
-  hasPermission,
   hasRole,
+  hasPermission,
   isSuperAdmin,
   type Actor,
 } from '@/domains/shared/scope';
@@ -130,7 +131,7 @@ export interface CompanyListItem {
 }
 
 /**
- * Branch Admin: VERIFIED + SUSPENDED in their branch(es).
+ * Branch Admin: all companies in their branch(es).
  * Super Admin: all companies, any status.
  * Verifiers have their own queue (listQueue) and do not use this endpoint.
  */
@@ -348,9 +349,11 @@ export async function assignVerifier(
     const round = await openVerification(tx, row.id, { forUpdate: true });
     if (!round) throw new NotFoundError('Open verification for company', companyId);
     const prevVerifier = round.assignedVerifierId;
+    const verificationState = VERIFICATION_STATES.find((state) => state === to);
+    if (!verificationState) throw new Error(`Invalid verification state for assignment: ${to}`);
     await tx
       .update(ver)
-      .set({ state: to as VerificationState, assignedVerifierId: input.verifierId })
+      .set({ state: verificationState, assignedVerifierId: input.verifierId })
       .where(eq(ver.id, round.id));
     if (row.status !== to) {
       await tx.update(c).set({ status: to }).where(eq(c.id, row.id));

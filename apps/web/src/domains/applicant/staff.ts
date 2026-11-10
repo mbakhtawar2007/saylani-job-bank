@@ -11,9 +11,11 @@ import {
   type IdentityStatus,
   type IdentityVerificationInput,
   type Role,
+  type StaffApplicantProfileUpdateInput,
   type StaffRegisterApplicantInput,
   type UpdatePersonalInput,
 } from '@jobbank/shared';
+import type { assistedApplicantRegistrationSchema } from '@jobbank/shared';
 import {
   and,
   asc,
@@ -32,7 +34,7 @@ import {
 import { z } from 'zod';
 import { isPlaceholderEmail, placeholderEmailFor } from '@/domains/auth';
 import { getBranchContact, type BranchContact } from '@/domains/branch';
-import { assertActiveMasterData, masterDataLabels } from '@/domains/settings';
+import { assertActiveMasterData, masterDataLabels, resolveMatchRadius } from '@/domains/settings';
 import { recordAudit, runCommand } from '@/domains/shared/audit';
 import {
   ConflictError,
@@ -54,7 +56,8 @@ import {
   type Actor,
 } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
-import { normalizePkMobile } from '@/lib/format/phone';
+import { isSupportedPkMobile, normalizePkMobile } from '@/lib/format/phone';
+import { toGeography } from '@/lib/geospatial';
 import { applicantMachine } from './machine';
 import { assertEmailFree, cnicTakenError, IDENTITY_FIELDS } from './profile';
 import {
@@ -64,6 +67,8 @@ import {
   cert,
   cnicOwner,
   currentDocuments,
+  createRegistrationReference,
+  completenessFor,
   docs,
   edu,
   exp,
@@ -74,7 +79,6 @@ import {
   pref,
   refreshProfileState,
   skl,
-  completenessFor,
   type ApplicantProfile,
   type ApplicantRow,
   type SignedIn,
@@ -135,6 +139,574 @@ const nextDay = (day: string): string => {
   d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
 };
+
+export async function registerApplicantForStaff(
+  ctx: SignedIn,
+  input: z.infer<typeof assistedApplicantRegistrationSchema>,
+): Promise<ApplicantStaffView> {
+  assertPermission(ctx.actor, 'applicant:create');
+  const phone = normalizePkMobile(input.phone);
+  if (!phone || !isSupportedPkMobile(phone)) {
+    throw new ValidationError([{ path: 'phone', message: 'Enter a Pakistani mobile number' }]);
+  }
+  if (input.branchId !== input.address.branchId) {
+    throw new ValidationError([{ path: 'branchId', message: 'Choose one destination branch' }]);
+  }
+
+  let applicantId: string;
+  try {
+    await runCommand(ctx, async (cmd) => {
+      const { tx, audit } = cmd;
+      const [branch] = await tx
+        .select({ id: schema.branches.id, isActive: schema.branches.isActive })
+        .from(schema.branches)
+        .where(eq(schema.branches.id, input.branchId));
+      if (!branch || !branch.isActive) {
+        throw new ValidationError([{ path: 'branchId', message: 'Choose an active branch' }]);
+      }
+      assertBranchAccess(ctx.actor, branch.id, {
+        entityType: 'branch',
+        entityId: branch.id,
+      });
+
+      const [phoneOwner] = await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.phoneNumber, phone));
+      if (phoneOwner) {
+        throw new ConflictError(
+          'This mobile number already has an account. Use the existing account recovery process.',
+          { reason: 'PHONE_TAKEN' },
+        );
+      }
+      const existingCnic = await cnicOwner(tx, input.cnic);
+      if (existingCnic) throw await cnicTakenError(tx, existingCnic);
+
+      const email = input.email ?? placeholderEmailFor(phone);
+      const [emailOwner] = await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.email, email));
+      if (emailOwner) {
+        throw new ConflictError('This email address is already associated with an account.', {
+          reason: 'EMAIL_TAKEN',
+        });
+      }
+
+      const [user] = await tx
+        .insert(schema.users)
+        .values({
+          name: input.fullName,
+          email,
+          phoneNumber: phone,
+          phoneNumberVerified: false,
+          emailVerified: Boolean(input.email),
+          status: 'ACTIVE',
+        })
+        .returning({ id: schema.users.id });
+      await tx.insert(schema.userRoles).values({
+        userId: user!.id,
+        roleCode: 'APPLICANT',
+        branchId: null,
+        grantedBy: ctx.actor.userId,
+      });
+
+      const [row] = await tx
+        .insert(a)
+        .values({
+          userId: user!.id,
+          branchId: branch.id,
+          registrationSource: 'STAFF_ASSISTED',
+          registrationReference: createRegistrationReference(),
+          registeredBy: ctx.actor.userId,
+          contactConfirmedBy: ctx.actor.userId,
+          contactConfirmedAt: new Date(),
+          fullName: input.fullName,
+          fatherName: input.fatherName,
+          cnic: input.cnic,
+          dateOfBirth: input.dateOfBirth,
+          gender: input.gender,
+          email: input.email ?? null,
+        })
+        .returning({ id: a.id });
+      applicantId = row!.id;
+
+      await tx.insert(addr).values({
+        applicantId: applicantId,
+        addressLine: input.address.addressLine,
+        cityCode: input.address.cityCode,
+        areaCode: input.address.areaCode ?? null,
+        location: toGeography(input.address.location),
+      });
+      await assertActiveMasterData(
+        tx,
+        'EDUCATION_LEVEL',
+        input.education.items.map((item) => item.levelCode),
+        (i) => `education.items.${i}.levelCode`,
+      );
+      if (input.education.items.length > 0) {
+        await tx.insert(schema.applicantEducation).values(
+          input.education.items.map((item, sortOrder) => ({
+            ...item,
+            applicantId,
+            sortOrder,
+          })),
+        );
+      }
+      const categorizedExperience = input.experience.items.flatMap((item, i) =>
+        item.categoryCode ? [{ code: item.categoryCode, i }] : [],
+      );
+      await assertActiveMasterData(
+        tx,
+        'JOB_CATEGORY',
+        categorizedExperience.map((item) => item.code),
+        (i) => `experience.items.${categorizedExperience[i]!.i}.categoryCode`,
+      );
+      if (input.experience.items.length > 0) {
+        await tx.insert(schema.applicantExperience).values(
+          input.experience.items.map((item, sortOrder) => ({
+            ...item,
+            applicantId,
+            sortOrder,
+            startMonth: `${item.startMonth}-01`,
+            endMonth: item.endMonth ? `${item.endMonth}-01` : null,
+          })),
+        );
+      }
+      await tx
+        .update(a)
+        .set({ hasNoExperience: input.experience.hasNoExperience })
+        .where(eq(a.id, applicantId));
+      await assertActiveMasterData(
+        tx,
+        'SKILL',
+        input.skills.items.map((item) => item.skillCode),
+        (i) => `skills.items.${i}.skillCode`,
+      );
+      if (input.skills.items.length > 0) {
+        await tx
+          .insert(schema.applicantSkills)
+          .values(input.skills.items.map((item) => ({ ...item, applicantId })));
+      }
+      await assertActiveMasterData(
+        tx,
+        'LANGUAGE',
+        input.languages.items.map((item) => item.languageCode),
+        (i) => `languages.items.${i}.languageCode`,
+      );
+      if (input.languages.items.length > 0) {
+        await tx
+          .insert(schema.applicantLanguages)
+          .values(input.languages.items.map((item) => ({ ...item, applicantId })));
+      }
+      if (input.certifications.items.length > 0) {
+        await tx.insert(schema.applicantCertifications).values(
+          input.certifications.items.map((item, sortOrder) => ({
+            ...item,
+            applicantId,
+            sortOrder,
+            issuedMonth: item.issuedMonth ? `${item.issuedMonth}-01` : null,
+            expiresMonth: item.expiresMonth ? `${item.expiresMonth}-01` : null,
+          })),
+        );
+      }
+      if (input.preferences) {
+        await assertActiveMasterData(
+          tx,
+          'JOB_CATEGORY',
+          input.preferences.categoryCodes,
+          (i) => `preferences.categoryCodes.${i}`,
+        );
+        if (input.preferences.willingRadiusM !== null) {
+          const { maxM } = await resolveMatchRadius({ branchId: branch.id });
+          if (input.preferences.willingRadiusM > maxM) {
+            throw new ValidationError([
+              {
+                path: 'preferences.willingRadiusM',
+                message: `Your branch matches jobs within ${maxM / 1000} km at most`,
+              },
+            ]);
+          }
+        }
+        await tx.insert(schema.applicantPreferences).values({
+          applicantId,
+          ...input.preferences,
+        });
+      }
+      await refreshProfileState(cmd, applicantId);
+      audit({
+        action: 'applicant.register_staff_assisted',
+        entityType: 'applicant',
+        entityId: applicantId,
+        branchId: branch.id,
+        after: {
+          registrationSource: 'STAFF_ASSISTED',
+          registeredBy: ctx.actor.userId,
+          contactConfirmed: true,
+        },
+      });
+    });
+  } catch (error) {
+    if (isUniqueViolation(error, 'users_phoneNumber_unique')) {
+      throw new ConflictError(
+        'This mobile number already has an account. Use the existing account recovery process.',
+        { reason: 'PHONE_TAKEN' },
+      );
+    }
+    if (isUniqueViolation(error, 'applicants_cnic_unique')) {
+      throw new ConflictError('This CNIC is already registered.', { reason: 'CNIC_TAKEN' });
+    }
+    if (isUniqueViolation(error, 'users_email_unique')) {
+      throw new ConflictError('This email address is already associated with an account.', {
+        reason: 'EMAIL_TAKEN',
+      });
+    }
+    throw error;
+  }
+  return getApplicantForStaff(ctx.actor, applicantId!);
+}
+
+/** Update an existing applicant profile without changing its account or branch assignment. */
+export async function staffUpdateApplicantProfile(
+  ctx: SignedIn,
+  applicantId: string,
+  input: StaffApplicantProfileUpdateInput,
+): Promise<ApplicantStaffView> {
+  assertPermission(ctx.actor, 'applicant:manage');
+  await scopedApplicant(ctx.actor, applicantId);
+
+  try {
+    await runCommand(ctx, async ({ tx, audit }) => {
+      const row = await loadApplicant(tx, applicantId, { forUpdate: true });
+      assertBranchAccess(ctx.actor, row.branchId, {
+        entityType: 'applicant',
+        entityId: row.id,
+      });
+
+      const existingCnic = await cnicOwner(tx, input.cnic, row.id);
+      if (existingCnic) {
+        throw new ConflictError('Another applicant already has this CNIC');
+      }
+
+      const experienceCategories = input.experience.items.flatMap((item, index) =>
+        item.categoryCode ? [{ code: item.categoryCode, index }] : [],
+      );
+      await assertActiveMasterData(
+        tx,
+        'EDUCATION_LEVEL',
+        input.education.items.map((item) => item.levelCode),
+        (index) => `education.items.${index}.levelCode`,
+      );
+      await assertActiveMasterData(
+        tx,
+        'JOB_CATEGORY',
+        [
+          ...experienceCategories.map((item) => item.code),
+          ...(input.preferences?.categoryCodes ?? []),
+        ],
+        (index) =>
+          index < experienceCategories.length
+            ? `experience.items.${experienceCategories[index]!.index}.categoryCode`
+            : `preferences.categoryCodes.${index - experienceCategories.length}`,
+      );
+      await assertActiveMasterData(
+        tx,
+        'SKILL',
+        input.skills.items.map((item) => item.skillCode),
+        (index) => `skills.items.${index}.skillCode`,
+      );
+      await assertActiveMasterData(
+        tx,
+        'LANGUAGE',
+        input.languages.items.map((item) => item.languageCode),
+        (index) => `languages.items.${index}.languageCode`,
+      );
+
+      if (input.preferences?.willingRadiusM != null) {
+        if (!row.branchId) {
+          throw new ValidationError([
+            {
+              path: 'preferences.willingRadiusM',
+              message: 'Assign a branch before setting travel distance',
+            },
+          ]);
+        }
+        const { maxM } = await resolveMatchRadius({ branchId: row.branchId });
+        if (input.preferences.willingRadiusM > maxM) {
+          throw new ValidationError([
+            {
+              path: 'preferences.willingRadiusM',
+              message: `This branch matches jobs within ${maxM / 1000} km at most`,
+            },
+          ]);
+        }
+      }
+
+      const identityChanged = IDENTITY_FIELDS.some(
+        (field) => input[field] !== row[field as keyof ApplicantRow],
+      );
+      await tx
+        .update(a)
+        .set({
+          fullName: input.fullName,
+          fatherName: input.fatherName,
+          cnic: input.cnic,
+          dateOfBirth: input.dateOfBirth,
+          gender: input.gender,
+          email: input.email ?? null,
+          hasNoExperience: input.experience.hasNoExperience,
+          identityStatus: identityChanged ? 'UNVERIFIED' : row.identityStatus,
+        })
+        .where(eq(a.id, row.id));
+
+      if (input.fullName !== row.fullName) {
+        await tx
+          .update(schema.users)
+          .set({ name: input.fullName })
+          .where(eq(schema.users.id, row.userId));
+      }
+
+      await tx
+        .insert(addr)
+        .values({
+          applicantId: row.id,
+          addressLine: input.address.addressLine,
+          cityCode: input.address.cityCode,
+          areaCode: input.address.areaCode ?? null,
+          location: toGeography(input.address.location),
+        })
+        .onConflictDoUpdate({
+          target: addr.applicantId,
+          set: {
+            addressLine: input.address.addressLine,
+            cityCode: input.address.cityCode,
+            areaCode: input.address.areaCode ?? null,
+            location: toGeography(input.address.location),
+            updatedAt: new Date(),
+          },
+        });
+
+      const educationRows = await tx
+        .select({ id: schema.applicantEducation.id })
+        .from(schema.applicantEducation)
+        .where(eq(schema.applicantEducation.applicantId, row.id));
+      const educationIds = new Set(educationRows.map((item) => item.id));
+      const retainedEducationIds = new Set<string>();
+      for (const [index, item] of input.education.items.entries()) {
+        const id = input.recordIds.education[index] ?? null;
+        if (id) {
+          if (!educationIds.has(id)) {
+            throw new ValidationError([
+              {
+                path: `recordIds.education.${index}`,
+                message: 'Refresh the profile and try again',
+              },
+            ]);
+          }
+          retainedEducationIds.add(id);
+          await tx
+            .update(schema.applicantEducation)
+            .set({ ...item, sortOrder: index })
+            .where(
+              and(
+                eq(schema.applicantEducation.id, id),
+                eq(schema.applicantEducation.applicantId, row.id),
+              ),
+            );
+        } else {
+          await tx.insert(schema.applicantEducation).values({
+            ...item,
+            applicantId: row.id,
+            sortOrder: index,
+          });
+        }
+      }
+      const removedEducationIds = [...educationIds].filter((id) => !retainedEducationIds.has(id));
+      if (removedEducationIds.length) {
+        await tx
+          .delete(schema.applicantEducation)
+          .where(
+            and(
+              eq(schema.applicantEducation.applicantId, row.id),
+              inArray(schema.applicantEducation.id, removedEducationIds),
+            ),
+          );
+      }
+
+      const experienceRows = await tx
+        .select({ id: schema.applicantExperience.id })
+        .from(schema.applicantExperience)
+        .where(eq(schema.applicantExperience.applicantId, row.id));
+      const experienceIds = new Set(experienceRows.map((item) => item.id));
+      const retainedExperienceIds = new Set<string>();
+      for (const [index, item] of input.experience.items.entries()) {
+        const id = input.recordIds.experience[index] ?? null;
+        const values = {
+          ...item,
+          startMonth: `${item.startMonth}-01`,
+          endMonth: item.endMonth ? `${item.endMonth}-01` : null,
+          sortOrder: index,
+        };
+        if (id) {
+          if (!experienceIds.has(id)) {
+            throw new ValidationError([
+              {
+                path: `recordIds.experience.${index}`,
+                message: 'Refresh the profile and try again',
+              },
+            ]);
+          }
+          retainedExperienceIds.add(id);
+          await tx
+            .update(schema.applicantExperience)
+            .set(values)
+            .where(
+              and(
+                eq(schema.applicantExperience.id, id),
+                eq(schema.applicantExperience.applicantId, row.id),
+              ),
+            );
+        } else {
+          await tx.insert(schema.applicantExperience).values({ ...values, applicantId: row.id });
+        }
+      }
+      const removedExperienceIds = [...experienceIds].filter(
+        (id) => !retainedExperienceIds.has(id),
+      );
+      if (removedExperienceIds.length) {
+        await tx
+          .delete(schema.applicantExperience)
+          .where(
+            and(
+              eq(schema.applicantExperience.applicantId, row.id),
+              inArray(schema.applicantExperience.id, removedExperienceIds),
+            ),
+          );
+      }
+
+      await tx.delete(schema.applicantSkills).where(eq(schema.applicantSkills.applicantId, row.id));
+      if (input.skills.items.length) {
+        await tx
+          .insert(schema.applicantSkills)
+          .values(input.skills.items.map((item) => ({ ...item, applicantId: row.id })));
+      }
+      await tx
+        .delete(schema.applicantLanguages)
+        .where(eq(schema.applicantLanguages.applicantId, row.id));
+      if (input.languages.items.length) {
+        await tx
+          .insert(schema.applicantLanguages)
+          .values(input.languages.items.map((item) => ({ ...item, applicantId: row.id })));
+      }
+
+      const certificationRows = await tx
+        .select({ id: schema.applicantCertifications.id })
+        .from(schema.applicantCertifications)
+        .where(eq(schema.applicantCertifications.applicantId, row.id));
+      const certificationIds = new Set(certificationRows.map((item) => item.id));
+      const retainedCertificationIds = new Set<string>();
+      for (const [index, item] of input.certifications.items.entries()) {
+        const id = input.recordIds.certifications[index] ?? null;
+        const values = {
+          ...item,
+          issuedMonth: item.issuedMonth ? `${item.issuedMonth}-01` : null,
+          expiresMonth: item.expiresMonth ? `${item.expiresMonth}-01` : null,
+          sortOrder: index,
+        };
+        if (id) {
+          if (!certificationIds.has(id)) {
+            throw new ValidationError([
+              {
+                path: `recordIds.certifications.${index}`,
+                message: 'Refresh the profile and try again',
+              },
+            ]);
+          }
+          retainedCertificationIds.add(id);
+          await tx
+            .update(schema.applicantCertifications)
+            .set(values)
+            .where(
+              and(
+                eq(schema.applicantCertifications.id, id),
+                eq(schema.applicantCertifications.applicantId, row.id),
+              ),
+            );
+        } else {
+          await tx
+            .insert(schema.applicantCertifications)
+            .values({ ...values, applicantId: row.id });
+        }
+      }
+      const removedCertificationIds = [...certificationIds].filter(
+        (id) => !retainedCertificationIds.has(id),
+      );
+      if (removedCertificationIds.length) {
+        await tx
+          .delete(schema.applicantCertifications)
+          .where(
+            and(
+              eq(schema.applicantCertifications.applicantId, row.id),
+              inArray(schema.applicantCertifications.id, removedCertificationIds),
+            ),
+          );
+      }
+
+      if (input.preferences) {
+        await tx
+          .insert(schema.applicantPreferences)
+          .values({ applicantId: row.id, ...input.preferences })
+          .onConflictDoUpdate({
+            target: schema.applicantPreferences.applicantId,
+            set: input.preferences,
+          });
+      } else if (input.preferences === null) {
+        await tx
+          .delete(schema.applicantPreferences)
+          .where(eq(schema.applicantPreferences.applicantId, row.id));
+      }
+
+      const completeness = await completenessFor(tx, {
+        ...row,
+        hasNoExperience: input.experience.hasNoExperience,
+      });
+      if (completeness.percent !== row.profileCompleteness) {
+        await tx
+          .update(a)
+          .set({ profileCompleteness: completeness.percent })
+          .where(eq(a.id, row.id));
+      }
+
+      audit({
+        action: 'applicant.profile_update',
+        entityType: 'applicant',
+        entityId: row.id,
+        branchId: row.branchId,
+        before: {
+          fullName: row.fullName,
+          fatherName: row.fatherName,
+          email: row.email,
+        },
+        after: {
+          fullName: input.fullName,
+          fatherName: input.fatherName,
+          email: input.email ?? null,
+        },
+        metadata: {
+          identityReset: identityChanged && row.identityStatus !== 'UNVERIFIED',
+          educationCount: input.education.items.length,
+          experienceCount: input.experience.items.length,
+        },
+      });
+    });
+  } catch (error) {
+    if (isUniqueViolation(error, 'applicants_cnic_unique')) {
+      throw new ConflictError('Another applicant already has this CNIC');
+    }
+    throw error;
+  }
+  return getApplicantForStaff(ctx.actor, applicantId);
+}
 
 export interface ApplicantListItem {
   id: string;
@@ -1004,12 +1576,21 @@ export async function staffSetApplicantStatus(
 export async function transferApplicant(
   ctx: SignedIn,
   applicantId: string,
-  input: { branchId: string; reason: string },
+  input: { branchId: string; expectedBranchId?: string; reason: string },
 ): Promise<{ applicantId: string; branch: BranchContact }> {
   assertPermission(ctx.actor, 'applicant:transfer');
-  await scopedApplicant(ctx.actor, applicantId);
+  const source = await scopedApplicant(ctx.actor, applicantId);
+  if (!isSuperAdmin(ctx.actor) && !input.expectedBranchId) {
+    throw new ValidationError([
+      { path: 'expectedBranchId', message: 'Current branch is required' },
+    ]);
+  }
   return runCommand(ctx, async ({ tx, audit }) => {
     const row = await loadApplicant(tx, applicantId, { forUpdate: true });
+    assertBranchAccess(ctx.actor, row.branchId, { entityType: 'applicant', entityId: row.id });
+    if (row.branchId !== (input.expectedBranchId ?? source.branchId)) {
+      throw new ConflictError('The applicant branch has changed. Refresh and try again.');
+    }
     if (row.branchId === input.branchId) {
       throw new ConflictError('The applicant is already in this branch');
     }

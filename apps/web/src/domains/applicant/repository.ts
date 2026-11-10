@@ -1,4 +1,5 @@
 import 'server-only';
+import { randomBytes } from 'node:crypto';
 import { schema, type GeoPoint } from '@jobbank/db';
 import {
   computeCompleteness,
@@ -36,6 +37,10 @@ export const pref = schema.applicantPreferences;
 export const docs = schema.applicantDocuments;
 export const idv = schema.identityVerifications;
 
+export function createRegistrationReference(now = new Date()): string {
+  return `SJB-${now.getUTCFullYear()}-${randomBytes(8).toString('hex').toUpperCase()}`;
+}
+
 export type ApplicantRow = typeof a.$inferSelect;
 
 /** Document types that prove identity: locked once identity is verified. */
@@ -64,6 +69,9 @@ export interface ApplicantDocumentView {
 
 export interface ApplicantProfile {
   id: string;
+  registrationReference: string;
+  registrationSource: 'SELF_SERVICE' | 'STAFF_ASSISTED';
+  registeredAt: string;
   status: ApplicantStatus;
   identityStatus: IdentityStatus;
   /** What staff wrote when the identity check failed (so the applicant can fix it). */
@@ -121,6 +129,12 @@ export interface ApplicantProfile {
     issuedMonth: string | null;
     expiresMonth: string | null;
   }[];
+  /** Stable IDs let staff update or explicitly remove records without replacing the lists. */
+  recordIds: {
+    education: string[];
+    experience: string[];
+    certifications: string[];
+  };
   preferences: {
     categoryCodes: string[];
     minSalaryPkr: number | null;
@@ -415,6 +429,9 @@ export async function buildProfile(
 
   return {
     id: row.id,
+    registrationReference: row.registrationReference,
+    registrationSource: row.registrationSource,
+    registeredAt: row.registeredAt.toISOString(),
     status: row.status,
     identityStatus: row.identityStatus,
     identityNote:
@@ -476,6 +493,11 @@ export async function buildProfile(
       issuedMonth: toMonth(c.issuedMonth),
       expiresMonth: toMonth(c.expiresMonth),
     })),
+    recordIds: {
+      education: education.map((e) => e.id),
+      experience: experience.map((e) => e.id),
+      certifications: certifications.map((c) => c.id),
+    },
     preferences: preferences
       ? {
           categoryCodes: preferences.categoryCodes,

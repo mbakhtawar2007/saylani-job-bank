@@ -13,9 +13,10 @@ import { ArrowLeft, ArrowRight, CheckCircle2, Send } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Badge, Input, Select, StatusPill, Textarea } from '@/components/atoms';
-import { FormField } from '@/components/molecules';
+import { FormField, PhoneInput } from '@/components/molecules';
 import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import type { CompanyView } from '@/domains/company';
+import { normalizePkMobile } from '@/lib/format/phone';
 
 function friendlyError(err: unknown): string {
   return friendlyApiError(err);
@@ -101,12 +102,11 @@ interface DetailsForm {
 function DetailsStep({
   company,
   onSaved,
-  idempotencyKey,
 }: {
   company: CompanyView | null;
   onSaved: (c: CompanyView) => void;
-  idempotencyKey: string;
 }) {
+  const registrationIdempotency = useRef<{ fingerprint: string; key: string } | null>(null);
   const d = company?.details;
   const [form, setForm] = useState<DetailsForm>({
     legalName: d?.legalName ?? '',
@@ -150,10 +150,14 @@ function DetailsStep({
       };
       let saved: CompanyView;
       if (!company) {
+        const fingerprint = JSON.stringify(body);
+        if (registrationIdempotency.current?.fingerprint !== fingerprint) {
+          registrationIdempotency.current = { fingerprint, key: crypto.randomUUID() };
+        }
         ({ data: saved } = await apiFetch<CompanyView>('/api/v1/companies/register', {
           method: 'POST',
           body,
-          idempotencyKey,
+          idempotencyKey: registrationIdempotency.current.key,
         }));
       } else {
         ({ data: saved } = await apiFetch<CompanyView>('/api/v1/companies/me', {
@@ -335,7 +339,7 @@ function ContactsStep({
   const primaryCount = items.filter((i) => i.isPrimary).length;
   const isReady =
     items.length > 0 &&
-    items.every((i) => i.name.trim().length >= 3 && i.phone.trim().length >= 10) &&
+    items.every((i) => i.name.trim().length >= 3 && normalizePkMobile(i.phone) !== null) &&
     primaryCount === 1;
 
   return (
@@ -383,12 +387,15 @@ function ContactsStep({
                 onChange={(e) => updateItem(idx, 'designation', e.target.value)}
               />
             </FormField>
-            <FormField label="Phone" required>
-              <Input
-                type="tel"
-                placeholder="0300 1234567"
+            <FormField
+              label="Phone"
+              required
+              hint="Enter a 10-digit Pakistani mobile number starting with 3. The +92 prefix is fixed."
+            >
+              <PhoneInput
+                aria-label={`Contact ${idx + 1} phone`}
                 value={item.phone}
-                onChange={(e) => updateItem(idx, 'phone', e.target.value)}
+                onChange={(change) => updateItem(idx, 'phone', change.e164 ?? change.national)}
               />
             </FormField>
             <FormField label="Email">
@@ -945,12 +952,11 @@ function DocumentsStep({
 function SubmitStep({
   company,
   onSubmitted,
-  idempotencyKey,
 }: {
   company: CompanyView;
   onSubmitted: (c: CompanyView) => void;
-  idempotencyKey: string;
 }) {
+  const idempotencyKey = useRef<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState('');
@@ -972,9 +978,10 @@ function SubmitStep({
     setPending(true);
     setError(null);
     try {
+      idempotencyKey.current ??= crypto.randomUUID();
       const { data: saved } = await apiFetch<CompanyView>('/api/v1/companies/me/submit', {
         method: 'POST',
-        idempotencyKey,
+        idempotencyKey: idempotencyKey.current,
       });
       onSubmitted(saved);
     } catch (err) {
@@ -1106,8 +1113,6 @@ export function CompanyWizard({
   initialCompany: CompanyView | null;
 }) {
   const router = useRouter();
-  const registerKey = useRef(crypto.randomUUID());
-  const submitKey = useRef(crypto.randomUUID());
   const [company, setCompany] = useState<CompanyView | null>(initialCompany);
   const [currentStep, setCurrentStep] = useState<WizardStep>(() => {
     const valid = STEPS.map((s) => s.id);
@@ -1209,9 +1214,7 @@ export function CompanyWizard({
           </div>
           <p className="text-fg-muted text-sm">{activeStep.description}</p>
         </div>
-        {currentStep === 'details' && (
-          <DetailsStep company={company} onSaved={saved} idempotencyKey={registerKey.current} />
-        )}
+        {currentStep === 'details' && <DetailsStep company={company} onSaved={saved} />}
         {currentStep === 'contacts' && company && (
           <ContactsStep company={company} onSaved={saved} />
         )}
@@ -1224,7 +1227,6 @@ export function CompanyWizard({
         {currentStep === 'submit' && company && (
           <SubmitStep
             company={company}
-            idempotencyKey={submitKey.current}
             onSubmitted={(c) => {
               setCompany(c);
             }}

@@ -809,7 +809,7 @@ describe('staff access', () => {
       statusReason: 'Unreachable for 3 weeks',
     });
 
-    // Staff cannot transfer; the Branch Admin can.
+    // Staff cannot transfer; a Branch Admin can transfer from their own branch.
     expect(
       (
         await call(transfer, `/api/v1/applicants/${profile.id}/transfer`, {
@@ -820,11 +820,11 @@ describe('staff access', () => {
         })
       ).status,
     ).toBe(403);
-    const admin = await signInAdmin('branchadmin.khi@jobbank.local');
+    const branchAdmin = await signInAdmin('branchadmin.khi@jobbank.local');
     const moved = await call(transfer, `/api/v1/applicants/${profile.id}/transfer`, {
       method: 'POST',
-      body: { branchId: lhr, reason: 'Moved to Lahore' },
-      jar: admin,
+      body: { branchId: lhr, expectedBranchId: khi, reason: 'Moved to Lahore' },
+      jar: branchAdmin,
       params: { id: profile.id },
     });
     expect(moved.status, JSON.stringify(moved.body)).toBe(200);

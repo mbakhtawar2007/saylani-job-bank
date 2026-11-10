@@ -53,6 +53,19 @@ entials |
 | Mailpit (dev inbox) | http://localhost:8025 | — |
 
 The ports are 5433 and 6380 rather than the defaults, so they don't clash with a local Postgres or Redis.
+Local service connections in `.env.example` use `127.0.0.1` rather than `localhost`
+to avoid IPv6 forwarding timeouts with Docker Desktop on Windows. If an existing
+`.env` uses `localhost` for PostgreSQL, Redis, S3, or SMTP, change those service
+hosts to `127.0.0.1` and restart the affected apps.
+When starting the matching service from `services/matching`, export
+`MATCHING_DATABASE_URL` and `MATCHING_REDIS_URL` from the root `.env` or set them
+in a `services/matching/.env` file; it does not automatically load the root file.
+
+The matching service's `/internal/matches` endpoints require an `Authorization: Bearer <token>`
+header matching `MATCHING_INTERNAL_API_TOKEN` (a random secret of at least 32 characters).
+If it is unset or too short, these endpoints return 503; the worker and `/health` continue to
+operate. Keep the service on a private network and store the token in a secrets manager in
+production. Restart the matching service after changing its configuration.
 
 ## Signing in locally
 
@@ -60,6 +73,19 @@ The ports are 5433 and 6380 rather than the defaults, so they don't clash with a
 
 - **Staff and employers** sign in at http://localhost:3000/login under **Staff & employers**. The emails and the shared development password are in [`packages/db/src/seed/dev-data.ts`](packages/db/src/seed/dev-data.ts).
 - **Applicants** use the **Job seekers** tab with a mobile number. In development, the SMS code is printed in the `pnpm dev` terminal (look for `📱 [dev SMS …]`). Any new Pakistani mobile number registers a new applicant.
+
+Branch Admins can view applicants, companies, and jobs in their assigned branches. They can transfer
+applicants from those branches to an active branch, but cannot otherwise create or manage those
+records. Their staff-management and branch-settings access is unchanged.
+Users with multiple roles retain the combined permissions of those roles.
+Company listings default to Verified and can also be filtered by Suspended, Under Review
+(`UNDER_VERIFICATION`), Info needed (`INFO_REQUESTED`), or Rejected. Branch Admin transfer requests include the applicant's
+current branch as `expectedBranchId`; stale requests are rejected and must be refreshed.
+
+Applicant registration-source statistics are not shown: migration 0018 assigned the self-service
+source to pre-existing records, so historical manual registrations cannot be distinguished reliably.
+New staff-assisted records do record their source, but counting the default as definitive for all
+legacy records would produce misleading totals.
 
 ### Two-factor and email in development
 

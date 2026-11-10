@@ -14,6 +14,7 @@ export const GET = apiHandler({
       page: query.page,
       pageSize: query.pageSize,
       total: result.total,
+      unread: result.unread,
       pageCount: Math.ceil(result.total / query.pageSize),
     });
   },

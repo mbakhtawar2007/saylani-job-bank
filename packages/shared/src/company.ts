@@ -220,24 +220,45 @@ const optionalText = (max: number) =>
     .transform((value) => (value ? value : null));
 
 const optionalEmail = z
-  .email('Enter a valid email address')
-  .trim()
-  .toLowerCase()
-  .max(254)
-  .nullish()
-  .or(z.literal('').transform(() => null))
-  .transform((value) => value ?? null);
+  .preprocess(
+    (value) => (typeof value === 'string' ? value.trim().toLowerCase() : value),
+    z
+      .union([
+        z
+          .email('Enter a valid email address')
+          .max(254)
+          .refine((value) => value.slice(value.lastIndexOf('@') + 1).includes('.'), {
+            message: 'Enter an email with a valid domain',
+          }),
+        z.literal(''),
+      ])
+      .nullish(),
+  )
+  .transform((value) => value || null);
 
 const websiteSchema = z
-  .string()
-  .trim()
-  .max(200)
-  .nullish()
+  .preprocess(
+    (value) => (typeof value === 'string' ? value.trim() : value),
+    z.string().max(200).nullish(),
+  )
   .transform((value) => {
     if (!value) return null;
     return /^https?:\/\//i.test(value) ? value : `https://${value}`;
   })
-  .pipe(z.url('Enter a website address, e.g. www.example.com').nullable());
+  .pipe(
+    z
+      .url('Enter a valid website address, e.g. https://example.com')
+      .nullable()
+      .refine((value) => {
+        if (!value) return true;
+        const parsed = new URL(value);
+        return (
+          (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+          parsed.hostname.includes('.') &&
+          !/^\d+(?:\.\d+)+$/.test(parsed.hostname)
+        );
+      }, 'Enter a valid website address with a domain name'),
+  );
 
 const reason = z.string().trim().min(5, 'Give a short reason (at least 5 characters)').max(500);
 const note = (message: string) => z.string().trim().min(10, message).max(2000);
@@ -364,9 +385,30 @@ export const correctCompanySchema = z
   });
 
 export const companyContactSchema = z.object({
-  name: z.string('Enter a name').trim().min(3, 'Enter the full name').max(120),
-  designation: optionalText(120),
-  phone: pkPhoneSchema,
+  name: z
+    .string('Enter a name')
+    .trim()
+    .min(3, 'Enter the full name')
+    .max(120)
+    .refine((value) => value.split(/\s+/).length >= 2, 'Enter first and last name')
+    .regex(/^[\p{L}][\p{L}\s.'-]*$/u, 'Enter a name using letters only'),
+  designation: optionalText(120).refine(
+    (value) => value === null || /^[\p{L}][\p{L}\s.'-]*$/u.test(value),
+    'Enter a designation using letters only',
+  ),
+  phone: z
+    .string('Enter a phone number')
+    .transform((value) => {
+      let digits = value.replace(/\D/g, '');
+      if (digits.startsWith('0092')) digits = digits.slice(4);
+      else if (digits.startsWith('92') && digits.length > 10) digits = digits.slice(2);
+      else if (digits.startsWith('0')) digits = digits.slice(1);
+      return digits;
+    })
+    .pipe(
+      z.string().regex(/^3\d{9}$/, 'Enter an 11-digit Pakistani mobile number, e.g. 03001234567'),
+    )
+    .transform((national) => `+92${national}`),
   email: optionalEmail,
   isPrimary: z.boolean().default(false),
 });
@@ -381,6 +423,13 @@ export const companyContactsSchema = z.object({
     }),
 });
 export type CompanyContactsInput = z.infer<typeof companyContactsSchema>;
+
+/** Staff registration captures the contact that provided the company details. */
+export const staffRegisterCompanySchema = registerCompanySchema.extend({
+  branchId: z.uuid('Choose a branch'),
+  contacts: companyContactsSchema,
+});
+export type StaffRegisterCompanyInput = z.infer<typeof staffRegisterCompanySchema>;
 
 const addressFields = {
   location: pakistanPointSchema,

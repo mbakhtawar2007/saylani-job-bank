@@ -19,8 +19,8 @@ beforeAll(async () => {
     INSERT INTO branches (code, name, city) VALUES (${`M6-${suffix.toUpperCase()}`}, 'M6 probe', 'Karachi')
     RETURNING id`;
   [{ id: applicantId }] = await app.client<[{ id: string }]>`
-    INSERT INTO applicants (user_id, full_name, father_name, cnic, date_of_birth, gender)
-    VALUES (${userId}, 'Probe Person', 'Probe Father', ${cnic()}, '1995-01-01', 'MALE')
+    INSERT INTO applicants (user_id, full_name, father_name, cnic, date_of_birth, gender, registration_reference)
+    VALUES (${userId}, 'Probe Person', 'Probe Father', ${cnic()}, '1995-01-01', 'MALE', ${`SJB-TEST-${suffix.toUpperCase()}`})
     RETURNING id`;
 });
 

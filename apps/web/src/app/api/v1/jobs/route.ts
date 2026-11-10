@@ -20,6 +20,7 @@ export const GET = apiHandler({
 /** POST /api/v1/jobs — Branch Admin / Super Admin posts a job for a branch company. */
 export const POST = apiHandler({
   permission: 'job:manage',
+  idempotent: true,
   body: createJobSchema.extend({
     companyId: z.uuid(),
     requirements: jobRequirementsSchema.optional(),

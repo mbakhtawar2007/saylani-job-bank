@@ -279,6 +279,228 @@
     }
   }
 
+  .registration-print-page {
+    min-height: 100vh;
+    padding: 1.5rem;
+    background: #f1f5f2;
+    color: #17231b;
+    font-family: var(--font-sans);
+  }
+
+  .registration-print-controls {
+    display: flex;
+    max-width: 210mm;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 0 auto 1rem;
+  }
+
+  .registration-print-state {
+    display: flex;
+    max-width: 210mm;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 1rem auto;
+    border: 1px solid #d5ded8;
+    border-radius: 0.75rem;
+    background: #fff;
+    padding: 1rem;
+    color: #34443a;
+  }
+
+  .registration-print-error {
+    border-color: #e9b9b9;
+    color: #8e2525;
+  }
+
+  .registration-print-document {
+    display: grid;
+    width: min(100%, 210mm);
+    gap: 1.1rem;
+    margin: 0 auto;
+    background: #fff;
+    padding: 14mm;
+    box-shadow: 0 8px 32px rgb(23 35 27 / 12%);
+    font-size: 10pt;
+  }
+
+  .registration-print-header {
+    display: grid;
+    grid-template-columns: 35mm 1fr auto;
+    align-items: center;
+    gap: 1rem;
+    border-bottom: 2px solid #14783e;
+    padding-bottom: 1rem;
+  }
+
+  .registration-print-logo {
+    width: 35mm;
+    height: auto;
+    object-fit: contain;
+  }
+
+  .registration-print-title p:first-child {
+    margin: 0 0 0.25rem;
+    color: #14783e;
+    font-size: 13pt;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+  }
+
+  .registration-print-title h1 {
+    margin: 0;
+    font-size: 16pt;
+    line-height: 1.25;
+  }
+
+  .registration-print-title p:last-child {
+    margin: 0.3rem 0 0;
+    color: #64736a;
+    font-size: 9pt;
+  }
+
+  .registration-print-reference {
+    display: grid;
+    gap: 0.35rem;
+    text-align: right;
+    font-size: 9pt;
+  }
+
+  .registration-print-summary,
+  .registration-print-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem 1rem;
+    margin: 0;
+  }
+
+  .registration-print-summary {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border-bottom: 1px solid #d5ded8;
+    padding-bottom: 0.8rem;
+  }
+
+  .registration-print-field {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .registration-print-field dt {
+    margin-bottom: 0.15rem;
+    color: #5c6e62;
+    font-size: 8pt;
+    font-weight: 600;
+  }
+
+  .registration-print-field dd {
+    margin: 0;
+    font-size: 9.5pt;
+  }
+
+  .registration-print-section {
+    display: grid;
+    gap: 0.55rem;
+  }
+
+  .registration-print-section h2 {
+    margin: 0;
+    border-bottom: 1px solid #d5ded8;
+    padding-bottom: 0.3rem;
+    color: #14783e;
+    font-size: 11pt;
+  }
+
+  .registration-print-empty {
+    margin: 0;
+    color: #4c5c52;
+    font-style: italic;
+  }
+
+  .registration-print-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 9pt;
+  }
+
+  .registration-print-table th,
+  .registration-print-table td {
+    border: 1px solid #d5ded8;
+    padding: 0.4rem;
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+
+  .registration-print-table th {
+    background: #edf5ef;
+    font-weight: 700;
+  }
+
+  .registration-print-list {
+    display: grid;
+    gap: 0.25rem;
+    margin: 0;
+    padding-left: 1.2rem;
+  }
+
+  .registration-print-bottom {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+    gap: 1rem;
+    margin-top: 0.5rem;
+    break-inside: avoid;
+  }
+
+  .registration-print-signatures {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.5rem;
+  }
+
+  .registration-print-signatures > div {
+    display: grid;
+    gap: 0.8rem;
+    font-size: 8.5pt;
+  }
+
+  .registration-print-signatures i {
+    display: block;
+    height: 1px;
+    border-bottom: 1px solid #526158;
+  }
+
+  .registration-print-signatures small {
+    font-size: 8pt;
+  }
+
+  .registration-print-qr {
+    display: grid;
+    justify-items: center;
+    gap: 0.3rem;
+    text-align: center;
+    font-size: 8pt;
+  }
+
+  .registration-print-qr img {
+    width: 32mm;
+    height: 32mm;
+  }
+
+  .registration-print-footer {
+    border-top: 1px solid #d5ded8;
+    padding-top: 0.5rem;
+    color: #5c6e62;
+    font-size: 8pt;
+    text-align: center;
+  }
+
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+
   @media print {
     @page {
       size: A4 portrait;
@@ -296,8 +518,10 @@
 
     body
       > *:not(.registration-form-print-root):not(.applicant-token-print-root):not(
-        :has(.registration-form-print-root)
-      ):not(:has(.applicant-token-print-root)) {
+        .registration-print-page
+      ):not(:has(.registration-form-print-root)):not(:has(.applicant-token-print-root)):not(
+        :has(.registration-print-page)
+      ) {
       display: none !important;
     }
 
@@ -396,6 +620,71 @@
 
     .registration-form-print-sheet .no-print {
       display: none !important;
+    }
+  }
+
+  @media print {
+    html,
+    body {
+      min-height: 0 !important;
+      background: #fff !important;
+      color: #17231b !important;
+      print-color-adjust: exact;
+      -webkit-print-color-adjust: exact;
+    }
+
+    body * {
+      visibility: hidden !important;
+    }
+
+    .registration-print-document,
+    .registration-print-document *,
+    .registration-form-print-root,
+    .registration-form-print-root *,
+    .applicant-token-print-root,
+    .applicant-token-print-root * {
+      visibility: visible !important;
+    }
+
+    .registration-print-page {
+      min-height: 0;
+      padding: 0;
+      background: #fff;
+    }
+
+    .registration-print-controls,
+    .registration-print-state {
+      display: none !important;
+    }
+
+    .registration-print-document {
+      position: absolute;
+      inset: 0;
+      display: block;
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      padding: 0;
+      box-shadow: none;
+      color: #17231b;
+      font-size: 9pt;
+    }
+
+    .registration-print-header,
+    .registration-print-section,
+    .registration-print-summary,
+    .registration-print-signatures {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    .registration-print-table thead {
+      display: table-header-group;
+    }
+
+    .registration-print-table tr {
+      break-inside: avoid;
+      page-break-inside: avoid;
     }
   }
 }

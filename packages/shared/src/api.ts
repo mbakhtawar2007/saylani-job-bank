@@ -43,6 +43,7 @@ export const paginationMetaSchema = z.object({
   pageSize: z.number().int().min(1),
   total: z.number().int().min(0),
   pageCount: z.number().int().min(0),
+  unread: z.number().int().min(0).optional(),
 });
 
 export type FieldIssue = z.infer<typeof fieldIssueSchema>;

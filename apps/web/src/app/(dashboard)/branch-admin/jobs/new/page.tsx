@@ -2,6 +2,7 @@ import { requireRole } from '@/domains/auth';
 import { listCompanies } from '@/domains/company';
 import { listMasterData } from '@/domains/settings';
 import { StaffPostJobForm } from './_components/StaffPostJobForm';
+import { redirect } from 'next/navigation';
 
 export const metadata = { title: 'Post a job' };
 
@@ -11,6 +12,7 @@ export default async function BranchAdminPostJobPage({
   searchParams: Promise<{ companyId?: string }>;
 }) {
   const [{ actor }, { companyId }] = await Promise.all([requireRole('BRANCH_ADMIN'), searchParams]);
+  if (!actor.permissions.has('job:manage')) redirect('/forbidden');
   const [{ items: companies }, categories] = await Promise.all([
     listCompanies(actor, {
       page: 1,
