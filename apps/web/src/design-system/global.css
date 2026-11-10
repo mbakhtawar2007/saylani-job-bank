@@ -239,10 +239,16 @@
   }
 
   /* Landing + dashboard pages must never scroll sideways on a phone:
-     a single wide element used to push the whole page off-screen. */
+     a single wide element used to push the whole page off-screen.
+     overflow-x: clip (NOT hidden): `hidden` makes overflow-y compute to
+     `auto`, turning <body> into a scroll container — and in Chrome that
+     breaks every position:sticky element, so the dashboard sidebar and
+     top bar scrolled away with the page (staff job detail, 2026-11-10).
+     `clip` blocks sideways scrolling the same way without creating a
+     scroll container, so sticky keeps working. */
   html,
   body {
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   body {
