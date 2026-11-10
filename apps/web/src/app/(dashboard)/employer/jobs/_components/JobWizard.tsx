@@ -15,13 +15,11 @@ import {
   GENDER_PREFERENCES,
   GENDER_PREFERENCE_LABELS,
   JOB_LANGUAGE_CODES,
-  JOB_POSTING_SHIFT_TYPES,
   JOB_TYPES,
   JOB_TYPE_LABELS,
   MEDICAL_COVERAGE_SCOPES,
   MEDICAL_COVERAGE_SCOPE_LABELS,
   MIN_SALARY_PKR,
-  SHIFT_TYPE_LABELS,
   SKILL_LEVELS,
   SKILL_LEVEL_LABELS,
   STANDARD_LEAVE_DAYS,
@@ -32,7 +30,6 @@ import {
   type GenderPreference,
   type JobType,
   type MedicalCoverageScope,
-  type ShiftType,
   type SkillLevel,
 } from '@jobbank/shared';
 import type { JobView } from '@/domains/job';
@@ -57,11 +54,6 @@ interface ReverseResult {
 }
 
 const JOB_TYPE_OPTIONS = JOB_TYPES.map((v) => ({ value: v, label: JOB_TYPE_LABELS[v] }));
-// Rotation only for new postings (2026-11-10).
-const SHIFT_OPTIONS = JOB_POSTING_SHIFT_TYPES.map((v) => ({
-  value: v,
-  label: SHIFT_TYPE_LABELS[v],
-}));
 const GENDER_OPTIONS = GENDER_PREFERENCES.map((v) => ({
   value: v,
   label: GENDER_PREFERENCE_LABELS[v],
@@ -123,7 +115,8 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
   const [categoryCode, setCategoryCode] = useState(initialJob?.categoryCode ?? '');
   const [description, setDescription] = useState(initialJob?.description ?? '');
   const [jobType, setJobType] = useState<JobType>(initialJob?.jobType ?? 'FULL_TIME');
-  const [shift, setShift] = useState<ShiftType>(initialJob?.shift ?? 'ROTATING');
+  // Shift is always rotating — no dropdown in the form (2026-11-10).
+  const shift = initialJob?.shift ?? 'ROTATING';
   const [shiftHours, setShiftHours] = useState(
     initialJob?.shiftHours != null ? String(initialJob.shiftHours) : '',
   );
@@ -329,7 +322,8 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
               description: description.trim(),
               jobType,
               shift,
-              shiftHours: shift === 'ROTATING' && shiftHours ? parseInt(shiftHours, 10) : undefined,
+              shiftHours:
+                jobType === 'ROTATING' && shiftHours ? parseInt(shiftHours, 10) : undefined,
               designationCode: designationCode.trim() || undefined,
               genderPreference,
               vacancies: parseInt(vacancies, 10),
@@ -507,26 +501,16 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
             />
           </FormField>
 
-          <div className="grid grid-cols-2 gap-4">
-            <FormField label="Job type" required>
-              <Select
-                options={JOB_TYPE_OPTIONS}
-                value={jobType}
-                onChange={(e) => setJobType(e.target.value as JobType)}
-                disabled={restricted}
-              />
-            </FormField>
-            <FormField label="Shift" required>
-              <Select
-                options={SHIFT_OPTIONS}
-                value={shift}
-                onChange={(e) => setShift(e.target.value as ShiftType)}
-                disabled={restricted}
-              />
-            </FormField>
-          </div>
+          <FormField label="Job type" required>
+            <Select
+              options={JOB_TYPE_OPTIONS}
+              value={jobType}
+              onChange={(e) => setJobType(e.target.value as JobType)}
+              disabled={restricted}
+            />
+          </FormField>
 
-          {shift === 'ROTATING' && (
+          {jobType === 'ROTATING' && (
             <FormField label="How many hours for that shift?" required hint="Hours per shift / day">
               <div className="flex items-center gap-3">
                 <Input

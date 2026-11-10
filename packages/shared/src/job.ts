@@ -254,8 +254,8 @@ export const createJobSchema = z
         message: 'Closing date must be in the future',
       });
     }
-    // Hours are asked only when the shift is rotating.
-    if (v.shift === 'ROTATING' && v.shiftHours === undefined) {
+    // Hours are asked only when the job type is rotating (2026-11-10).
+    if (v.jobType === 'ROTATING' && v.shiftHours === undefined) {
       ctx.addIssue({
         code: 'custom',
         path: ['shiftHours'],

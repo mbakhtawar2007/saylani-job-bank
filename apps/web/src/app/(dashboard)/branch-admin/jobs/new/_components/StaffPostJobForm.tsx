@@ -13,13 +13,11 @@ import {
   GENDER_PREFERENCES,
   GENDER_PREFERENCE_LABELS,
   JOB_LANGUAGE_CODES,
-  JOB_POSTING_SHIFT_TYPES,
   JOB_TYPES,
   JOB_TYPE_LABELS,
   MEDICAL_COVERAGE_SCOPES,
   MEDICAL_COVERAGE_SCOPE_LABELS,
   MIN_SALARY_PKR,
-  SHIFT_TYPE_LABELS,
   STANDARD_LEAVE_DAYS,
   type BonusBasis,
   type BonusFrequency,
@@ -49,11 +47,6 @@ interface Props {
 }
 
 const JOB_TYPE_OPTIONS = JOB_TYPES.map((v) => ({ value: v, label: JOB_TYPE_LABELS[v] }));
-// Rotation only for new postings (2026-11-10).
-const SHIFT_OPTIONS = JOB_POSTING_SHIFT_TYPES.map((v) => ({
-  value: v,
-  label: SHIFT_TYPE_LABELS[v],
-}));
 const GENDER_OPTIONS = GENDER_PREFERENCES.map((v) => ({
   value: v,
   label: GENDER_PREFERENCE_LABELS[v],
@@ -95,7 +88,8 @@ export function StaffPostJobForm({
   const [designations, setDesignations] = useState<{ value: string; label: string }[]>([]);
   const [description, setDescription] = useState('');
   const [jobType, setJobType] = useState('FULL_TIME');
-  const [shift, setShift] = useState('ROTATING');
+  // Shift is always rotating — no dropdown in the form (2026-11-10).
+  const shift = 'ROTATING';
   const [shiftHours, setShiftHours] = useState('');
   const [genderPreference, setGenderPreference] = useState('ANY');
   const [vacancies, setVacancies] = useState('1');
@@ -155,7 +149,7 @@ export function StaffPostJobForm({
             description: description.trim(),
             jobType,
             shift,
-            shiftHours: shift === 'ROTATING' && shiftHours ? parseInt(shiftHours, 10) : undefined,
+            shiftHours: jobType === 'ROTATING' && shiftHours ? parseInt(shiftHours, 10) : undefined,
             genderPreference,
             vacancies: parseInt(vacancies, 10),
             salaryMin: salaryMin ? parseInt(salaryMin, 10) : undefined,
@@ -253,14 +247,7 @@ export function StaffPostJobForm({
                 options={JOB_TYPE_OPTIONS}
               />
             </FormField>
-            <FormField label="Shift" required>
-              <Select
-                value={shift}
-                onChange={(e) => setShift(e.target.value)}
-                options={SHIFT_OPTIONS}
-              />
-            </FormField>
-            {shift === 'ROTATING' && (
+            {jobType === 'ROTATING' && (
               <FormField label="How many hours for that shift?" required>
                 <div className="flex items-center gap-3">
                   <Input
@@ -486,7 +473,12 @@ export function StaffPostJobForm({
               onClick={handleSubmit}
               loading={pending}
               disabled={
-                !companyId || !title || !categoryCode || !description || !vacancies || !shiftHours
+                !companyId ||
+                !title ||
+                !categoryCode ||
+                !description ||
+                !vacancies ||
+                (jobType === 'ROTATING' && !shiftHours)
               }
             >
               Create job draft

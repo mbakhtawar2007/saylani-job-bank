@@ -83,12 +83,21 @@ describe('job schemas', () => {
     expect(createJobSchema.safeParse({ ...validCreate, shift: 'NIGHT' }).success).toBe(false);
   });
 
-  it('create requires shift hours', () => {
+  it('create requires shift hours only when the job type is Rotating', () => {
     const { shiftHours: _omitted, ...withoutHours } = validCreate;
-    expect(createJobSchema.safeParse(withoutHours).success).toBe(false);
-    expect(createJobSchema.safeParse({ ...validCreate, shiftHours: 0 }).success).toBe(false);
-    expect(createJobSchema.safeParse({ ...validCreate, shiftHours: 25 }).success).toBe(false);
-    expect(createJobSchema.safeParse({ ...validCreate, shiftHours: 12 }).success).toBe(true);
+    // Full time needs no hours.
+    expect(createJobSchema.safeParse(withoutHours).success).toBe(true);
+    // Rotating needs hours.
+    expect(createJobSchema.safeParse({ ...withoutHours, jobType: 'ROTATING' }).success).toBe(false);
+    expect(
+      createJobSchema.safeParse({ ...validCreate, jobType: 'ROTATING', shiftHours: 0 }).success,
+    ).toBe(false);
+    expect(
+      createJobSchema.safeParse({ ...validCreate, jobType: 'ROTATING', shiftHours: 25 }).success,
+    ).toBe(false);
+    expect(
+      createJobSchema.safeParse({ ...validCreate, jobType: 'ROTATING', shiftHours: 12 }).success,
+    ).toBe(true);
   });
 
   it('create requires a bonus basis when a bonus tier is set', () => {
