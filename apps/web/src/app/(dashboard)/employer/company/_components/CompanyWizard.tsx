@@ -428,40 +428,67 @@ function ContactsStep({
 // ─── Location step ──────────────────────────────────────────────────────
 
 interface GeoResult {
-  formatted: string;
   lat: number;
   lng: number;
-  city: string;
-  area: string;
+  addressLine: string;
+  cityCode: string | null;
+  cityLabel: string | null;
+  display: string;
 }
 
+// The wizard used to call OpenCage directly from the browser, which needs
+// NEXT_PUBLIC_OPENCAGE_API_KEY — that key is empty, so search always
+// returned [] , no suggestion could ever be picked, lat/lng stayed 0 and
+// the Save button could never enable. Use the server endpoint instead:
+// GET /api/v1/geocode/search falls back Photon -> Nominatim with no key,
+// exactly like StaffCompanyPanel and MapPinPicker already do.
 async function searchAddress(query: string): Promise<GeoResult[]> {
-  const key = process.env.NEXT_PUBLIC_OPENCAGE_API_KEY;
-  if (!key) return [];
-  const url = `https://api.opencagedata.com/geocode/v1/json?q=${encodeURIComponent(query)}&key=${key}&limit=5&countrycode=pk&language=en&no_annotations=1`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
-  const json = (await res.json()) as {
-    results: {
-      formatted: string;
-      geometry: { lat: number; lng: number };
-      components: {
-        city?: string;
-        town?: string;
-        suburb?: string;
-        neighbourhood?: string;
-        county?: string;
-      };
-    }[];
-  };
-  return json.results.map((r) => ({
-    formatted: r.formatted,
-    lat: r.geometry.lat,
-    lng: r.geometry.lng,
-    city: r.components.city ?? r.components.town ?? r.components.county ?? '',
-    area: r.components.suburb ?? r.components.neighbourhood ?? '',
-  }));
+  const { data } = await apiFetch<GeoResult[]>(
+    `/api/v1/geocode/search?q=${encodeURIComponent(query)}`,
+  );
+  return data ?? [];
 }
+
+/** "Rahim Yar Khan" -> "RAHIM_YAR_KHAN", matching the seeded CITY codes. A
+ * plain toUpperCase() leaves spaces in, which masterDataCodeSchema rejects. */
+function toCityCode(label: string): string {
+  return label
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+/** Approximate city centres for the seeded CITY list. Used only when the
+ * server geocode lookup returns nothing or is unreachable (the laptop
+ * network has blocked external geocoders before), so Save still works:
+ * the exact address text is saved and the pin is the city centre, near
+ * enough for the nearest-branch lookup. Never a substitute for a real
+ * geocode result when one is available. */
+const CITY_CENTRES: Record<string, { lat: number; lng: number }> = {
+  KARACHI: { lat: 24.8607, lng: 67.0011 },
+  LAHORE: { lat: 31.5204, lng: 74.3587 },
+  ISLAMABAD: { lat: 33.6844, lng: 73.0479 },
+  RAWALPINDI: { lat: 33.6007, lng: 73.0679 },
+  FAISALABAD: { lat: 31.4504, lng: 73.135 },
+  MULTAN: { lat: 30.1575, lng: 71.5249 },
+  HYDERABAD: { lat: 25.396, lng: 68.3578 },
+  GUJRANWALA: { lat: 32.1877, lng: 74.1945 },
+  PESHAWAR: { lat: 34.0151, lng: 71.5249 },
+  QUETTA: { lat: 30.1798, lng: 66.975 },
+  SIALKOT: { lat: 32.4945, lng: 74.5229 },
+  SARGODHA: { lat: 32.0837, lng: 72.6711 },
+  BAHAWALPUR: { lat: 29.3544, lng: 71.6911 },
+  SUKKUR: { lat: 27.7052, lng: 68.8574 },
+  LARKANA: { lat: 27.5589, lng: 68.212 },
+  ABBOTTABAD: { lat: 34.1688, lng: 73.2215 },
+  MARDAN: { lat: 34.1986, lng: 72.0231 },
+  GUJRAT: { lat: 32.5731, lng: 74.1005 },
+  SHEIKHUPURA: { lat: 31.7166, lng: 73.985 },
+  RAHIM_YAR_KHAN: { lat: 28.4202, lng: 70.2989 },
+  MUZAFFARABAD: { lat: 34.37, lng: 73.471 },
+  GILGIT: { lat: 35.8819, lng: 74.4645 },
+};
 
 function LocationStep({
   company,
@@ -475,6 +502,7 @@ function LocationStep({
   const [lng, setLng] = useState(hq?.location.lng ?? 0);
   const [addressLine, setAddressLine] = useState(hq?.addressLine ?? '');
   const [city, setCity] = useState(hq?.cityCode ?? '');
+  const [cityCode, setCityCode] = useState(hq?.cityCode ?? '');
   const [area, setArea] = useState(hq?.areaCode ?? '');
   const [branchId, setBranchId] = useState(company.branch?.id ?? '');
   const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
@@ -483,23 +511,34 @@ function LocationStep({
   const [searchQuery, setSearchQuery] = useState(hq?.addressLine ?? '');
   const [suggestions, setSuggestions] = useState<GeoResult[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchNote, setSearchNote] = useState<string | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Nearest branches for a pin; returns the list so save() can use it
+  // immediately instead of waiting on state.
+  async function loadBranches(
+    pinLat: number,
+    pinLng: number,
+  ): Promise<{ id: string; name: string }[]> {
+    const { data } = await apiFetch<{ id: string; name: string }[]>(
+      `/api/v1/companies/me/branch-options?lat=${pinLat}&lng=${pinLng}`,
+    );
+    const list = data ?? [];
+    setBranches(list);
+    if (!branchId && list.length > 0) setBranchId(list[0]!.id);
+    return list;
+  }
+
   useEffect(() => {
     if (!lat || !lng) return;
-    apiFetch<{ id: string; name: string }[]>(
-      `/api/v1/companies/me/branch-options?lat=${lat}&lng=${lng}`,
-    )
-      .then((res) => {
-        setBranches(res.data);
-        if (!branchId && res.data.length > 0) setBranchId(res.data[0]!.id);
-      })
-      .catch(() => undefined);
+    loadBranches(lat, lng).catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lat, lng]);
 
   function onSearchChange(value: string) {
     setSearchQuery(value);
+    setSearchNote(null);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (value.trim().length < 3) {
       setSuggestions([]);
@@ -508,20 +547,43 @@ function LocationStep({
     }
     debounceRef.current = setTimeout(async () => {
       setSearching(true);
-      const results = await searchAddress(value);
-      setSuggestions(results);
-      setShowSuggestions(results.length > 0);
-      setSearching(false);
+      try {
+        const results = await searchAddress(value);
+        setSuggestions(results);
+        setShowSuggestions(results.length > 0);
+        if (results.length === 0) {
+          setSearchNote(
+            'No matching address found — pick a nearby area or landmark, or type the full address below and save.',
+          );
+        }
+      } catch {
+        setSuggestions([]);
+        setShowSuggestions(false);
+        setSearchNote(
+          'Address search is unavailable right now — type the full address below and save, it will be located then.',
+        );
+      } finally {
+        setSearching(false);
+      }
     }, 500);
   }
 
   function pickSuggestion(r: GeoResult) {
     setLat(r.lat);
     setLng(r.lng);
-    setAddressLine(r.formatted);
-    setSearchQuery(r.formatted);
-    if (r.city) setCity(r.city);
-    if (r.area) setArea(r.area);
+    setAddressLine(r.display || r.addressLine);
+    setSearchQuery(r.display || r.addressLine);
+    // Server result carries the real master-data city code; the old code
+    // stored the raw label as city and never set an area code the backend
+    // accepts, so a picked suggestion could still fail on save.
+    if (r.cityCode) {
+      setCityCode(r.cityCode);
+      setCity(r.cityLabel ?? r.cityCode);
+    } else if (r.cityLabel) {
+      setCity(r.cityLabel);
+      setCityCode('');
+    }
+    setSearchNote(null);
     setSuggestions([]);
     setShowSuggestions(false);
   }
@@ -531,14 +593,74 @@ function LocationStep({
     setPending(true);
     setError(null);
     try {
+      // Fallback for a manually typed address: coordinates only ever came
+      // from picking a suggestion, so typing the address + city (as in the
+      // reported screenshot) could never enable the button. Locate the
+      // typed address on save instead of leaving the user stuck.
+      let useLat = lat;
+      let useLng = lng;
+      let useCityCode = cityCode || toCityCode(city);
+      let useBranchId = branchId;
+      if (useLat === 0 || useLng === 0) {
+        const query = [addressLine.trim(), city.trim()].filter(Boolean).join(', ');
+        let first: GeoResult | null = null;
+        try {
+          const results = await searchAddress(query || searchQuery.trim());
+          first = results[0] ?? null;
+        } catch {
+          first = null;
+        }
+        if (first) {
+          useLat = first.lat;
+          useLng = first.lng;
+          setLat(first.lat);
+          setLng(first.lng);
+          if (first.cityCode) {
+            useCityCode = first.cityCode;
+            setCityCode(first.cityCode);
+            setCity(first.cityLabel ?? first.cityCode);
+          }
+        } else {
+          // Geocode returned nothing or is unreachable — fall back to the
+          // typed city's centre instead of leaving the user stuck again
+          // with an error. Only unknown cities still error out.
+          const centre = CITY_CENTRES[useCityCode];
+          if (!centre) {
+            throw new Error(
+              "Couldn't locate this address. Pick one of the search suggestions, or try a nearby area or landmark.",
+            );
+          }
+          useLat = centre.lat;
+          useLng = centre.lng;
+          setLat(centre.lat);
+          setLng(centre.lng);
+        }
+      }
+      if (!useBranchId) {
+        const options = await loadBranches(useLat, useLng);
+        if (options.length === 0) {
+          throw new Error('No Job Bank branch was found near this address.');
+        }
+        useBranchId = options[0]!.id;
+        setBranchId(useBranchId);
+      }
+      // Area is a free-text input ("DHA Phase 5"), but the backend expects
+      // a master-data AREA code — sending the typed text 422s the whole
+      // save (assertCityArea). Only send it when it already looks like a
+      // code (e.g. a stored KARACHI_GULSHAN_E_IQBAL left untouched); the
+      // typed area still lives in the saved address line.
+      const areaCodeToSend =
+        area.trim() && /^[A-Z0-9_]+$/.test(area.trim().toUpperCase())
+          ? area.trim().toUpperCase()
+          : undefined;
       const { data: saved } = await apiFetch<CompanyView>('/api/v1/companies/me/head-office', {
         method: 'PUT',
         body: {
-          location: { lat, lng },
+          location: { lat: useLat, lng: useLng },
           addressLine,
-          cityCode: city,
-          areaCode: area || undefined,
-          branchId,
+          cityCode: useCityCode,
+          areaCode: areaCodeToSend,
+          branchId: useBranchId,
         },
       });
       onSaved(saved);
@@ -550,8 +672,10 @@ function LocationStep({
   }
 
   const hasCoords = lat !== 0 && lng !== 0;
-  const isReady =
-    hasCoords && addressLine.trim().length >= 5 && city.trim().length >= 2 && branchId;
+  // Address + city is enough to enable the button; save() locates the
+  // typed address when no pin was picked yet. Requiring coords + branch
+  // up front is what deadlocked the step.
+  const isReady = addressLine.trim().length >= 5 && city.trim().length >= 2;
 
   return (
     <form className="grid gap-4" onSubmit={(e) => void save(e)}>
@@ -561,7 +685,11 @@ function LocationStep({
 
       {/* Address search */}
       <div className="relative">
-        <FormField label="Search address" required>
+        {/* Not "required": this is only a search box — the saved address is
+            "Full address" below. As a required input it blocked native form
+            submission whenever it was empty, so an enabled Save button did
+            nothing on click. */}
+        <FormField label="Search address">
           <Input
             placeholder="Type your office address, e.g. DHA Phase 5, Karachi"
             value={searchQuery}
@@ -571,6 +699,7 @@ function LocationStep({
           />
         </FormField>
         {searching && <p className="text-fg-muted mt-1 text-xs">Searching…</p>}
+        {!searching && searchNote && <p className="text-fg-muted mt-1 text-xs">{searchNote}</p>}
         {showSuggestions && (
           <ul className="border-border bg-surface absolute top-full z-10 mt-1 w-full overflow-hidden rounded-xl border shadow-lg">
             {suggestions.map((r, i) => (
@@ -580,7 +709,7 @@ function LocationStep({
                   className="hover:bg-surface-muted w-full px-4 py-2.5 text-left text-sm"
                   onMouseDown={() => pickSuggestion(r)}
                 >
-                  {r.formatted}
+                  {r.display || r.addressLine}
                 </button>
               </li>
             ))}
@@ -607,7 +736,12 @@ function LocationStep({
           <Input
             placeholder="e.g. Karachi"
             value={city}
-            onChange={(e) => setCity(e.target.value)}
+            onChange={(e) => {
+              setCity(e.target.value);
+              // Typed city, not a picked suggestion — drop the old code so
+              // save() resolves the city from what is typed now.
+              setCityCode('');
+            }}
           />
         </FormField>
         <FormField label="Area">
@@ -629,6 +763,11 @@ function LocationStep({
         </FormField>
       )}
       {error && <p className="text-danger text-sm">{error}</p>}
+      {!hasCoords && isReady && (
+        <p className="text-fg-muted text-xs">
+          No suggestion picked — we&apos;ll locate this address when you save.
+        </p>
+      )}
       <Button
         type="submit"
         fullWidth

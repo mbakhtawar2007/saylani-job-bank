@@ -21,6 +21,70 @@ describe('CompanyWizard', () => {
       if (path === '/api/v1/master-data?type=INDUSTRY') {
         return { data: [{ code: 'IT', label: 'Information technology' }] };
       }
+      if (path.startsWith('/api/v1/geocode/search')) {
+        return {
+          data: [
+            {
+              lat: 24.8615,
+              lng: 67.0099,
+              addressLine: 'Zaitoon Ashraf IT Park, Mehmoodabad, Karachi',
+              cityCode: 'KARACHI',
+              cityLabel: 'Karachi',
+              display: 'Zaitoon Ashraf IT Park, Mehmoodabad, Karachi, Pakistan',
+            },
+          ],
+        };
+      }
+      if (path.startsWith('/api/v1/companies/me/branch-options')) {
+        return { data: [{ id: 'branch-1', name: 'Karachi Branch' }] };
+      }
+      if (path === '/api/v1/companies/me/head-office') {
+        return {
+          data: {
+            id: 'company-1',
+            status: 'DRAFT',
+            branch: { id: 'branch-1', name: 'Karachi Branch' },
+            details: {
+              legalName: 'Example Company',
+              tradeName: null,
+              legalStructure: 'PRIVATE_LIMITED',
+              ntn: '1234567-8',
+              registrationNo: null,
+              industryCode: 'IT',
+              sizeBand: '1_10',
+              website: null,
+              description: null,
+            },
+            contacts: [],
+            headOffice: {
+              id: 'loc-1',
+              kind: 'HEAD_OFFICE',
+              label: 'Head office',
+              addressLine: 'Zaitoon Ashraf IT Park, Mehmoodabad, Karachi',
+              cityCode: 'KARACHI',
+              areaCode: null,
+              location: { lat: 24.8615, lng: 67.0099 },
+            },
+            sites: [],
+            documents: [],
+            requiredDocuments: [],
+            missing: [],
+            verification: null,
+            editable: {
+              details: true,
+              legal: true,
+              contacts: true,
+              locations: true,
+              branch: true,
+              documents: true,
+            },
+            verifiedAt: null,
+            registrationVerifiedSignedAt: null,
+            registrationVerifiedSignedBy: null,
+            createdAt: '2026-10-01T00:00:00.000Z',
+          },
+        };
+      }
       if (path === '/api/v1/companies/me/submit') {
         return {
           data: {
@@ -284,6 +348,125 @@ describe('CompanyWizard', () => {
         method: 'POST',
         body: { note: null },
       }),
+    );
+  });
+
+  // Location step: a manually typed address + city must enable Save — the
+  // old step required a picked suggestion (coords + branch) first, but
+  // search called OpenCage with an empty key so no suggestion ever
+  // appeared and the button stayed dead. Save now locates the typed
+  // address via the server geocode endpoint and picks the nearest branch.
+  it('enables Save for a typed address and locates it on save', async () => {
+    const user = userEvent.setup();
+    render(
+      <CompanyWizard
+        initialStep="location"
+        initialCompany={
+          {
+            ...infoRequestedCompany([]),
+            status: 'DRAFT',
+            verification: null,
+            headOffice: null,
+          } as never
+        }
+      />,
+    );
+
+    await user.type(screen.getByLabelText(/Full address/), 'Zaitoon Ashraf IT Park, Mehmoodabad');
+    await user.type(screen.getByLabelText(/^City/), 'Karachi');
+
+    const saveButton = screen.getByRole('button', { name: 'Save and continue' });
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    await user.click(saveButton);
+
+    await waitFor(() =>
+      expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/companies/me/head-office', {
+        method: 'PUT',
+        body: {
+          location: { lat: 24.8615, lng: 67.0099 },
+          addressLine: 'Zaitoon Ashraf IT Park, Mehmoodabad',
+          cityCode: 'KARACHI',
+          areaCode: undefined,
+          branchId: 'branch-1',
+        },
+      }),
+    );
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith('/employer/company?step=documents', {
+        scroll: false,
+      }),
+    );
+  });
+
+  // Geocode down / no result must not strand the user again: Save falls
+  // back to the typed city's centre and still picks the nearest branch.
+  it('saves with the city centre when geocode returns nothing', async () => {
+    apiFetchMock.mockImplementationOnce(async () => ({ data: [] }));
+    const user = userEvent.setup();
+    render(
+      <CompanyWizard
+        initialStep="location"
+        initialCompany={
+          {
+            ...infoRequestedCompany([]),
+            status: 'DRAFT',
+            verification: null,
+            headOffice: null,
+          } as never
+        }
+      />,
+    );
+
+    await user.type(screen.getByLabelText(/Full address/), 'Zaitoon Ashraf IT Park, Mehmoodabad');
+    await user.type(screen.getByLabelText(/^City/), 'Karachi');
+
+    await user.click(screen.getByRole('button', { name: 'Save and continue' }));
+
+    await waitFor(() =>
+      expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/companies/me/head-office', {
+        method: 'PUT',
+        body: {
+          location: { lat: 24.8607, lng: 67.0011 },
+          addressLine: 'Zaitoon Ashraf IT Park, Mehmoodabad',
+          cityCode: 'KARACHI',
+          areaCode: undefined,
+          branchId: 'branch-1',
+        },
+      }),
+    );
+  });
+
+  // Area is free text but the backend wants a master-data AREA code:
+  // sending "DHA Phase 5" as areaCode 422s the whole save.
+  it('does not send free-text area as areaCode', async () => {
+    const user = userEvent.setup();
+    render(
+      <CompanyWizard
+        initialStep="location"
+        initialCompany={
+          {
+            ...infoRequestedCompany([]),
+            status: 'DRAFT',
+            verification: null,
+            headOffice: null,
+          } as never
+        }
+      />,
+    );
+
+    await user.type(screen.getByLabelText(/Full address/), 'Zaitoon Ashraf IT Park, Mehmoodabad');
+    await user.type(screen.getByLabelText(/^City/), 'Karachi');
+    await user.type(screen.getByLabelText(/^Area/), 'DHA Phase 5');
+
+    await user.click(screen.getByRole('button', { name: 'Save and continue' }));
+
+    await waitFor(() =>
+      expect(apiFetchMock).toHaveBeenCalledWith(
+        '/api/v1/companies/me/head-office',
+        expect.objectContaining({
+          body: expect.objectContaining({ areaCode: undefined }),
+        }),
+      ),
     );
   });
 });
