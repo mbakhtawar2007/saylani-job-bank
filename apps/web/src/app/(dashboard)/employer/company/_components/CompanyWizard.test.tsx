@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as apiClientModule from '@/lib/api/client';
@@ -467,6 +467,112 @@ describe('CompanyWizard', () => {
           body: expect.objectContaining({ areaCode: undefined }),
         }),
       ),
+    );
+  });
+
+  // Documents step (migration 0040): the authorised person's CNIC is two
+  // separate uploads — front and back — not one "front or back" slot, and a
+  // phone photo named IMG_1234.jpg must upload: the old filename check
+  // ("cnic|id|nic|identity") rejected it and showed the orange warning.
+  const documentsCompany = () => ({
+    ...infoRequestedCompany([]),
+    status: 'DRAFT',
+    verification: null,
+    requiredDocuments: [
+      'AUTHORISED_PERSON_CNIC_FRONT',
+      'AUTHORISED_PERSON_CNIC_BACK',
+      'NTN_CERTIFICATE',
+    ],
+  });
+
+  it('shows separate CNIC front and back uploads with their own hints', () => {
+    render(<CompanyWizard initialStep="documents" initialCompany={documentsCompany() as never} />);
+
+    expect(screen.getByText('AUTHORISED PERSON CNIC FRONT')).toBeInTheDocument();
+    expect(screen.getByText('AUTHORISED PERSON CNIC BACK')).toBeInTheDocument();
+    expect(screen.getByText('Upload a clear photo of the front of the CNIC.')).toBeInTheDocument();
+    expect(screen.getByText('Upload a clear photo of the back of the CNIC.')).toBeInTheDocument();
+    expect(screen.queryByText('AUTHORISED PERSON CNIC')).not.toBeInTheDocument();
+    expect(screen.queryByText(/clear image of your CNIC/)).not.toBeInTheDocument();
+  });
+
+  it('uploads a CNIC front photo named IMG_1234.jpg', async () => {
+    const company = documentsCompany();
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/companies/me/documents') {
+        return {
+          data: {
+            documentId: 'doc-1',
+            upload: { url: 'https://storage.example/upload', fields: {} },
+          },
+        };
+      }
+      if (path === '/api/v1/companies/me/documents/doc-1/confirm') {
+        return {
+          data: {
+            ...company,
+            documents: [
+              {
+                id: 'doc-1',
+                typeCode: 'AUTHORISED_PERSON_CNIC_FRONT',
+                fileName: 'IMG_1234.jpg',
+                contentType: 'image/jpeg',
+                sizeBytes: 5,
+                reviewStatus: 'PENDING',
+                reviewNote: null,
+                uploadedAt: '2026-11-10T14:00:00.000Z',
+              },
+            ],
+          },
+        };
+      }
+      return { data: company };
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true })),
+    );
+    try {
+      const user = userEvent.setup();
+      render(<CompanyWizard initialStep="documents" initialCompany={company as never} />);
+
+      const inputs = screen.getAllByLabelText('Upload');
+      await user.upload(inputs[0]!, new File(['front'], 'IMG_1234.jpg', { type: 'image/jpeg' }));
+
+      await waitFor(() =>
+        expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/companies/me/documents', {
+          method: 'POST',
+          body: {
+            typeCode: 'AUTHORISED_PERSON_CNIC_FRONT',
+            fileName: 'IMG_1234.jpg',
+            contentType: 'image/jpeg',
+            sizeBytes: 5,
+          },
+        }),
+      );
+      await waitFor(() => expect(screen.getByText('Uploaded')).toBeInTheDocument());
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('rejects a PDF for the CNIC front instead of uploading it', async () => {
+    // fireEvent, not userEvent.upload: the input's accept=".jpg,.jpeg,.png"
+    // stops a PDF being picked in the file dialog at all, so the check is
+    // exercised by setting the file directly (as a drag/drop would).
+    render(<CompanyWizard initialStep="documents" initialCompany={documentsCompany() as never} />);
+
+    const inputs = screen.getAllByLabelText('Upload');
+    fireEvent.change(inputs[0]!, {
+      target: { files: [new File(['%PDF-'], 'cnic.pdf', { type: 'application/pdf' })] },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByText('Upload a JPG or PNG photo of the CNIC.')).toBeInTheDocument(),
+    );
+    expect(apiFetchMock).not.toHaveBeenCalledWith(
+      '/api/v1/companies/me/documents',
+      expect.anything(),
     );
   });
 });

@@ -783,6 +783,12 @@ function LocationStep({
 
 // ─── Documents step ─────────────────────────────────────────────────────
 
+/** What each side of the authorised person's CNIC needs (migration 0040). */
+const DOCUMENT_HINTS: Record<string, string> = {
+  AUTHORISED_PERSON_CNIC_FRONT: 'Upload a clear photo of the front of the CNIC.',
+  AUTHORISED_PERSON_CNIC_BACK: 'Upload a clear photo of the back of the CNIC.',
+};
+
 function DocumentsStep({
   company,
   onSaved,
@@ -794,7 +800,6 @@ function DocumentsStep({
   const [error, setError] = useState<string | null>(null);
   const [company_, setCompany_] = useState(company);
   const [previews, setPreviews] = useState<Record<string, string>>({});
-  const [scanWarning, setScanWarning] = useState<Record<string, string>>({});
 
   function previewFile(typeCode: string, file: File) {
     if (!file.type.startsWith('image/')) return;
@@ -806,15 +811,23 @@ function DocumentsStep({
     reader.readAsDataURL(file);
   }
 
+  // The file name is never checked: phone photos are usually named
+  // IMG_1234.jpg, and the old CNIC name check ("cnic|id|nic|identity")
+  // rejected those outright, so CNIC uploads failed while NTN/SECP went
+  // through. Only size and type are checked; the server enforces the same
+  // rules from the document type's own meta on presign.
   function validateDocument(typeCode: string, file: File): string | null {
     const MAX_SIZE = 5 * 1024 * 1024;
     if (file.size > MAX_SIZE) return 'File is too large. Maximum size is 5 MB.';
+    if (typeCode.startsWith('AUTHORISED_PERSON_CNIC')) {
+      // CNIC front/back are photos, like the applicant-side CNIC_FRONT /
+      // CNIC_BACK types: JPG or PNG only, no PDF.
+      if (!['image/jpeg', 'image/png'].includes(file.type))
+        return 'Upload a JPG or PNG photo of the CNIC.';
+      return null;
+    }
     const allowed = ['image/jpeg', 'image/png', 'application/pdf'];
     if (!allowed.includes(file.type)) return 'Only JPG, PNG, or PDF files are accepted.';
-    const nameLower = file.name.toLowerCase();
-    if (typeCode.includes('CNIC') && !nameLower.match(/cnic|id|nic|identity/)) {
-      return 'Please make sure this is a clear image of your CNIC (front or back).';
-    }
     return null;
   }
 
@@ -859,6 +872,7 @@ function DocumentsStep({
         const uploaded = company_.documents.find(
           (d) => d.typeCode === code && d.reviewStatus !== 'REJECTED',
         );
+        const hint = DOCUMENT_HINTS[code];
         return (
           <div key={code} className="border-border grid gap-2 rounded-xl border p-4">
             <div className="flex items-center justify-between">
@@ -869,6 +883,7 @@ function DocumentsStep({
                 <Badge tone="neutral">Required</Badge>
               )}
             </div>
+            {hint && <p className="text-fg-muted text-xs">{hint}</p>}
             {uploaded && (
               <p className="text-fg-muted text-xs">
                 {uploaded.fileName}
@@ -882,26 +897,25 @@ function DocumentsStep({
                 className="mt-1 h-20 w-auto rounded-lg object-cover"
               />
             )}
-            {scanWarning[code] && <p className="text-warning text-xs">{scanWarning[code]}</p>}
             <label className="cursor-pointer">
               <input
                 type="file"
-                accept=".pdf,.jpg,.jpeg,.png"
+                accept={
+                  code.startsWith('AUTHORISED_PERSON_CNIC')
+                    ? '.jpg,.jpeg,.png'
+                    : '.pdf,.jpg,.jpeg,.png'
+                }
                 className="sr-only"
                 disabled={uploading === code}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
-                  const warning = validateDocument(code, file);
-                  if (warning) {
-                    setScanWarning((w) => ({ ...w, [code]: warning }));
+                  const problem = validateDocument(code, file);
+                  if (problem) {
+                    setError(problem);
                     return;
                   }
-                  setScanWarning((w) => {
-                    const n = { ...w };
-                    delete n[code];
-                    return n;
-                  });
+                  setError(null);
                   previewFile(code, file);
                   void upload(code, file);
                 }}

@@ -402,7 +402,14 @@ export const MASTER_DATA_SEED: Record<MasterDataType, SeedItem[]> = {
       { requiredAlternativeForCategories: ['HEALTHCARE'] },
     ),
     doc('CHARACTER_CERTIFICATE', 'Police character certificate', 'APPLICANT', false),
-    doc('AUTHORISED_PERSON_CNIC', 'CNIC of authorised person', 'COMPANY', true),
+    doc('AUTHORISED_PERSON_CNIC_FRONT', 'CNIC of authorised person — front', 'COMPANY', true, [
+      'image/jpeg',
+      'image/png',
+    ]),
+    doc('AUTHORISED_PERSON_CNIC_BACK', 'CNIC of authorised person — back', 'COMPANY', true, [
+      'image/jpeg',
+      'image/png',
+    ]),
     doc('NTN_CERTIFICATE', 'NTN certificate', 'COMPANY', false),
     doc('SECP_REGISTRATION', 'SECP incorporation certificate', 'COMPANY', false),
     doc('BUSINESS_REGISTRATION', 'Business registration / chamber certificate', 'COMPANY', false),

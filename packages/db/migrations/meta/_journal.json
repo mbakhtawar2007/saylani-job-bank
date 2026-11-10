@@ -281,6 +281,13 @@
       "when": 1794246910933,
       "tag": "0039_delete_retired_job_referred_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1794321236279,
+      "tag": "0040_company_cnic_front_back",
+      "breakpoints": true
     }
   ]
 }
