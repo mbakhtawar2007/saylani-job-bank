@@ -42,7 +42,7 @@ const REJECTION_REASONS = [
 
 export function VerifierReviewPanel({
   company,
-  actorId: _actorId,
+  actorId,
 }: {
   company: CompanyView;
   actorId: string;
@@ -64,6 +64,12 @@ export function VerifierReviewPanel({
   const ver = company_.verification;
   const pill = STATUS_PILL[company_.status];
   const isClaimed = !!ver?.state && ver.state === 'UNDER_VERIFICATION';
+  // Audit 2026-11-10 (H9): "claimed" alone is not enough — Approve &
+  // verify used to render for ANY verifier once another verifier had
+  // claimed the case, and only failed server-side with a 409. Actions
+  // belong to the verifier who claimed it.
+  const isClaimedByMe = isClaimed && ver?.assignedVerifierId === actorId;
+  const isClaimedByOther = isClaimed && !isClaimedByMe;
 
   function idempotencyKey(action: string) {
     const key = idempotencyKeys.current.get(action);
@@ -192,7 +198,7 @@ export function VerifierReviewPanel({
                 Claim
               </Button>
             )}
-            {isClaimed && (
+            {isClaimedByMe && (
               <Button
                 variant="secondary"
                 loading={pending === 'release'}
@@ -329,7 +335,17 @@ export function VerifierReviewPanel({
         )}
       </section>
 
-      {isClaimed && (
+      {isClaimedByOther && (
+        <section className="border-border bg-surface grid gap-4 rounded-xl border p-5">
+          <h2 className="text-fg font-semibold">Verification actions</h2>
+          <p className="text-fg-muted text-sm">
+            This company is claimed by another verifier. Claim it from the queue first if it becomes
+            available again.
+          </p>
+        </section>
+      )}
+
+      {isClaimedByMe && (
         <section className="border-border bg-surface grid gap-4 rounded-xl border p-5">
           <h2 className="text-fg font-semibold">Verification actions</h2>
 

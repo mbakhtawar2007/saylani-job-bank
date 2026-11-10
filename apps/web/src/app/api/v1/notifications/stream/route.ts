@@ -23,7 +23,19 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const sinceParam = url.searchParams.get('since');
-  let cursor = sinceParam ? new Date(sinceParam) : new Date();
+  // Audit 2026-11-10 (M3): an unparseable `since` used to become an
+  // Invalid Date passed straight into the DB query. Reject it up front.
+  let cursor = new Date();
+  if (sinceParam) {
+    const parsed = new Date(sinceParam);
+    if (Number.isNaN(parsed.getTime())) {
+      return Response.json(
+        { error: { code: 'VALIDATION', message: 'Query param "since" must be an ISO timestamp' } },
+        { status: 400 },
+      );
+    }
+    cursor = parsed;
+  }
 
   const encoder = new TextEncoder();
 

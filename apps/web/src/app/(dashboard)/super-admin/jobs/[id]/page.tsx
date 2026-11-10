@@ -12,6 +12,8 @@ import {
 } from '@jobbank/shared';
 import { NotFoundError } from '@/domains/shared/errors';
 import { Badge } from '@/components/atoms';
+import { ArrowLeft } from 'lucide-react';
+import NextLink from 'next/link';
 import { notFound } from 'next/navigation';
 
 export const metadata = { title: 'Job detail' };
@@ -51,13 +53,22 @@ export default async function SuperAdminJobDetailPage({
 
     return (
       <div className="grid w-full gap-6">
-        <header className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-fg text-2xl font-semibold">{job.title}</h1>
-            <p className="text-fg-muted mt-1 text-sm">{job.categoryCode}</p>
-          </div>
-          <Badge tone={pill.tone}>{JOB_STATUS_LABELS[job.status]}</Badge>
-        </header>
+        <div>
+          <NextLink
+            href="/super-admin/jobs"
+            className="text-fg-muted mb-3 flex items-center gap-1 text-sm hover:underline"
+          >
+            <ArrowLeft className="size-4" />
+            Back to jobs
+          </NextLink>
+          <header className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-fg text-2xl font-semibold">{job.title}</h1>
+              <p className="text-fg-muted mt-1 text-sm">{job.categoryCode}</p>
+            </div>
+            <Badge tone={pill.tone}>{JOB_STATUS_LABELS[job.status]}</Badge>
+          </header>
+        </div>
 
         <div className="border-border bg-surface grid gap-4 rounded-xl border p-5">
           <h2 className="text-fg font-medium">Job details</h2>

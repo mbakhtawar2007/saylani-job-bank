@@ -79,6 +79,8 @@ export interface VerificationSummary {
   id: string;
   round: number;
   state: VerificationState;
+  /** Verifier the round is currently claimed by, if any (audit 2026-11-10, H9). */
+  assignedVerifierId: string | null;
   submittedAt: string;
   clockStartedAt: string;
   /** Pakistan calendar date the verifier should decide by. */
@@ -319,6 +321,7 @@ export function toVerificationSummary(row: VerificationRow, now = new Date()): V
     id: row.id,
     round: row.round,
     state: row.state,
+    assignedVerifierId: row.assignedVerifierId ?? null,
     submittedAt: row.submittedAt.toISOString(),
     clockStartedAt: row.clockStartedAt.toISOString(),
     slaDueOn: row.slaDueOn,

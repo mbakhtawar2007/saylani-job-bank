@@ -299,6 +299,38 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
           });
         }
 
+        // Audit 2026-11-10 (C1): skills, minimum experience and
+        // other-requirements were collected in this form but never saved —
+        // handleSubmit sent only the basic body, so every employer job post
+        // silently discarded them (and skill-based matching never saw them).
+        // The subroutes already existed and were only reachable directly.
+        // Requirements first (no master-data codes in what this form
+        // collects), then skills. On a restricted (published) edit only the
+        // other-requirements text may change — the server preserves the
+        // stored restricted fields and rejects anything else — and skills
+        // are staff-only, so they are not sent at all.
+        await apiFetch<JobView>(`/api/v1/jobs/me/${jobId}/requirements`, {
+          method: 'PUT',
+          body: restricted
+            ? { otherRequirements: otherRequirements.trim() || undefined }
+            : {
+                minExperienceYears: minExperience.trim() ? parseInt(minExperience, 10) : undefined,
+                otherRequirements: otherRequirements.trim() || undefined,
+              },
+        });
+        if (!restricted) {
+          await apiFetch<JobView>(`/api/v1/jobs/me/${jobId}/skills`, {
+            method: 'PUT',
+            body: {
+              skills: skills.map((s) => ({
+                skillCode: s.skillCode,
+                minLevel: s.minLevel,
+                required: s.required ?? false,
+              })),
+            },
+          });
+        }
+
         if (isNew) router.push(`/employer/jobs/${jobId}`);
         else router.refresh();
       } catch (e) {

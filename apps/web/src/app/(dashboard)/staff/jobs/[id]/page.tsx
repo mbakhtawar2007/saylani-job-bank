@@ -22,6 +22,7 @@ import {
   type SkillLevel,
 } from '@jobbank/shared';
 import {
+  ArrowLeft,
   Award,
   Banknote,
   BookOpen,
@@ -36,6 +37,7 @@ import {
   Users,
   Wrench,
 } from 'lucide-react';
+import NextLink from 'next/link';
 import { notFound } from 'next/navigation';
 
 export const metadata = { title: 'Job detail — Staff' };
@@ -183,47 +185,71 @@ export default async function StaffJobDetailPage({ params }: { params: Promise<{
 
     return (
       <div className="grid w-full gap-6">
-        {/* ── Header ─────────────────────────────────────────────── */}
-        <header className="flex flex-wrap items-start justify-between gap-4">
-          <div className="grid gap-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={pill.tone}>{JOB_STATUS_LABELS[job.status]}</Badge>
-              {job.publishedAt && (
-                <span className="text-xs" style={{ color: 'var(--fg-muted)' }}>
-                  Published {formatDate(job.publishedAt)}
-                </span>
-              )}
-              {job.closedAt && (
-                <span className="text-xs" style={{ color: 'var(--fg-muted)' }}>
-                  · Closed {formatDate(job.closedAt)}
-                </span>
-              )}
+        <div>
+          <NextLink
+            href="/staff/jobs"
+            className="text-fg-muted mb-3 flex items-center gap-1 text-sm hover:underline"
+          >
+            <ArrowLeft className="size-4" />
+            Back to jobs
+          </NextLink>
+          {/* ── Header ─────────────────────────────────────────────── */}
+          <header className="flex flex-wrap items-start justify-between gap-4">
+            <div className="grid gap-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone={pill.tone}>{JOB_STATUS_LABELS[job.status]}</Badge>
+                {job.publishedAt && (
+                  <span className="text-xs" style={{ color: 'var(--fg-muted)' }}>
+                    Published {formatDate(job.publishedAt)}
+                  </span>
+                )}
+                {job.closedAt && (
+                  <span className="text-xs" style={{ color: 'var(--fg-muted)' }}>
+                    · Closed {formatDate(job.closedAt)}
+                  </span>
+                )}
+              </div>
+              <h1 className="text-fg text-2xl font-bold">{job.title}</h1>
+              <p className="text-sm" style={{ color: 'var(--fg-muted)' }}>
+                {catLabel(job.categoryCode)}
+              </p>
             </div>
-            <h1 className="text-fg text-2xl font-bold">{job.title}</h1>
-            <p className="text-sm" style={{ color: 'var(--fg-muted)' }}>
-              {catLabel(job.categoryCode)}
-            </p>
-          </div>
-        </header>
+          </header>
+        </div>
 
-        <ReferJobToApplicantPanel
-          jobId={job.id}
-          targets={referrableApplicants.map((t) => ({
-            value: t.id,
-            label: t.identityStatus === 'UNVERIFIED' ? `${t.fullName} (unverified)` : t.fullName,
-          }))}
-          initialReferrals={applicantReferrals}
-        />
+        {/* Audit 2026-11-10 (M20): the refer panels used to render on every
+            job, and staff only learned a DRAFT/CLOSED job cannot be referred
+            from the server error after submitting. Show them only while the
+            job is OPEN. */}
+        {job.status === 'OPEN' ? (
+          <>
+            <ReferJobToApplicantPanel
+              jobId={job.id}
+              targets={referrableApplicants.map((t) => ({
+                value: t.id,
+                label:
+                  t.identityStatus === 'UNVERIFIED' ? `${t.fullName} (unverified)` : t.fullName,
+              }))}
+              initialReferrals={applicantReferrals}
+            />
 
-        <ReferApplicantToEmployerPanel
-          jobId={job.id}
-          jobTitle={job.title}
-          targets={referrableApplicants.map((t) => ({
-            value: t.id,
-            label: t.identityStatus === 'UNVERIFIED' ? `${t.fullName} (unverified)` : t.fullName,
-          }))}
-          initialReferrals={candidateReferrals}
-        />
+            <ReferApplicantToEmployerPanel
+              jobId={job.id}
+              jobTitle={job.title}
+              targets={referrableApplicants.map((t) => ({
+                value: t.id,
+                label:
+                  t.identityStatus === 'UNVERIFIED' ? `${t.fullName} (unverified)` : t.fullName,
+              }))}
+              initialReferrals={candidateReferrals}
+            />
+          </>
+        ) : (
+          <p className="text-fg-muted text-sm">
+            Referring opens when the job is published — this job is{' '}
+            {JOB_STATUS_LABELS[job.status].toLowerCase()}.
+          </p>
+        )}
 
         {/* ── Core details ───────────────────────────────────────── */}
         <Section title="Job Details" icon={Briefcase}>

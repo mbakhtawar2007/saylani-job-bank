@@ -110,15 +110,25 @@ export async function referJobToApplicant(
     .select()
     .from(jar)
     .where(and(eq(jar.jobId, job.id), eq(jar.applicantId, applicant.id)));
+  // M28 rule, mirrored: only live, open jobs go out — staff cannot refer a
+  // DRAFT job that was never published, or a CLOSED / EXPIRED / FILLED one.
+  // Audit 2026-11-10 (C-F12/D-F5): this check used to run AFTER the
+  // idempotent return, so re-posting a referral for a now-CLOSED job
+  // returned success; and a suspended company's jobs were still referrable.
+  // Both checks now run before the early return.
+  if (job.status !== 'OPEN')
+    throw new ForbiddenError('Only open jobs can be referred to applicants');
+  const [companyRow] = await db
+    .select({ status: schema.companies.status })
+    .from(schema.companies)
+    .where(eq(schema.companies.id, job.companyId));
+  if (companyRow?.status !== 'VERIFIED')
+    throw new ForbiddenError('Only verified companies can receive referred candidates');
+
   // Idempotent: the referral already exists, so there is nothing to write —
   // and runCommand would reject a write with no audit entry. The unique
   // index below is the backstop for a concurrent first referral.
   if (existing) return buildReferralView(db, existing, job.title, applicant);
-
-  // M28 rule, mirrored: only live, open jobs go out — staff cannot refer a
-  // DRAFT job that was never published, or a CLOSED / EXPIRED / FILLED one.
-  if (job.status !== 'OPEN')
-    throw new ForbiddenError('Only open jobs can be referred to applicants');
 
   let view: JobApplicantReferralView;
   try {

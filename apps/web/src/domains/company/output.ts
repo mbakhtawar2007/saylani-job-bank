@@ -55,6 +55,7 @@ export const verificationSummarySchema = z.object({
   id: z.string(),
   round: z.number(),
   state: z.enum(VERIFICATION_STATES),
+  assignedVerifierId: z.string().nullable(),
   submittedAt: z.string(),
   clockStartedAt: z.string(),
   slaDueOn: z.string(),

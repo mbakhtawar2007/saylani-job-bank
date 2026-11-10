@@ -13,6 +13,7 @@ import {
 import type { JobView } from '@/domains/job/repository';
 import { apiFetch } from '@/lib/api/client';
 import { Badge, Button, Link } from '@/components/atoms';
+import { Modal } from '@/components/molecules';
 // eslint-disable-next-line no-restricted-imports
 import { allowedTransitions } from '@/domains/job/rules';
 import { useRouter } from 'next/navigation';
@@ -63,6 +64,7 @@ export function JobDetailPanel({ job }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const transitions = allowedTransitions(job.status);
   const pill = STATUS_BADGE[job.status] ?? { tone: 'neutral' as const };
@@ -83,6 +85,9 @@ export function JobDetailPanel({ job }: Props) {
   }
 
   function handleDelete() {
+    // Audit 2026-11-10 (M19): deleting a draft was one click with no
+    // confirmation. The modal below asks first; this only runs from it.
+    setShowDeleteConfirm(false);
     startTransition(async () => {
       setError(null);
       try {
@@ -126,7 +131,12 @@ export function JobDetailPanel({ job }: Props) {
                     Edit
                   </Button>
                 </Link>
-                <Button size="sm" variant="secondary" onClick={handleDelete} disabled={pending}>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  disabled={pending}
+                >
                   <Trash2 className="text-danger mr-1.5 size-4" />
                   Delete
                 </Button>
@@ -217,6 +227,26 @@ export function JobDetailPanel({ job }: Props) {
       )}
 
       {error && <p className="text-danger text-sm">{error}</p>}
+
+      <Modal
+        open={showDeleteConfirm}
+        onOpenChange={setShowDeleteConfirm}
+        title="Delete this draft job?"
+      >
+        <div className="grid gap-4">
+          <p className="text-fg-muted text-sm">
+            “{job.title}” will be permanently deleted. This cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={() => setShowDeleteConfirm(false)}>
+              Cancel
+            </Button>
+            <Button disabled={pending} onClick={handleDelete} variant="danger">
+              {pending ? 'Deleting…' : 'Delete job'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

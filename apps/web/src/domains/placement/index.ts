@@ -8,12 +8,14 @@ import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
 import {
   ConflictError,
   ForbiddenError,
+  isUniqueViolation,
   NotFoundError,
   ValidationError,
 } from '@/domains/shared/errors';
 import { assertCityAccess, assertPermission, assertRole, type Actor } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
 import { createNotification, notifyCompanyEmployers } from '@/domains/notifications';
+import { isReferrableApplicant } from '@/domains/job';
 import type { RequestContext } from '@/domains/shared/audit';
 import { lockAndTransitionApplication } from './machine';
 import { assertFutureInterviewAt, futureInterviewAtSchema } from './interview-date';
@@ -186,10 +188,20 @@ export async function shortlistApplicant(
       id: schema.applicants.id,
       userId: schema.applicants.userId,
       branchId: schema.applicants.branchId,
+      status: schema.applicants.status,
+      identityStatus: schema.applicants.identityStatus,
     })
     .from(schema.applicants)
     .where(eq(schema.applicants.id, input.applicantId));
   if (!applicantRow) throw new NotFoundError('Applicant', input.applicantId);
+  // Audit 2026-11-10 (D-F1): the two-step flow never checked eligibility,
+  // so a RESTRICTED applicant (or REJECTED identity) could be shortlisted
+  // and forwarded to an employer — the same interim rule the direct-refer
+  // and job→applicant paths already enforce.
+  if (!isReferrableApplicant(applicantRow))
+    throw new ForbiddenError(
+      'Candidates cannot be shortlisted from restricted or rejected profiles',
+    );
   await assertCityAccess(ctx.actor, applicantRow.branchId, {
     entityType: 'applicant',
     entityId: applicantRow.id,
@@ -494,6 +506,16 @@ export async function referApplicantToEmployer(
   if (companyRow?.status !== 'VERIFIED')
     throw new ForbiddenError('Only verified companies can receive referred candidates');
 
+  // Audit 2026-11-10 (D-F1): re-check eligibility at forward time — the
+  // applicant may have become RESTRICTED (or identity REJECTED) after
+  // being shortlisted. Same interim rule as shortlist/direct-refer.
+  const [applicantRow] = await db
+    .select({ status: schema.applicants.status, identityStatus: schema.applicants.identityStatus })
+    .from(schema.applicants)
+    .where(eq(schema.applicants.id, row.applicantId));
+  if (!applicantRow || !isReferrableApplicant(applicantRow))
+    throw new ForbiddenError('Candidates cannot be referred from restricted or rejected profiles');
+
   const view = await runCommand(ctx, async ({ tx, audit }) => {
     const { to } = await lockAndTransitionApplication(tx, applicationId, 'REFER');
     const [updated] = await tx
@@ -567,19 +589,12 @@ const REFERRED_STATUSES: ApplicationStatus[] = [
 /**
  * Who staff may refer to an employer from the job page (2026-11-10): the
  * same interim "filhal" rule as job→applicant referrals — any profile that
- * is not RESTRICTED, with an identity VERIFIED or still UNVERIFIED. Mirrors
- * isReferrableApplicant in the job domain; keep both in step when the rule
- * is re-tightened.
+ * is not RESTRICTED, with an identity VERIFIED or still UNVERIFIED.
+ * Single source of truth is isReferrableApplicant in the job domain
+ * (audit 2026-11-10, M12); this alias keeps the existing export name
+ * for the direct-refer test and callers.
  */
-export function isDirectReferrableApplicant(row: {
-  status: string;
-  identityStatus: string;
-}): boolean {
-  return (
-    row.status !== 'RESTRICTED' &&
-    (row.identityStatus === 'VERIFIED' || row.identityStatus === 'UNVERIFIED')
-  );
-}
+export const isDirectReferrableApplicant = isReferrableApplicant;
 
 /**
  * Staff / Branch Admin: refer an applicant to the employer for a job,
@@ -666,34 +681,59 @@ export async function referApplicantToEmployerForJob(
 
   // No application yet: shortlist + refer in one transaction, so the
   // employer's view and the audit trail match the two-step flow exactly.
-  const view = await runCommand(ctx, async ({ tx, audit }) => {
-    const [row] = await tx
-      .insert(ap)
-      .values({
-        applicantId: input.applicantId,
-        jobId: jobRow.id,
-        branchId: jobRow.branchId,
-        createdBy: ctx.actor.userId,
-        note: input.note ?? null,
-        status: 'FORWARDED',
-      })
-      .returning();
+  // Audit 2026-11-10 (D-F7/M4): two concurrent submits race the pre-check
+  // above, so catch the unique-index violation and replay the raced row
+  // instead of surfacing a raw 500 — mirroring referJobToApplicant.
+  let view: ApplicationView;
+  try {
+    view = await runCommand(ctx, async ({ tx, audit }) => {
+      const [row] = await tx
+        .insert(ap)
+        .values({
+          applicantId: input.applicantId,
+          jobId: jobRow.id,
+          branchId: jobRow.branchId,
+          createdBy: ctx.actor.userId,
+          note: input.note ?? null,
+          status: 'FORWARDED',
+        })
+        .returning();
 
-    audit({
-      action: 'application.shortlist',
-      entityType: 'application',
-      entityId: row!.id,
-      branchId: jobRow.branchId,
-    });
-    audit({
-      action: 'application.referred',
-      entityType: 'application',
-      entityId: row!.id,
-      branchId: jobRow.branchId,
-      metadata: { jobId: jobRow.id },
-    });
-    return row!;
-  }).then(buildView);
+      audit({
+        action: 'application.shortlist',
+        entityType: 'application',
+        entityId: row!.id,
+        branchId: jobRow.branchId,
+      });
+      audit({
+        action: 'application.referred',
+        entityType: 'application',
+        entityId: row!.id,
+        branchId: jobRow.branchId,
+        metadata: { jobId: jobRow.id },
+      });
+      return row!;
+    }).then(buildView);
+  } catch (error) {
+    if (!isUniqueViolation(error, 'applications_applicant_job_uq')) throw error;
+    const [raced] = await db
+      .select()
+      .from(ap)
+      .where(and(eq(ap.applicantId, input.applicantId), eq(ap.jobId, jobId)));
+    if (!raced) throw error;
+    if (
+      raced.status === 'SHORTLISTED' ||
+      raced.status === 'INTERVIEW_SCHEDULED' ||
+      raced.status === 'INTERVIEW_POSTPONED'
+    ) {
+      return referApplicantToEmployer(ctx, raced.id, { note: input.note });
+    }
+    if (REFERRED_STATUSES.includes(raced.status))
+      throw new ConflictError(
+        'This applicant has already been referred to the employer for this job',
+      );
+    throw new ForbiddenError('Application must be shortlisted or interviewed to refer');
+  }
 
   // Notify applicant and employer users (best-effort, post-commit).
   void notifyReferral(ctx, input.applicantId, jobRow.id, view).catch((err) =>

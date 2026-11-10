@@ -107,6 +107,14 @@ export async function listJobs(
   >,
 ) {
   assertPermission(actor, 'job:read');
+  // Audit 2026-11-10 (C-F2/M1): applicants hold job:read, and this endpoint
+  // was only closed by the accident that applicants have no branchIds.
+  // Any applicant who ever gains a branch assignment (or a dual role
+  // carrying one) could enumerate every job in the city, any status.
+  // Applicants have their own path — listReferredJobsForApplicant — so
+  // deny pure applicants here outright instead of relying on empty scope.
+  if (hasRole(actor, 'APPLICANT') && !INTERNAL_ROLES.some((role) => actor.roles.includes(role)))
+    throw new ForbiddenError('Applicants can only view jobs referred to them');
   const f = query.filters;
   if (f.salaryMin !== undefined && f.salaryMax !== undefined && f.salaryMin > f.salaryMax) {
     throw new ValidationError([
@@ -259,6 +267,11 @@ export async function listJobs(
 
 export async function getJobDetail(actor: Actor, jobId: string): Promise<JobView> {
   assertPermission(actor, 'job:read');
+  // Same applicant guard as listJobs (audit 2026-11-10, C-F2): the staff
+  // detail endpoint must never serve a pure applicant, whatever their
+  // branch assignment is.
+  if (hasRole(actor, 'APPLICANT') && !INTERNAL_ROLES.some((role) => actor.roles.includes(role)))
+    throw new ForbiddenError('Applicants can only view jobs referred to them');
   const row = await loadJob(db, jobId);
   // Same own-company rule as listJobs: a pure-employer actor sees only
   // their own company's jobs here.

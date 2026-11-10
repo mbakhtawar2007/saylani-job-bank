@@ -171,7 +171,7 @@ describe('GET /api/v1/applicants — search', () => {
     const { jar } = await signIn('staff.khi@jobbank.local');
     const response = await call(
       listApplicants,
-      `${PATH}?q=${applicantCnic.slice(0, 9)}&status=DRAFT`,
+      `${PATH}?q=${applicantCnic.slice(0, 9)}&status=ACTIVE`,
       { jar },
     );
     expect(response.status).toBe(200);
@@ -184,7 +184,7 @@ describe('GET /api/v1/applicants — search', () => {
     expect(row).toBeDefined();
     expect(row).toMatchObject({
       fullName: 'Jest List Applicant',
-      status: 'DRAFT',
+      status: 'ACTIVE',
       identityStatus: 'UNVERIFIED',
       branchName: 'Karachi — Gulshan-e-Iqbal',
       cityLabel: 'Karachi',

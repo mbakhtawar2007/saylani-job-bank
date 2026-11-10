@@ -183,6 +183,15 @@ export async function updateJob(
   ) {
     mergedIssues.push({ path: 'closesAt', message: 'Closing date must be in the future' });
   }
+  // Audit 2026-11-10 (C-F8): lowering vacancies below the filled count
+  // used to hit the DB check constraint as an unhandled 500. Reject it
+  // as a validation error instead.
+  if (input.vacancies !== undefined && input.vacancies < row.vacanciesFilled) {
+    mergedIssues.push({
+      path: 'vacancies',
+      message: `Vacancies cannot be less than the ${row.vacanciesFilled} already filled`,
+    });
+  }
   if (mergedIssues.length > 0) throw new ValidationError(mergedIssues);
 
   return runCommand(ctx, async ({ tx, audit }) => {
@@ -315,7 +324,9 @@ export async function transitionJobStatus(
       .set({
         status: check.to,
         publishedAt: check.to === 'OPEN' && !row.publishedAt ? now : row.publishedAt,
-        closedAt: check.to === 'CLOSED' ? now : row.closedAt,
+        // Audit 2026-11-10 (C-F6): reopening used to keep the old closedAt,
+        // so a live OPEN job rendered "Closed <old date>" in the header.
+        closedAt: check.to === 'CLOSED' ? now : check.to === 'OPEN' ? null : row.closedAt,
         reopenedAt: event === 'REOPEN' ? now : row.reopenedAt,
         updatedAt: now,
       })

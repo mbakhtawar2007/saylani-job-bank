@@ -327,6 +327,12 @@ export async function assignVerifier(
   input: { verifierId: string; reason: string },
 ): Promise<CompanyView> {
   assertPermission(ctx.actor, 'company:manage');
+  // Audit 2026-11-10 (B-H1): company:manage is also held by verifiers since
+  // their scope grew, so the permission alone no longer proves Super Admin.
+  // Only Super Admin assigns verifiers — a verifier must never be able to
+  // self-assign a case (bypassing the claim queue) or reassign one away
+  // from its assigned verifier. Mirrors transferCompany's role guard.
+  assertRole(ctx.actor, 'SUPER_ADMIN');
   // Validate the target before anything is written: the user must exist,
   // be ACTIVE, hold the VERIFIER role, work in the company's city, and pass
   // the contact-conflict check (no shared email/phone with the company's

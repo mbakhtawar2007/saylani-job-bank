@@ -1456,15 +1456,6 @@ export function RegisterApplicantDialog({
                           Draft · Applicant reference {applicant.id}
                         </p>
                       </div>
-                      <div className="flex items-center gap-2 text-[#d9e6e1]">
-                        <button
-                          type="button"
-                          aria-label="More actions"
-                          className="rounded-md border border-[#24453e] bg-[#0f2a25] p-2 text-lg leading-none"
-                        >
-                          …
-                        </button>
-                      </div>
                     </div>
                   </div>
                   <div className="rounded-2xl border border-[#2d473f] bg-[#0b201c] p-4">

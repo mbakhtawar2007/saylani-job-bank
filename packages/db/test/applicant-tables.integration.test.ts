@@ -32,11 +32,11 @@ const violates = (constraint: string) =>
   expect.objectContaining({ constraint_name: constraint }) as unknown as Error;
 
 describe('applicants', () => {
-  it('starts as an unverified DRAFT with no branch', async () => {
+  it('starts as an ACTIVE profile with no branch', async () => {
     const [row] = await app.client`
       SELECT status, identity_status, branch_id, profile_completeness FROM applicants WHERE id = ${applicantId}`;
     expect(row).toEqual({
-      status: 'DRAFT',
+      status: 'ACTIVE',
       identity_status: 'UNVERIFIED',
       branch_id: null,
       profile_completeness: 0,
@@ -49,10 +49,8 @@ describe('applicants', () => {
     ).rejects.toEqual(violates('applicants_cnic_format'));
   });
 
-  it('cannot leave DRAFT without a branch (matching is per branch)', async () => {
-    await expect(
-      app.client`UPDATE applicants SET status = 'ACTIVE' WHERE id = ${applicantId}`,
-    ).rejects.toEqual(violates('applicants_active_needs_branch'));
+  it('no longer needs a branch to be ACTIVE (DRAFT + branch gate removed in 0038)', async () => {
+    await app.client`UPDATE applicants SET status = 'ACTIVE' WHERE id = ${applicantId}`;
     await app.client`UPDATE applicants SET status = 'ACTIVE', branch_id = ${branchId} WHERE id = ${applicantId}`;
   });
 });

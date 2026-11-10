@@ -2993,7 +2993,7 @@ export default function LandingPage({
           }}
         >
           <span style={{ color: 'rgba(255,255,255,0.18)', fontSize: 13 }}>
-            © 2025 Saylani Job Bank. All rights reserved.
+            © {new Date().getFullYear()} Saylani Job Bank. All rights reserved.
           </span>
           {/* Legal links removed: no Privacy/Terms/Cookie pages exist yet. */}
           <span style={{ color: 'rgba(255,255,255,0.18)', fontSize: 13 }}>

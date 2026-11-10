@@ -19,6 +19,7 @@ import {
   type SkillLevel,
 } from '@jobbank/shared';
 import {
+  ArrowLeft,
   Award,
   Banknote,
   BookOpen,
@@ -33,6 +34,7 @@ import {
   Users,
   Wrench,
 } from 'lucide-react';
+import NextLink from 'next/link';
 import { notFound } from 'next/navigation';
 
 export const metadata = { title: 'Job detail — Branch Admin' };
@@ -179,28 +181,37 @@ export default async function BranchAdminJobDetailPage({
 
     return (
       <div className="grid w-full gap-6">
-        {/* ── Header ─────────────────────────────────────────────── */}
-        <header className="flex flex-wrap items-start justify-between gap-4">
-          <div className="grid gap-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={pill.tone}>{JOB_STATUS_LABELS[job.status]}</Badge>
-              {job.publishedAt && (
-                <span className="text-xs" style={{ color: 'var(--fg-muted)' }}>
-                  Published {formatDate(job.publishedAt)}
-                </span>
-              )}
-              {job.closedAt && (
-                <span className="text-xs" style={{ color: 'var(--fg-muted)' }}>
-                  · Closed {formatDate(job.closedAt)}
-                </span>
-              )}
+        <div>
+          <NextLink
+            href="/branch-admin/jobs"
+            className="text-fg-muted mb-3 flex items-center gap-1 text-sm hover:underline"
+          >
+            <ArrowLeft className="size-4" />
+            Back to jobs
+          </NextLink>
+          {/* ── Header ─────────────────────────────────────────────── */}
+          <header className="flex flex-wrap items-start justify-between gap-4">
+            <div className="grid gap-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone={pill.tone}>{JOB_STATUS_LABELS[job.status]}</Badge>
+                {job.publishedAt && (
+                  <span className="text-xs" style={{ color: 'var(--fg-muted)' }}>
+                    Published {formatDate(job.publishedAt)}
+                  </span>
+                )}
+                {job.closedAt && (
+                  <span className="text-xs" style={{ color: 'var(--fg-muted)' }}>
+                    · Closed {formatDate(job.closedAt)}
+                  </span>
+                )}
+              </div>
+              <h1 className="text-fg text-2xl font-bold">{job.title}</h1>
+              <p className="text-sm" style={{ color: 'var(--fg-muted)' }}>
+                {catLabel(job.categoryCode)}
+              </p>
             </div>
-            <h1 className="text-fg text-2xl font-bold">{job.title}</h1>
-            <p className="text-sm" style={{ color: 'var(--fg-muted)' }}>
-              {catLabel(job.categoryCode)}
-            </p>
-          </div>
-        </header>
+          </header>
+        </div>
 
         {/* ── Core details ───────────────────────────────────────── */}
         <Section title="Job Details" icon={Briefcase}>

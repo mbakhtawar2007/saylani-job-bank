@@ -126,8 +126,12 @@ export async function issueApplicantToken(
         const [row] = await tx
           .update(tokens)
           .set({ applicantName: input.applicantName, phone: input.phone })
-          .where(eq(tokens.id, existing.id))
+          // Audit 2026-11-10 (A-M2): the SELECT above found an ISSUED
+          // token, but it may have been completed/cancelled in between —
+          // never rewrite a COMPLETED/CANCELLED token's name/phone.
+          .where(and(eq(tokens.id, existing.id), eq(tokens.status, 'ISSUED')))
           .returning();
+        if (!row) throw new ConflictError('This token was already completed or cancelled.');
         audit({
           action: 'applicant.token_reissued',
           entityType: 'applicant_token',
@@ -228,6 +232,11 @@ export async function issueApplicantToken(
           .limit(1);
         if (winner) return { view: toView(winner, branch), reissued: true };
       }
+      // Audit 2026-11-10 (A-L3): on the final attempt a number-unique
+      // violation used to fall through as a raw Postgres 500, even though
+      // the friendly retry message below exists for exactly this case.
+      if (isUniqueViolation(error, 'branch_applicant_tokens_branch_day_number_unique'))
+        throw new ConflictError('Could not issue a token. Please try again.');
       throw error;
     }
   }

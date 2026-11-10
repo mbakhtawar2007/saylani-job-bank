@@ -252,7 +252,14 @@ export async function completenessFor(
 ): Promise<Completeness> {
   const inputs = preloaded ?? (await loadCompletenessInputs(executor, row));
   const applicantCategories = new Set(inputs.preferenceCategories);
-  const presentTypes = new Set(inputs.presentDocuments.map((d) => d.typeCode));
+  // Audit 2026-11-10 (A-H2): a REJECTED document must not satisfy
+  // completeness — a profile whose only CNIC evidence was rejected could
+  // otherwise REACTIVATE. REJECTED docs stay visible in currentDocuments
+  // (staff/applicant can still view the rejection), they just no longer
+  // count as "present" for the completeness guard.
+  const presentTypes = new Set(
+    inputs.presentDocuments.filter((d) => d.status !== 'REJECTED').map((d) => d.typeCode),
+  );
   const missingRequiredDocuments = missingApplicantDocumentRequirements(
     inputs.documentTypes.filter((t) => t.isActive).map((t) => ({ code: t.code, ...t.meta })),
     applicantCategories,
