@@ -83,7 +83,7 @@ export const JOB_TYPES = [
   'FULL_TIME',
   'PART_TIME',
   'CONTRACT',
-  'INTERNSHIP',
+  'ROTATING',
   'TEMPORARY',
   'DAILY_WAGE',
 ] as const;
@@ -93,7 +93,7 @@ export const JOB_TYPE_LABELS: Record<JobType, string> = {
   FULL_TIME: 'Full time',
   PART_TIME: 'Part time',
   CONTRACT: 'Contract',
-  INTERNSHIP: 'Internship',
+  ROTATING: 'Rotating',
   TEMPORARY: 'Temporary',
   DAILY_WAGE: 'Daily wage',
 };

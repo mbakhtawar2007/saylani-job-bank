@@ -155,7 +155,7 @@ export function StaffPostJobForm({
             description: description.trim(),
             jobType,
             shift,
-            shiftHours: shiftHours ? parseInt(shiftHours, 10) : undefined,
+            shiftHours: shift === 'ROTATING' && shiftHours ? parseInt(shiftHours, 10) : undefined,
             genderPreference,
             vacancies: parseInt(vacancies, 10),
             salaryMin: salaryMin ? parseInt(salaryMin, 10) : undefined,
@@ -253,27 +253,29 @@ export function StaffPostJobForm({
                 options={JOB_TYPE_OPTIONS}
               />
             </FormField>
-            <FormField label="Shift" required hint="Rotation shift only">
+            <FormField label="Shift" required>
               <Select
                 value={shift}
                 onChange={(e) => setShift(e.target.value)}
                 options={SHIFT_OPTIONS}
               />
             </FormField>
-            <FormField label="How many hours for that shift?" required>
-              <div className="flex items-center gap-3">
-                <Input
-                  type="number"
-                  min="1"
-                  max="24"
-                  value={shiftHours}
-                  onChange={(e) => setShiftHours(e.target.value)}
-                  placeholder="e.g. 8"
-                  className="w-28"
-                />
-                <span className="text-fg-muted text-sm">hours</span>
-              </div>
-            </FormField>
+            {shift === 'ROTATING' && (
+              <FormField label="How many hours for that shift?" required>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="number"
+                    min="1"
+                    max="24"
+                    value={shiftHours}
+                    onChange={(e) => setShiftHours(e.target.value)}
+                    placeholder="e.g. 8"
+                    className="w-28"
+                  />
+                  <span className="text-fg-muted text-sm">hours</span>
+                </div>
+              </FormField>
+            )}
             <FormField label="Gender preference">
               <Select
                 value={genderPreference}

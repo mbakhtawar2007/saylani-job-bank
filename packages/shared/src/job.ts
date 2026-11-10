@@ -254,8 +254,8 @@ export const createJobSchema = z
         message: 'Closing date must be in the future',
       });
     }
-    // Rotation shift always carries its hours.
-    if (v.shiftHours === undefined) {
+    // Hours are asked only when the shift is rotating.
+    if (v.shift === 'ROTATING' && v.shiftHours === undefined) {
       ctx.addIssue({
         code: 'custom',
         path: ['shiftHours'],

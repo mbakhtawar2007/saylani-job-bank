@@ -329,7 +329,7 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
               description: description.trim(),
               jobType,
               shift,
-              shiftHours: shiftHours ? parseInt(shiftHours, 10) : undefined,
+              shiftHours: shift === 'ROTATING' && shiftHours ? parseInt(shiftHours, 10) : undefined,
               designationCode: designationCode.trim() || undefined,
               genderPreference,
               vacancies: parseInt(vacancies, 10),
@@ -516,7 +516,7 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
                 disabled={restricted}
               />
             </FormField>
-            <FormField label="Shift" required hint="Rotation shift only">
+            <FormField label="Shift" required>
               <Select
                 options={SHIFT_OPTIONS}
                 value={shift}
@@ -526,21 +526,23 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
             </FormField>
           </div>
 
-          <FormField label="How many hours for that shift?" required hint="Hours per shift / day">
-            <div className="flex items-center gap-3">
-              <Input
-                type="number"
-                min={1}
-                max={24}
-                value={shiftHours}
-                onChange={(e) => setShiftHours(e.target.value)}
-                placeholder="e.g. 8"
-                className="w-28"
-                disabled={restricted}
-              />
-              <span className="text-fg-muted text-sm">hours</span>
-            </div>
-          </FormField>
+          {shift === 'ROTATING' && (
+            <FormField label="How many hours for that shift?" required hint="Hours per shift / day">
+              <div className="flex items-center gap-3">
+                <Input
+                  type="number"
+                  min={1}
+                  max={24}
+                  value={shiftHours}
+                  onChange={(e) => setShiftHours(e.target.value)}
+                  placeholder="e.g. 8"
+                  className="w-28"
+                  disabled={restricted}
+                />
+                <span className="text-fg-muted text-sm">hours</span>
+              </div>
+            </FormField>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <FormField label="Gender preference">
