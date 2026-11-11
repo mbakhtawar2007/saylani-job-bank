@@ -49,6 +49,8 @@ export const KNOWN_NOTIFICATION_TYPES = [
   'COMPANY_VERIFIED',
   'COMPANY_REJECTED',
   'COMPANY_INFO_REQUESTED',
+  // Audit 2026-11-11 (M-28): the user whose authenticator an admin removed.
+  'TWO_FACTOR_RESET',
 ] as const;
 
 export type NotificationType = (typeof KNOWN_NOTIFICATION_TYPES)[number];

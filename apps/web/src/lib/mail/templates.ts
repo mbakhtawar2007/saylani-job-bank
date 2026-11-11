@@ -66,6 +66,20 @@ export function signInCodeEmail(input: { code: string; expiresMinutes: number })
   };
 }
 
+/** Audit 2026-11-11 (M-28): tell the user their authenticator was removed. */
+export function twoFactorResetEmail(input: { name: string; reason: string }) {
+  const lines = [
+    `Assalam-o-Alaikum ${input.name},`,
+    `An administrator removed the authenticator (two-factor authentication) from your Saylani Job Bank account. Reason given: ${input.reason}`,
+    'You will be asked to set up two-factor authentication again at your next sign-in. If you did not ask for this, contact your branch admin immediately — someone may have changed your account without your knowledge.',
+  ];
+  return {
+    subject: 'Your Saylani Job Bank authenticator was removed',
+    text: lines.join('\n\n'),
+    html: layout('Your authenticator was removed', lines),
+  };
+}
+
 // ─── Employers (M7) ────────────────────────────────────────────────────
 
 export function signupCodeEmail(input: { code: string; expiresMinutes: number }) {

@@ -20,6 +20,9 @@ import {
 } from '@/domains/shared/errors';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
 import { likeContains } from '@/domains/shared/filters';
+import { createNotification } from '@/domains/notifications';
+import { sendMail } from '@/lib/mail/mailer';
+import { twoFactorResetEmail } from '@/lib/mail/templates';
 import { enforceRateLimit } from '@/domains/shared/rate-limit';
 import { isSuperAdmin, type Actor } from '@/domains/shared/scope';
 import { db, type DbExecutor } from '@/lib/db';
@@ -602,7 +605,9 @@ export async function resetStaffTwoFactor(
   userId: string,
   reason: string,
 ): Promise<StaffDetail> {
-  await runCommand(ctx, async ({ tx, audit }) => {
+  // The victim's contact details, returned from the transaction for the
+  // post-commit notification below (M-28).
+  const victim = await runCommand(ctx, async ({ tx, audit }) => {
     const { row, assignments } = await loadTarget(tx, ctx.actor, userId);
     assertAllowed(canManageUser(ctx.actor, userId, assignments));
     if (!row.twoFactorEnabled)
@@ -617,9 +622,26 @@ export async function resetStaffTwoFactor(
       branchId: assignments[0]?.branchId ?? null,
       reason,
     });
+    return { name: row.name, email: row.email };
   });
   // clearTrustedDevices uses the global db handle, so it runs after the
   // transaction above (sessions are revoked inside it).
   await clearTrustedDevices(userId);
+  // Audit 2026-11-11 (M-28): a 2FA reset is a security downgrade the victim
+  // must hear about — in-app notification plus email, best-effort. (The
+  // second-admin-approval part is still a design decision; see the fix log.)
+  void (async () => {
+    await createNotification(db, {
+      userId,
+      type: 'TWO_FACTOR_RESET',
+      title: 'Your authenticator was removed',
+      body: `An administrator removed two-factor authentication from your account. Reason: ${reason}. You will need to set it up again at your next sign-in — if you did not ask for this, contact your branch admin immediately.`,
+      data: { reason },
+    });
+    await sendMail({
+      to: victim.email,
+      ...twoFactorResetEmail({ name: victim.name, reason }),
+    });
+  })().catch((err) => logger.error('2fa reset victim notification failed', { userId, err }));
   return getStaffMember(ctx.actor, userId);
 }
