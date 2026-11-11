@@ -1,7 +1,7 @@
 /** Jobs domain (M8): posting, status transitions, staff board. */
 
 export { expirePastCloseJobs } from './expiry';
-export { jobMachine } from './machine';
+export { jobMachine, allowedTransitions, type JobStatusTransition } from './machine';
 export {
   assertJobLive,
   assertJobOpen,
@@ -23,7 +23,6 @@ export {
 } from './profile';
 export type { JobLocationView, JobRequirementsView, JobSkillView, JobView } from './repository';
 export {
-  allowedTransitions,
   EMPLOYER_OPEN_JOB_FIELDS,
   EMPLOYER_OPEN_REQUIREMENTS_FIELDS,
   EMPLOYER_RESTRICTED_JOB_FIELDS,
@@ -36,7 +35,6 @@ export {
   mayBypassEmployerJobRestrictions,
   STAFF_JOB_BYPASS_ROLES,
   type JobEditability,
-  type JobStatusTransition,
 } from './rules';
 export {
   forceCloseJob,

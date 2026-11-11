@@ -147,25 +147,6 @@ export function employerMayEditJobSubResource(roles: readonly Role[], status: Jo
   return mayBypassEmployerJobRestrictions(roles) || !isEmployerRestrictedJobStatus(status);
 }
 
-/** Transitions the employer is allowed to trigger. */
-export type JobStatusTransition = 'publish' | 'pause' | 'resume' | 'close' | 'reopen';
-
-export function allowedTransitions(status: JobStatus): JobStatusTransition[] {
-  switch (status) {
-    case 'DRAFT':
-      return ['publish'];
-    case 'OPEN':
-      return ['pause', 'close'];
-    case 'PAUSED':
-      return ['resume', 'close'];
-    case 'CLOSED':
-      return ['reopen'];
-    case 'FILLED':
-    case 'EXPIRED':
-      return [];
-  }
-}
-
 // ─── Shared update validation (audit 2026-11-11, M-25) ────────────────────
 // The employer path (profile.ts updateJob) used to own the merged-value
 // checks while the staff path (staff.ts staffUpdateJob) wrote input straight

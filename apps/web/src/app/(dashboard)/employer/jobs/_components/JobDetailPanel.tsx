@@ -14,8 +14,12 @@ import type { JobView } from '@/domains/job/repository';
 import { apiFetch } from '@/lib/api/client';
 import { Badge, Button, Link } from '@/components/atoms';
 import { Modal } from '@/components/molecules';
+// The job barrel re-exports server-only modules (profile.ts, staff.ts), so
+// a client component cannot import from '@/domains/job' — webpack pulls the
+// whole barrel graph and the build fails on 'server-only'. Import the
+// client-safe machine module directly instead.
 // eslint-disable-next-line no-restricted-imports
-import { allowedTransitions } from '@/domains/job/rules';
+import { allowedTransitions } from '@/domains/job/machine';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Pencil, Trash2, Users } from 'lucide-react';
 

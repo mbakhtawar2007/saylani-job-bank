@@ -47,3 +47,26 @@ export const jobMachine = defineMachine<JobStatus, string, Record<never, never>,
     { from: ['OPEN', 'PAUSED'], event: 'EXPIRE', to: 'EXPIRED' },
   ],
 });
+
+/** Transitions the employer is allowed to trigger from a given status. */
+// Audit 2026-11-11 (M-25 follow-up): this lives here — not in rules.ts —
+// because rules.ts imports server-only settings helpers, and the employer
+// job panel (a client component) needs this function. A client import of
+// rules.ts breaks the build via 'server-only'.
+export type JobStatusTransition = 'publish' | 'pause' | 'resume' | 'close' | 'reopen';
+
+export function allowedTransitions(status: JobStatus): JobStatusTransition[] {
+  switch (status) {
+    case 'DRAFT':
+      return ['publish'];
+    case 'OPEN':
+      return ['pause', 'close'];
+    case 'PAUSED':
+      return ['resume', 'close'];
+    case 'CLOSED':
+      return ['reopen'];
+    case 'FILLED':
+    case 'EXPIRED':
+      return [];
+  }
+}
