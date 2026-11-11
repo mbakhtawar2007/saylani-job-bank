@@ -23,6 +23,16 @@ export const jobMachine = defineMachine<JobStatus, string, Record<never, never>,
       to: 'CLOSED',
       actors: ['BRANCH_ADMIN', 'SUPER_ADMIN', 'VERIFIER'],
     },
+    // Audit 2026-11-11 (L-04): staff-side archive. FORCE_CLOSE is
+    // BA/SA/VERIFIER only, but STAFF also holds job:manage and archives
+    // from the job board, so archiving gets its own event — live jobs
+    // only. A never-published DRAFT cannot be archived to CLOSED.
+    {
+      from: ['OPEN', 'PAUSED'],
+      event: 'ARCHIVE',
+      to: 'CLOSED',
+      actors: ['STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN', 'VERIFIER'],
+    },
     { from: 'PAUSED', event: 'RESUME', to: 'OPEN', actors: ['EMPLOYER'] },
     { from: 'CLOSED', event: 'REOPEN', to: 'OPEN', actors: ['EMPLOYER'] },
     // System events (filled by matching, expired by scheduler)

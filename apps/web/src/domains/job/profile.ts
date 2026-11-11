@@ -20,55 +20,24 @@ import { runCommand } from '@/domains/shared/audit';
 import { ForbiddenError, NotFoundError, ValidationError } from '@/domains/shared/errors';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
 import { assertPermission, type Actor } from '@/domains/shared/scope';
-import { assertActiveMasterData, findMasterDataByCodes } from '@/domains/settings';
-import { db, type DbExecutor } from '@/lib/db';
+import { assertActiveMasterData } from '@/domains/settings';
+import { db } from '@/lib/db';
 import type { RequestContext } from '@/domains/shared/audit';
 import { jobMachine } from './machine';
 import { buildJobView, j, jl, jr, js, loadJob, jobsByCompany, type JobView } from './repository';
 import {
+  assertDesignationSalaryRange,
+  assertJobUpdateReferencesValid,
+  assertMergedJobUpdateValid,
   employerMayEditJobSubResource,
   employerRestrictedRequirementsFields,
   employerRestrictedUpdateFields,
   jobEditability,
   mayBypassEmployerJobRestrictions,
+  mergedMedicalCoverage,
 } from './rules';
 
 type SignedIn = RequestContext & { actor: Actor };
-
-/**
- * Salary must correspond to the designation (2026-11-10): when the
- * designation exists in DESIGNATION master data with a salary range, the
- * job's salary must fall inside it. A designation code with no master-data
- * row (free text, until the user supplies the designation list) cannot be
- * range-checked, so it passes — the check is scaffolding, not a block.
- */
-async function assertDesignationSalaryRange(
-  tx: DbExecutor,
-  designationCode: string | null | undefined,
-  salaryMin: number | null | undefined,
-  salaryMax: number | null | undefined,
-): Promise<void> {
-  if (!designationCode) return;
-  const [item] = await findMasterDataByCodes('DESIGNATION', [designationCode], tx);
-  if (!item) return;
-  const meta = (item.meta ?? {}) as { salaryMin?: unknown; salaryMax?: unknown };
-  const rangeMin = typeof meta.salaryMin === 'number' ? meta.salaryMin : null;
-  const rangeMax = typeof meta.salaryMax === 'number' ? meta.salaryMax : null;
-  const issues: { path: string; message: string }[] = [];
-  if (rangeMin !== null && salaryMin != null && salaryMin < rangeMin) {
-    issues.push({
-      path: 'salaryMin',
-      message: `Minimum salary for ${item.label} is PKR ${rangeMin.toLocaleString('en-PK')}`,
-    });
-  }
-  if (rangeMax !== null && salaryMax != null && salaryMax > rangeMax) {
-    issues.push({
-      path: 'salaryMax',
-      message: `Maximum salary for ${item.label} is PKR ${rangeMax.toLocaleString('en-PK')}`,
-    });
-  }
-  if (issues.length > 0) throw new ValidationError(issues);
-}
 
 /** Legacy cover value for a job: explicit value wins, else derived from the OPD / IPD limits. */
 function resolveMedicalCoverage(input: {
@@ -225,64 +194,18 @@ export async function updateJob(
     );
   }
 
-  // M16: the salary refine must run against the MERGED (stored + incoming)
-  // values — updateJobSchema is a bare .partial(), so a PATCH that only
-  // sets salaryMin above the stored salaryMax would otherwise pass. A new
-  // closesAt must be in the future; an untouched stored value is left alone.
-  const mergedMin = input.salaryMin ?? row.salaryMin ?? null;
-  const mergedMax = input.salaryMax ?? row.salaryMax ?? null;
-  const mergedIssues: { path: string; message: string }[] = [];
-  if (mergedMin !== null && mergedMax !== null && mergedMin > mergedMax) {
-    mergedIssues.push({
-      path: 'salaryMin',
-      message: 'Minimum salary must not be more than maximum salary',
-    });
-  }
-  if (
-    input.closesAt !== undefined &&
-    input.closesAt !== null &&
-    new Date(input.closesAt).getTime() <= Date.now()
-  ) {
-    mergedIssues.push({ path: 'closesAt', message: 'Closing date must be in the future' });
-  }
-  // Audit 2026-11-10 (C-F8): lowering vacancies below the filled count
-  // used to hit the DB check constraint as an unhandled 500. Reject it
-  // as a validation error instead.
-  if (input.vacancies !== undefined && input.vacancies < row.vacanciesFilled) {
-    mergedIssues.push({
-      path: 'vacancies',
-      message: `Vacancies cannot be less than the ${row.vacanciesFilled} already filled`,
-    });
-  }
-  if (mergedIssues.length > 0) throw new ValidationError(mergedIssues);
+  // M16 / audit 2026-11-11 (M-25): the salary refine must run against the
+  // MERGED (stored + incoming) values — updateJobSchema is a bare .partial(),
+  // so a PATCH that only sets salaryMin above the stored salaryMax would
+  // otherwise pass. Shared with the staff path (rules.ts).
+  assertMergedJobUpdateValid(input, row);
 
   return runCommand(ctx, async ({ tx, audit }) => {
-    // H13: a changed category must be a real, active master-data code.
-    if (input.categoryCode !== undefined) {
-      await assertActiveMasterData(tx, 'JOB_CATEGORY', [input.categoryCode], () => 'categoryCode');
-    }
-    // Salary must correspond to the (possibly changed) designation, checked
-    // against the merged salary/designation, like the merged salary range above.
-    if (
-      input.designationCode !== undefined ||
-      input.salaryMin !== undefined ||
-      input.salaryMax !== undefined
-    ) {
-      await assertDesignationSalaryRange(
-        tx,
-        input.designationCode ?? row.designationCode,
-        mergedMin,
-        mergedMax,
-      );
-    }
+    // H13 / M-25: category + designation-range checks, shared with the
+    // staff path (rules.ts).
+    await assertJobUpdateReferencesValid(tx, input, row);
     // A changed OPD / IPD limit re-derives the legacy cover label.
-    const derivedCoverage =
-      input.opdLimit !== undefined || input.ipdLimit !== undefined
-        ? deriveMedicalCoverage(
-            input.opdLimit ?? row.opdLimit ?? null,
-            input.ipdLimit ?? row.ipdLimit ?? null,
-          )
-        : undefined;
+    const derivedCoverage = mergedMedicalCoverage(input, row);
     const [updated] = await tx
       .update(j)
       .set({

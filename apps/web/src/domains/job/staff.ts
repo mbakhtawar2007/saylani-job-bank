@@ -43,6 +43,12 @@ import {
 import { schema } from '@jobbank/db';
 import { buildJobView, j, jr, loadJob, type JobView } from './repository';
 import { jobMachine } from './machine';
+import {
+  assertJobUpdateReferencesValid,
+  assertMergedJobUpdateValid,
+  mapJobCheckViolation,
+  mergedMedicalCoverage,
+} from './rules';
 
 type SignedIn = RequestContext & { actor: Actor };
 
@@ -585,23 +591,44 @@ export async function staffUpdateJob(
       throw new ForbiddenError('A completed job cannot be edited');
     }
 
+    // Audit 2026-11-11 (M-25): the same merged-value checks the employer
+    // path enforces (salary order, future closesAt, vacancies >= filled) —
+    // previously this function wrote input straight to the DB and a bad
+    // value surfaced as a raw 500 from the check constraints.
+    assertMergedJobUpdateValid(input, row);
+    // H13 + designation range, same as the employer path.
+    await assertJobUpdateReferencesValid(tx, input, row);
+    // A changed OPD / IPD limit re-derives the legacy cover label, as the
+    // employer path does.
+    const derivedCoverage = mergedMedicalCoverage(input, row);
+
     const before = Object.fromEntries(
       Object.keys(input).map((field) => [field, row[field as keyof typeof row]]),
     );
-    const [saved] = await tx
-      .update(j)
-      .set({
-        ...input,
-        closesAt:
-          input.closesAt === undefined
-            ? undefined
-            : input.closesAt
-              ? new Date(input.closesAt)
-              : null,
-        updatedAt: new Date(),
-      })
-      .where(eq(j.id, jobId))
-      .returning();
+    let saved;
+    try {
+      [saved] = await tx
+        .update(j)
+        .set({
+          ...input,
+          closesAt:
+            input.closesAt === undefined
+              ? undefined
+              : input.closesAt
+                ? new Date(input.closesAt)
+                : null,
+          ...(derivedCoverage !== undefined && { medicalCoverage: derivedCoverage }),
+          updatedAt: new Date(),
+        })
+        .where(eq(j.id, jobId))
+        .returning();
+    } catch (error) {
+      // A race the pre-checks cannot close (e.g. a vacancy filling between
+      // the check and the write) surfaces as a 422 on the field, not a 500.
+      const mapped = mapJobCheckViolation(error);
+      if (mapped) throw mapped;
+      throw error;
+    }
     audit({
       action: 'job.staff_update',
       entityType: 'job',
@@ -638,9 +665,11 @@ export async function staffChangeJobStatus(
         entityId: row.id,
       });
     }
-    if (['FILLED', 'CLOSED', 'EXPIRED'].includes(row.status)) {
-      throw new ForbiddenError('A completed job cannot be archived');
-    }
+    // Audit 2026-11-11 (L-04): the machine is the single source of truth
+    // for status moves — archive is the ARCHIVE event (OPEN/PAUSED only),
+    // so a never-published DRAFT can no longer be archived to CLOSED.
+    const check = jobMachine.check(row.status, 'ARCHIVE', {}, ctx.actor.roles);
+    if (!check.ok) throw new ForbiddenError(check.message);
 
     const [saved] = await tx
       .update(j)

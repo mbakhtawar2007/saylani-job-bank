@@ -105,3 +105,18 @@ export function isUniqueViolation(error: unknown, constraint?: string): boolean 
   }
   return false;
 }
+
+/**
+ * True when `error` (or a wrapped cause) is a Postgres check-constraint
+ * violation — optionally on one named constraint. Use it to turn a DB
+ * backstop (e.g. a race between a pre-check and the write) into a
+ * ValidationError on the offending field instead of an unhandled 500.
+ */
+export function isCheckViolation(error: unknown, constraint?: string): boolean {
+  for (let current: unknown = error, depth = 0; current && depth < 5; depth++) {
+    const pg = current as { code?: unknown; constraint_name?: unknown; cause?: unknown };
+    if (pg.code === '23514') return constraint === undefined || pg.constraint_name === constraint;
+    current = pg.cause;
+  }
+  return false;
+}

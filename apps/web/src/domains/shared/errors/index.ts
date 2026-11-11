@@ -4,6 +4,7 @@ export {
   DomainError,
   ForbiddenError,
   InvalidTransitionError,
+  isCheckViolation,
   isUniqueViolation,
   NotFoundError,
   RateLimitedError,
