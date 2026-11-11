@@ -234,7 +234,7 @@ describe('first-counter applicant tokens', () => {
     const cnic = randomCnic();
     const issued = await issue(khi, cnic);
     expect(issued.status).toBe(201);
-    await owner`UPDATE branch_applicant_tokens SET expires_at = now() - interval '1 hour' WHERE id = ${issued.body.data.id}`;
+    await owner`UPDATE branch_applicant_tokens SET expires_at = now() - interval '1 hour', issued_at = now() - interval '2 hours' WHERE id = ${issued.body.data.id}`;
 
     const found = await lookup(`?tokenCode=${issued.body.data.tokenCode}`);
     expect(found.body.data[0]).toMatchObject({ status: 'ISSUED', expired: true });
@@ -263,7 +263,7 @@ describe('first-counter applicant tokens', () => {
     const cnic = randomCnic();
     const issued = await issue(khi, cnic);
     expect(issued.status).toBe(201);
-    await owner`UPDATE branch_applicant_tokens SET expires_at = now() - interval '1 hour' WHERE id = ${issued.body.data.id}`;
+    await owner`UPDATE branch_applicant_tokens SET expires_at = now() - interval '1 hour', issued_at = now() - interval '2 hours' WHERE id = ${issued.body.data.id}`;
 
     const again = await issue(khi, cnic);
     expect(again.status, JSON.stringify(again.body)).toBe(201);
@@ -285,7 +285,7 @@ describe('first-counter applicant tokens', () => {
     const cnic = randomCnic();
     const issued = await issue(khi, cnic);
     expect(issued.status).toBe(201);
-    await owner`UPDATE branch_applicant_tokens SET registration_day = CURRENT_DATE - 1, expires_at = now() - interval '1 day' WHERE id = ${issued.body.data.id}`;
+    await owner`UPDATE branch_applicant_tokens SET registration_day = CURRENT_DATE - 1, expires_at = now() - interval '1 day', issued_at = now() - interval '2 days' WHERE id = ${issued.body.data.id}`;
 
     // The moved token no longer counts for today, so the next issue takes
     // its number again — the same code on two days.
