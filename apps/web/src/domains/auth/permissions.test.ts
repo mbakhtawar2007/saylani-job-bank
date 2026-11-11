@@ -54,7 +54,18 @@ describe('permission matrix encodes the PRD rules', () => {
   });
 
   it('applicant records: staff correct them and admins transfer them', () => {
-    expect(holders('applicant:verify_identity')).toEqual(['STAFF']);
+    // Audit 2026-11-11 (L-22): identity verification is no longer STAFF-only.
+    // Admins already hold every other applicant power, so blocking this one
+    // was an oversight, not separation of duties. The can.verifyIdentity UI
+    // flag derives from this permission (applicant/staff.ts), so it mirrors
+    // automatically. Super Admin deliberately stays out of the operational
+    // referral/interview permissions (match_case:manage/refer, job:refer,
+    // interview:schedule_jobbank) — the overseer design is unchanged.
+    expect(holders('applicant:verify_identity')).toEqual([
+      'SUPER_ADMIN',
+      'BRANCH_ADMIN',
+      'STAFF',
+    ]);
     expect(holders('applicant:manage')).toEqual(['SUPER_ADMIN', 'BRANCH_ADMIN', 'STAFF']);
     expect(holders('applicant:transfer')).toEqual(['SUPER_ADMIN', 'BRANCH_ADMIN']);
     // Merge (2026-11-10): Rafeh's staff-assisted registration uses
