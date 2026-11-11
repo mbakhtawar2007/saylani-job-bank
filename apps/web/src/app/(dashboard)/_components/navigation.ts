@@ -9,10 +9,8 @@ import {
   Briefcase,
   Gauge,
   ListTree,
-  PhoneCall,
   SlidersHorizontal,
   TrendingUp,
-  UserPlus,
   UserRound,
   Users,
   type LucideIcon,
@@ -70,12 +68,6 @@ export function navigationFor(
           items: [
             overview,
             { href: '/branch-admin/applicants', label: 'Applicants', icon: Contact },
-            {
-              href: '/branch-admin/applicants/register',
-              label: 'Register candidate',
-              icon: UserPlus,
-            },
-            { href: '/branch-admin/calls', label: 'Call list', icon: PhoneCall },
             { href: '/branch-admin/employers', label: 'Act for employer', icon: Building2 },
             { href: '/branch-admin/jobs', label: 'Jobs', icon: Briefcase },
             { href: '/branch-admin/staff', label: 'Staff', icon: Users },
@@ -100,8 +92,6 @@ export function navigationFor(
           items: [
             overview,
             { href: '/staff/applicants', label: 'Applicants', icon: Contact },
-            { href: '/staff/applicants/register', label: 'Register candidate', icon: UserPlus },
-            { href: '/staff/calls', label: 'Call list', icon: PhoneCall },
             { href: '/staff/employers', label: 'Employers', icon: Building2 },
             { href: '/staff/jobs', label: 'Jobs', icon: Briefcase },
           ],
