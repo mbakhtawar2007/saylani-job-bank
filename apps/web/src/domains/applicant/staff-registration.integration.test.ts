@@ -134,11 +134,13 @@ describe('staff-assisted applicant registration', () => {
   });
 
   it('rejects unauthorized roles and duplicate phone or CNIC values', async () => {
-    const staff = await signIn('staff.lhr@jobbank.local');
+    // STAFF legitimately holds applicant:create in this fork (Rafeh merge),
+    // so it cannot be the denied caller — VERIFIER has no such permission.
+    const verifier = await signIn('verifier.khi@jobbank.local');
     const denied = await call(registerForStaff, '/api/v1/applicants/staff-register', {
       method: 'POST',
       body: registration(lhr),
-      jar: staff,
+      jar: verifier,
       headers: { 'idempotency-key': idempotencyKey() },
     });
 
