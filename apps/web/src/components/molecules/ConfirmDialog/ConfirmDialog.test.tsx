@@ -46,6 +46,33 @@ describe('ConfirmDialog', () => {
     expect(onConfirm).toHaveBeenCalledWith('too short — applicant moved city');
   });
 
+  it('requires a password and passes it on when requirePassword is set', async () => {
+    const onConfirm = vi.fn();
+    render(
+      <ConfirmDialog
+        title="Reset two-factor authentication?"
+        tone="danger"
+        confirmLabel="Reset two-factor"
+        requireReason={{ label: 'Reason', minLength: 5 }}
+        requirePassword={{ label: 'Your password' }}
+        onConfirm={onConfirm}
+        trigger={<Button>Open</Button>}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Open' }));
+    const confirm = screen.getByRole('button', { name: 'Reset two-factor' });
+    expect(confirm).toBeDisabled();
+
+    await userEvent.type(screen.getByLabelText(/Reason/), 'Lost phone');
+    expect(confirm).toBeDisabled();
+    await userEvent.type(screen.getByLabelText(/Your password/), 'correct horse battery');
+    expect(confirm).toBeEnabled();
+
+    await userEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledWith('Lost phone', 'correct horse battery');
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+  });
+
   it('stays open and shows the error when onConfirm fails', async () => {
     render(
       <ConfirmDialog

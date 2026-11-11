@@ -3,6 +3,7 @@
 import { AlertDialog } from 'radix-ui';
 import { useState } from 'react';
 import { Button } from '@/components/atoms/Button';
+import { Input } from '@/components/atoms/Input';
 import { Textarea } from '@/components/atoms/Textarea';
 import { FormField } from '../FormField';
 import type { ConfirmDialogProps } from './confirmDialog.types';
@@ -15,6 +16,7 @@ export function ConfirmDialog({
   cancelLabel = 'Cancel',
   tone = 'primary',
   requireReason,
+  requirePassword,
   onConfirm,
   trigger,
   open: controlledOpen,
@@ -23,16 +25,19 @@ export function ConfirmDialog({
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
   const [reason, setReason] = useState('');
+  const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const minLength = requireReason?.minLength ?? 1;
   const reasonOk = !requireReason || reason.trim().length >= minLength;
+  const passwordOk = !requirePassword || password.length > 0;
 
   const setOpen = (next: boolean) => {
     if (pending) return;
     if (!next) {
       setReason('');
+      setPassword('');
       setError(null);
     }
     setUncontrolledOpen(next);
@@ -40,11 +45,17 @@ export function ConfirmDialog({
   };
 
   const confirm = async () => {
-    if (!reasonOk) return;
+    if (!reasonOk || !passwordOk) return;
     setPending(true);
     setError(null);
     try {
-      await onConfirm(requireReason ? reason.trim() : undefined);
+      // Callers without requirePassword see exactly the old one-argument
+      // call; the password is only passed when the dialog asked for it.
+      if (requirePassword) {
+        await onConfirm(requireReason ? reason.trim() : undefined, password);
+      } else {
+        await onConfirm(requireReason ? reason.trim() : undefined);
+      }
       setPending(false);
       setOpen(false);
     } catch (err) {
@@ -71,6 +82,18 @@ export function ConfirmDialog({
           </div>
 
           {children}
+
+          {requirePassword && (
+            <FormField label={requirePassword.label ?? 'Your password'} required>
+              <Input
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                placeholder="Re-enter your password to confirm"
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </FormField>
+          )}
 
           {requireReason && (
             <FormField
@@ -106,7 +129,7 @@ export function ConfirmDialog({
             <Button
               variant={tone === 'danger' ? 'danger' : 'primary'}
               loading={pending}
-              disabled={!reasonOk}
+              disabled={!reasonOk || !passwordOk}
               onClick={() => void confirm()}
             >
               {confirmLabel}

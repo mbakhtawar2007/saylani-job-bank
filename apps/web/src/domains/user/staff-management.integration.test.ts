@@ -590,11 +590,20 @@ describe('managing staff accounts', () => {
     const sa = await signInAdmin('superadmin@jobbank.local');
     const person = await inviteAndActivate(sa, 'VERIFIER', LHR);
     await enrollTwoFactor(person.email, person.jar);
+    // Audit 2026-11-11 (M-28): the acting admin's password is required — a
+    // wrong password refuses the reset and leaves 2FA in place.
+    const wrongPassword = await call(reset2faRoute, '/x', {
+      method: 'POST',
+      jar: sa,
+      params: { id: person.id },
+      body: { reason: 'Lost phone', password: 'not-the-password' },
+    });
+    expect(wrongPassword.status).toBe(401);
     const reset2fa = await call(reset2faRoute, '/x', {
       method: 'POST',
       jar: sa,
       params: { id: person.id },
-      body: { reason: 'Lost phone' },
+      body: { reason: 'Lost phone', password: getSeedDevPassword() },
     });
     expect(reset2fa.body.data.twoFactorEnabled).toBe(false);
     expect((await call(me, '/api/v1/auth/me', { jar: person.jar })).status).toBe(401);

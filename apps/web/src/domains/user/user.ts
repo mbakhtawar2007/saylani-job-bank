@@ -1,4 +1,5 @@
 import 'server-only';
+import { verifyPassword } from 'better-auth/crypto';
 import { INTERNAL_ROLES, ROLES, type Role } from '@jobbank/shared';
 import { schema } from '@jobbank/db';
 import { and, asc, count, eq, exists, ilike, inArray, ne, or, sql, type SQL } from 'drizzle-orm';
@@ -16,6 +17,7 @@ import {
   ForbiddenError,
   NotFoundError,
   ScopeViolationError,
+  UnauthenticatedError,
   ValidationError,
 } from '@/domains/shared/errors';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
@@ -604,7 +606,27 @@ export async function resetStaffTwoFactor(
   ctx: SignedIn,
   userId: string,
   reason: string,
+  password: string,
 ): Promise<StaffDetail> {
+  // Audit 2026-11-11 (M-28): a 2FA reset is a security downgrade, so the
+  // acting admin must re-enter their own password — a stolen session alone
+  // must not be enough. Verified server-side against the actor's credential
+  // account, same as the login blocked-account check (auth/service.ts). The
+  // password is never logged or stored. Full dual-admin approval would need
+  // a pending-requests table + a new migration; recorded as a follow-up in
+  // the fix log, not built here.
+  const [account] = await db
+    .select({ password: schema.accounts.password })
+    .from(schema.accounts)
+    .where(
+      and(
+        eq(schema.accounts.userId, ctx.actor.userId),
+        eq(schema.accounts.providerId, 'credential'),
+      ),
+    );
+  if (!account?.password || !(await verifyPassword({ hash: account.password, password }))) {
+    throw new UnauthenticatedError('Incorrect password');
+  }
   // The victim's contact details, returned from the transaction for the
   // post-commit notification below (M-28).
   const victim = await runCommand(ctx, async ({ tx, audit }) => {

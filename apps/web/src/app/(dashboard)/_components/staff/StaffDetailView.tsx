@@ -179,14 +179,15 @@ export function StaffDetailView({
             {staff.twoFactorEnabled && (
               <ConfirmDialog
                 title="Reset two-factor authentication?"
-                description="Use this when someone lost their phone. They are signed out, and must set up an authenticator app again at their next sign-in."
+                description="Use this when someone lost their phone. They are signed out, and must set up an authenticator app again at their next sign-in. Your own password is required — a stolen session alone cannot remove someone's authenticator."
                 tone="danger"
                 confirmLabel="Reset two-factor"
                 requireReason={{ label: 'Reason', minLength: 5 }}
-                onConfirm={async (reason) => {
+                requirePassword={{ label: 'Your password' }}
+                onConfirm={async (reason, password) => {
                   await apiFetch(`/api/v1/users/${staff.id}/two-factor/reset`, {
                     method: 'POST',
-                    body: { reason },
+                    body: { reason, password },
                   });
                   toast.success('Two-factor reset');
                   refresh();
