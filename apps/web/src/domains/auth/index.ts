@@ -23,6 +23,7 @@ export {
   type SessionUser,
 } from './actor';
 export { getAuth, isPlaceholderEmail, placeholderEmailFor, SESSION_COOKIE_PREFIX } from './auth';
+export { issueOtp, OTP_MAX_ATTEMPTS, OTP_TTL_SECONDS, verifyOtpCode, type OtpCheck } from './otp';
 export { getAuthSecret } from './secret';
 export {
   requestEmployerSignupCode,

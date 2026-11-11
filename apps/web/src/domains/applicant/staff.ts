@@ -33,10 +33,11 @@ import {
   type SQL,
 } from 'drizzle-orm';
 import { z } from 'zod';
-import { isPlaceholderEmail, placeholderEmailFor } from '@/domains/auth';
+import { isPlaceholderEmail, issueOtp, placeholderEmailFor, verifyOtpCode } from '@/domains/auth';
 import { getBranchContact, type BranchContact } from '@/domains/branch';
 import { assertActiveMasterData, masterDataLabels } from '@/domains/settings';
 import { recordAudit, runCommand } from '@/domains/shared/audit';
+import { enforceRateLimit } from '@/domains/shared/rate-limit';
 import {
   ConflictError,
   ForbiddenError,
@@ -1493,7 +1494,9 @@ export async function verifyApplicantIdentity(
       // front was) threw TypeError, rolled the transaction back, and never
       // recorded the rejection. A rejection note is already required by the
       // schema, so the reason is on the verification row either way.
-      const docIds = [front, back].filter((d): d is NonNullable<typeof d> => d !== null).map((d) => d.id);
+      const docIds = [front, back]
+        .filter((d): d is NonNullable<typeof d> => d !== null)
+        .map((d) => d.id);
       if (docIds.length > 0) {
         await tx
           .update(docs)
@@ -1585,13 +1588,58 @@ export async function staffUpdateApplicant(
 }
 
 /**
+ * Step 1 of the M-21 phone-change flow: text a 6-digit code to the NEW
+ * number so it can prove itself before the profile moves to it. The number
+ * must be free (not the applicant's current one, not another account's) —
+ * checked here and re-checked under lock in changeApplicantPhone, so a code
+ * is never spent on a change that cannot happen.
+ */
+export async function requestPhoneChangeCode(
+  ctx: SignedIn,
+  applicantId: string,
+  phoneInput: string,
+): Promise<{ maskedPhone: string }> {
+  assertPermission(ctx.actor, 'applicant:manage');
+  const phone = normalizePkMobile(phoneInput);
+  if (!phone) {
+    throw new ValidationError([{ path: 'phone', message: 'Enter a Pakistani mobile number' }]);
+  }
+  await scopedApplicant(ctx.actor, applicantId);
+  await assertPhoneFreeForChange(applicantId, phone);
+  await enforceRateLimit(
+    'phone-change-code',
+    `${ctx.actor.userId}:${applicantId}`,
+    { limit: 5, windowSeconds: 3600 },
+    'Too many codes requested for this applicant. Try again in an hour.',
+  );
+  await issueOtp(phone, ctx.ip);
+  return { maskedPhone: maskPhone(phone) };
+}
+
+/** The new number must not be the applicant's current one or another account's. */
+async function assertPhoneFreeForChange(applicantId: string, phone: string): Promise<void> {
+  const row = await loadApplicant(db, applicantId);
+  const [user] = await db.select().from(schema.users).where(eq(schema.users.id, row.userId));
+  if (user!.phoneNumber === phone) throw new ConflictError('This is already their number');
+  const [taken] = await db
+    .select({ id: schema.users.id })
+    .from(schema.users)
+    .where(eq(schema.users.phoneNumber, phone));
+  if (taken) {
+    throw new ConflictError(
+      'This number is used by another account. That account must be closed first.',
+    );
+  }
+}
+
+/**
  * Account recovery (owner decision 3): the applicant lost their SIM, or registered the CNIC
  * from another number. Staff move the profile to the new number; old sessions end.
  */
 export async function changeApplicantPhone(
   ctx: SignedIn,
   applicantId: string,
-  input: { phone: string; reason: string },
+  input: { phone: string; reason: string; code: string },
 ): Promise<ApplicantStaffView> {
   assertPermission(ctx.actor, 'applicant:manage');
   const phone = normalizePkMobile(input.phone);
@@ -1599,6 +1647,28 @@ export async function changeApplicantPhone(
     throw new ValidationError([{ path: 'phone', message: 'Enter a Pakistani mobile number' }]);
   }
   await scopedApplicant(ctx.actor, applicantId);
+  // The number must still be free before the code is spent — the transaction
+  // below re-checks under lock, but a code consumed on a doomed change would
+  // force the applicant to wait for a new one.
+  await assertPhoneFreeForChange(applicantId, phone);
+  // Audit 2026-11-11 (M-21): the new number proves itself. A correct code is
+  // consumed exactly once by verifyOtpCode; a wrong, expired or locked code
+  // rejects here, and the number is never marked verified on staff say-so
+  // alone — the old code set phoneNumberVerified: true unconditionally.
+  const check = await verifyOtpCode(phone, input.code);
+  if (check !== 'ok') {
+    throw new ValidationError([
+      {
+        path: 'code',
+        message:
+          check === 'expired'
+            ? 'The code has expired — request a new one'
+            : check === 'locked'
+              ? 'Too many wrong attempts — request a new code'
+              : 'The code is incorrect',
+      },
+    ]);
+  }
   try {
     await runCommand(ctx, async ({ tx, audit }) => {
       const row = await loadApplicant(tx, applicantId, { forUpdate: true });

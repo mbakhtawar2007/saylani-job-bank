@@ -56,6 +56,7 @@ export {
   listApplicants,
   markApplicantRegistrationVerifiedSigned,
   registerApplicantAtCounter,
+  requestPhoneChangeCode,
   registerApplicantForStaff,
   staffRegisterApplicant,
   staffUpdateApplicantProfile,

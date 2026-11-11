@@ -662,7 +662,17 @@ export const identityVerificationSchema = z
   });
 export type IdentityVerificationInput = z.infer<typeof identityVerificationSchema>;
 
-export const changePhoneSchema = z.object({ phone: pkMobileSchema, reason });
+export const changePhoneSchema = z.object({
+  phone: pkMobileSchema,
+  reason,
+  // Audit 2026-11-11 (M-21): the new number must prove itself — a 6-digit
+  // code texted to it (requestPhoneChangeCode), consumed here. Without this
+  // a staff account could move any applicant to an attacker-controlled
+  // number and then sign in by phone OTP.
+  code: z.string().regex(/^\d{6}$/, 'Enter the 6-digit code sent to the new number'),
+});
+/** Request the verification code for a phone change (step 1 of M-21). */
+export const requestPhoneChangeCodeSchema = z.object({ phone: pkMobileSchema });
 export const transferApplicantSchema = z.object({
   branchId: z.uuid('Choose a branch'),
   expectedBranchId: z.uuid('Invalid current branch').optional(),
