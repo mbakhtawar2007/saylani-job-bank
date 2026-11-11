@@ -256,4 +256,50 @@ describe('first-counter applicant tokens', () => {
     });
     expect(registered.status).toBe(409);
   });
+
+  // Audit 2026-11-11 (M-06): re-issuing for a person whose token expired
+  // issues a FRESH token — the dead one is auto-cancelled, never re-handed.
+  it('issues a fresh token (and auto-cancels the old one) when re-issuing after expiry', async () => {
+    const cnic = randomCnic();
+    const issued = await issue(khi, cnic);
+    expect(issued.status).toBe(201);
+    await owner`UPDATE branch_applicant_tokens SET expires_at = now() - interval '1 hour' WHERE id = ${issued.body.data.id}`;
+
+    const again = await issue(khi, cnic);
+    expect(again.status, JSON.stringify(again.body)).toBe(201);
+    expect(again.body.data.id).not.toBe(issued.body.data.id);
+    // MAX() counts the cancelled row, so the fresh token takes the next number.
+    expect(again.body.data.tokenNumber).toBe(issued.body.data.tokenNumber + 1);
+    expect(again.body.data.status).toBe('ISSUED');
+    expect(again.body.data.expired).toBe(false);
+
+    const found = await lookup(`?tokenCode=${issued.body.data.tokenCode}`);
+    expect(found.body.data).toHaveLength(2);
+    expect(found.body.data[0]).toMatchObject({ id: again.body.data.id, status: 'ISSUED' });
+    expect(found.body.data[1]).toMatchObject({ id: issued.body.data.id, status: 'CANCELLED' });
+  });
+
+  // Audit 2026-11-11 (M-07): a token code is reused every day — the lookup
+  // returns every day's token with that number, most recent first.
+  it('returns every day’s token for a reused token code, most recent first', async () => {
+    const cnic = randomCnic();
+    const issued = await issue(khi, cnic);
+    expect(issued.status).toBe(201);
+    await owner`UPDATE branch_applicant_tokens SET registration_day = CURRENT_DATE - 1, expires_at = now() - interval '1 day' WHERE id = ${issued.body.data.id}`;
+
+    // The moved token no longer counts for today, so the next issue takes
+    // its number again — the same code on two days.
+    const today = await issue(khi, randomCnic());
+    expect(today.status).toBe(201);
+    expect(today.body.data.tokenNumber).toBe(issued.body.data.tokenNumber);
+
+    const found = await lookup(`?tokenCode=${issued.body.data.tokenCode}`);
+    expect(found.body.data).toHaveLength(2);
+    expect(found.body.data[0]).toMatchObject({ id: today.body.data.id, status: 'ISSUED' });
+    expect(found.body.data[1]).toMatchObject({
+      id: issued.body.data.id,
+      status: 'ISSUED',
+      expired: true,
+    });
+  });
 });

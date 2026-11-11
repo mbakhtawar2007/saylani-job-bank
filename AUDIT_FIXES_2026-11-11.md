@@ -34,9 +34,9 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | M-03 | fixed | ff68559 — CounterRegisterForm: API issues for fields the form does not render (e.g. branchId) now fall back to the alert instead of silently dying |
 | M-04 | fixed | ff68559 — employer decision modal: note labelled required + "at least 5 characters" hint when REJECTED, Confirm disabled until ≥5 chars, maxLength 500, field issue surfaced on the note via issueFor('note') |
 | M-05 | fixed | ff68559 — shortlist dialog: error={errors.note} + maxLength 500 on the note; Refer to employer dialog: note issue surfaced on the field (noteError state) + maxLength 500 |
-| M-06 | pending | |
-| M-07 | pending | |
-| M-08 | pending | |
+| M-06 | fixed | COMMIT — expired ISSUED tokens are auto-cancelled (audited, reason 'expired') and a fresh token issued, in the existing-token branch and the race-winner path; integration tests added (NOT run here — no live DB; laptop must run tokens.integration.test.ts) |
+| M-07 | fixed | COMMIT — code lookup returns all days' tokens for the number (most recent first, limit 30); dialog shows each result's Pakistan issue date and refreshes the selected row by id; integration test added (NOT run here — laptop) |
+| M-08 | fixed | COMMIT — Print hidden for cancelled/completed/expired tokens (explanatory note instead); slip shows a Status row (CANCELLED/COMPLETED/EXPIRED — not valid) for non-live tokens, valid slips unchanged |
 | M-09 | fixed | 8edffa5 — scheduleInterview/updateInterviewStatus require live job (OPEN/PAUSED, pre-check + locked re-check); docstring corrected to Staff / Branch Admin |
 | M-10 | fixed | 8edffa5 — recordEmployerDecision sets lastCallStatus: null, so a repeat HOLD re-appears in the call list |
 | M-11 | fixed | 3a80b40 — legal correction clears registrationVerifiedSignedAt/By; verifyCompany blocks onboarded companies until a fresh mark-signed for the current round (signedAt >= round.submittedAt; resubmits reuse the round so INFO_REQUESTED flow is unaffected; employer self-registered companies exempt) |

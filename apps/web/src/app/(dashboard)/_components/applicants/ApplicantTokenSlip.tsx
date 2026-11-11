@@ -86,6 +86,21 @@ export function ApplicantTokenSlip({ token }: { token: ApplicantTokenView }) {
               {date} • {time}
             </dd>
           </div>
+          {(token.status !== 'ISSUED' || token.expired) && (
+            // Audit 2026-11-11 (M-08): a non-live slip must say so on its
+            // face — cancelled / completed / expired can never pass as a
+            // valid queue ticket. Valid slips keep the approved format.
+            <div className="token-slip__row">
+              <dt className="token-slip__key">Status</dt>
+              <dd className="token-slip__value">
+                {token.status === 'CANCELLED'
+                  ? 'CANCELLED — not valid'
+                  : token.status === 'COMPLETED'
+                    ? 'COMPLETED — not valid as a queue ticket'
+                    : 'EXPIRED — not valid'}
+              </dd>
+            </div>
+          )}
           <div className="token-slip__row">
             <dt className="token-slip__key">NIC</dt>
             <dd className="token-slip__value">{token.cnic}</dd>

@@ -23,6 +23,19 @@ const STATUS_LABELS: Record<ApplicantTokenView['status'], string> = {
 };
 
 /**
+ * Audit 2026-11-11 (M-07): token numbers reset daily, so a code lookup can
+ * return several days' tokens — the issue date is shown next to every
+ * result so staff pick the right day's slip, never the wrong person.
+ */
+const tokenDay = (token: ApplicantTokenView) =>
+  new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Karachi',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(token.issuedAt));
+
+/**
  * Step 2 token lookup / reprint (2026-11-08): find a token by its code, by
  * CNIC + branch + day, or list a whole branch-day, then reprint the approved
  * slip, cancel it, or complete the full registration for it. The slip itself
@@ -135,9 +148,12 @@ export function ApplicantTokenLookupDialog({ branches, placement = 'default' }: 
       const { data } = await apiFetch<ApplicantTokenView[]>(
         `/api/v1/applicants/tokens?tokenCode=${encodeURIComponent(selected.tokenCode)}`,
       );
-      if (data.length > 0) {
+      // The code lookup can return several days' tokens — refresh the one
+      // actually selected, not just the most recent row.
+      const refreshed = data.find((token) => token.id === selected.id);
+      if (refreshed) {
         setResults((current) =>
-          (current ?? []).map((token) => (token.id === data[0]!.id ? data[0]! : token)),
+          (current ?? []).map((token) => (token.id === refreshed.id ? refreshed : token)),
         );
       }
     } catch {
@@ -235,7 +251,8 @@ export function ApplicantTokenLookupDialog({ branches, placement = 'default' }: 
                       <span className="font-semibold">{token.tokenCode}</span>{' '}
                       <span className="text-fg-muted">
                         {token.applicantName} · {STATUS_LABELS[token.status]}
-                        {token.expired && token.status === 'ISSUED' ? ' · Expired' : ''}
+                        {token.expired && token.status === 'ISSUED' ? ' · Expired' : ''} ·{' '}
+                        {tokenDay(token)}
                       </span>
                     </button>
                   </li>
@@ -251,7 +268,8 @@ export function ApplicantTokenLookupDialog({ branches, placement = 'default' }: 
                 {STATUS_LABELS[selected.status]}
                 {selected.status === 'ISSUED' && selected.expired
                   ? ' · Expired at the end of its issue day — issue a new token instead of completing this one.'
-                  : ''}
+                  : ''}{' '}
+                · Issued {tokenDay(selected)}
                 {selected.status === 'COMPLETED' && selected.applicantId
                   ? ' · Registration completed.'
                   : ''}
@@ -267,13 +285,28 @@ export function ApplicantTokenLookupDialog({ branches, placement = 'default' }: 
               )}
               <ApplicantTokenSlip token={selected} />
               <div className="grid gap-2">
-                <Button
-                  fullWidth
-                  leftIcon={<Printer aria-hidden="true" />}
-                  onClick={() => window.print()}
-                >
-                  Print token
-                </Button>
+                {selected.status === 'ISSUED' && !selected.expired ? (
+                  <Button
+                    fullWidth
+                    leftIcon={<Printer aria-hidden="true" />}
+                    onClick={() => window.print()}
+                  >
+                    Print token
+                  </Button>
+                ) : (
+                  // Audit 2026-11-11 (M-08): a cancelled, completed or
+                  // expired slip must never reprint as a valid queue
+                  // ticket — no Print button for it, just the reason.
+                  <p className="text-fg-muted text-center text-sm">
+                    This token is{' '}
+                    {selected.status === 'CANCELLED'
+                      ? 'cancelled'
+                      : selected.status === 'COMPLETED'
+                        ? 'already completed'
+                        : 'expired'}{' '}
+                    — it cannot be reprinted as a valid queue ticket.
+                  </p>
+                )}
                 {selected.status === 'ISSUED' && !selected.expired && (
                   <Button
                     fullWidth
