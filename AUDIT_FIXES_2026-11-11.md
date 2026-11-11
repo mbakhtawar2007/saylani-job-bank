@@ -61,19 +61,19 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | M-30 | pending | |
 | M-31 | pending | |
 | M-32 | laptop-step | LAPTOP-ONLY, coordinated: renumber 0014/0015 + regenerate 22 missing snapshots. Do NOT hand-edit _journal.json |
-| M-33 | fixed | COMMIT — dummy test-only BETTER_AUTH_SECRET (41 chars, 'unit-test-secret-…') added to the vitest unit project's env, mirroring the integration project's test secret; otp.test.ts now passes (3/3) on a clean checkout |
-| M-34 | fixed | COMMIT — seed-coverage test exempts DESIGNATION (intentionally unseeded; user supplies the list/ranges). No invented designations seeded; packages/db seed test 4/4 passes |
+| M-33 | fixed | 7aff2ad — dummy test-only BETTER_AUTH_SECRET (41 chars, 'unit-test-secret-…') added to the vitest unit project's env, mirroring the integration project's test secret; otp.test.ts now passes (3/3) on a clean checkout |
+| M-34 | fixed | 7aff2ad — seed-coverage test exempts DESIGNATION (intentionally unseeded; user supplies the list/ranges). No invented designations seeded; packages/db seed test 4/4 passes |
 
 ## Low
 
 | ID | Status | Commit / note |
 |----|--------|---------------|
 | L-01 | fixed | 2547821 — CompanyWizard: noValidate on all three step forms; Details/Contacts/Location validate client-side against register/updateCompany, companyContacts and companyHeadOffice schemas with FormErrorSummary + focus + per-field errors; bare acme.com now passes native validation and is normalised server-side; non-numeric NTN flagged on the field. Note: validated payloads are sent unchanged (raw body) so server transforms still apply as before |
-| L-02 | fixed | COMMIT — token-route POST comment now says CNIC + name + phone, matching issueApplicantTokenSchema and the dialog |
+| L-02 | fixed | 7aff2ad — token-route POST comment now says CNIC + name + phone, matching issueApplicantTokenSchema and the dialog |
 | L-03 | fixed | 2547821 — one allowlist: PAKISTAN_MOBILE_PREFIXES now lives in @jobbank/shared and pkMobileSchema refines against it (0399 rejected); web isSupportedPkMobile derives from the same list; PhoneInput free-text path now nulls e164 for unlisted prefixes like the segmented path; token domain fixed via the same schema. Drift-guard test added (dropdown table == shared list). Note: companyContactSchema still uses the broad 3xx regex (company contacts, not applicant mobiles) — out of this finding's scope |
 | L-04 | pending | |
 | L-05 | remaining | Needs deployment/scheduler decision (e.g. Vercel Cron + CRON_SECRET) |
-| L-06 | fixed | COMMIT — job→applicant referral error reworded to 'Only jobs from verified companies can be referred to applicants' |
+| L-06 | fixed | 7aff2ad — job→applicant referral error reworded to 'Only jobs from verified companies can be referred to applicants' |
 | L-07 | fixed | 3a80b40 — claimCompany now re-runs the conflict check inside the transaction (autoConflictCheck/assertNoConflictOfInterest take a DbExecutor, tx passed in-tx) |
 | L-08 | fixed | 3a80b40 — resubmitOnboardedCompany + setOnboardedCompanyHeadOffice now 409 SELF_ATTESTATION when the actor onboarded the company; a colleague or Branch/Super Admin (who hold company:onboard) acts instead |
 | L-09 | fixed | 8edffa5 — jobMachine FILL now allows PAUSED → FILLED, so a paused job whose last vacancy fills becomes FILLED instead of staying PAUSED with zero free vacancies |
@@ -100,9 +100,9 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | L-30 | fixed | 851fb27 — listHolidays now takes the actor and hides inactive rows unless includeInactive + master_data:manage (management page passes includeInactive); SSE cursor advances to the OLDEST returned item so >20-in-a-window notifications are no longer dropped (same-timestamp bulk edge noted in code) |
 | L-31 | pending | |
 | L-32 | pending | |
-| L-33 | fixed (partial) | COMMIT — dead staffRegisterCompanySchema + StaffRegisterCompanyInput deleted (zero references). The two unused dialogs (RegisterApplicantDialog, ApplicantTokenLookupDialog) are KEPT, not deleted: the user's standing rule is 'delete only if user says so' — they exist for the future step-2 entry point |
+| L-33 | fixed (partial) | 7aff2ad — dead staffRegisterCompanySchema + StaffRegisterCompanyInput deleted (zero references). The two unused dialogs (RegisterApplicantDialog, ApplicantTokenLookupDialog) are KEPT, not deleted: the user's standing rule is 'delete only if user says so' — they exist for the future step-2 entry point |
 | L-34 | fixed | 2547821 — nested it() in CompanyWizard.test.tsx moved out to describe level (now 11 tests, all passing); test fixture branch id changed to a real UUID so the new Location-step client validation passes |
-| L-35 | fixed | COMMIT — empty apps/web/src/domains/decision/ and apps/web/src/domains/interview/ placeholder dirs removed (only .gitkeep, zero imports) |
+| L-35 | fixed | 7aff2ad — empty apps/web/src/domains/decision/ and apps/web/src/domains/interview/ placeholder dirs removed (only .gitkeep, zero imports) |
 | L-36 | pending | Documentation only: build-time env / SKIP_ENV_VALIDATION=1 in README/CI docs |
 | L-37 | pending | |
 
