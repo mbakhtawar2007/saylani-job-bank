@@ -11,7 +11,7 @@ import QRCode from 'qrcode';
 import { schema } from '@jobbank/db';
 import { and, eq } from 'drizzle-orm';
 import { getApplicantForStaff } from './staff';
-import { assertBranchAccess, assertPermission, type Actor } from '@/domains/shared/scope';
+import { assertBranchAccess, assertCityAccess, assertPermission, type Actor } from '@/domains/shared/scope';
 import { runCommand, type RequestContext } from '@/domains/shared/audit';
 import { NotFoundError } from '@/domains/shared/errors';
 import { masterDataLabels } from '@/domains/settings';
@@ -73,11 +73,18 @@ function newToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
-/** Reuses the active credential unless explicitly rotated by an authorized manager. */
+/**
+ * Reuses the active credential unless explicitly rotated by an authorized manager.
+ * Scope rule (audit 2026-11-11, M-23): reads are city-scoped, branch-bound
+ * writes stay exact-branch. The registration-form print flow passes 'city'
+ * (it must match the city-scoped profile read); the rotate-credential route
+ * keeps the default 'branch'.
+ */
 export async function ensureApplicantVerificationToken(
   ctx: SignedIn,
   applicantId: string,
   regenerate = false,
+  scope: 'branch' | 'city' = 'branch',
 ): Promise<string> {
   assertPermission(ctx.actor, 'applicant:manage');
   return runCommand(
@@ -89,10 +96,17 @@ export async function ensureApplicantVerificationToken(
         .where(eq(applicants.id, applicantId))
         .for('update');
       if (!applicant) throw new NotFoundError('Applicant');
-      assertBranchAccess(ctx.actor, applicant.branchId, {
-        entityType: 'applicant',
-        entityId: applicant.id,
-      });
+      if (scope === 'city') {
+        await assertCityAccess(ctx.actor, applicant.branchId, {
+          entityType: 'applicant',
+          entityId: applicant.id,
+        });
+      } else {
+        assertBranchAccess(ctx.actor, applicant.branchId, {
+          entityType: 'applicant',
+          entityId: applicant.id,
+        });
+      }
 
       const [active] = await tx
         .select()
@@ -160,7 +174,7 @@ export async function createApplicantRegistrationForm(
 
   const [labels, token] = await Promise.all([
     masterDataLabels(['EDUCATION_LEVEL', 'SKILL', 'LANGUAGE', 'CITY', 'AREA', 'JOB_CATEGORY']),
-    ensureApplicantVerificationToken(ctx, applicantId),
+    ensureApplicantVerificationToken(ctx, applicantId, false, 'city'),
   ]);
   const label = (type: keyof typeof labels, code: string | null) =>
     code ? (labels[type]?.[code] ?? 'Not available') : null;

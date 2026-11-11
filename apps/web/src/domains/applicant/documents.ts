@@ -11,7 +11,7 @@ import {
   type PresignedDocument,
 } from '@/domains/shared/documents';
 import { ConflictError, ForbiddenError, NotFoundError } from '@/domains/shared/errors';
-import { assertBranchAccess, assertPermission, type Actor } from '@/domains/shared/scope';
+import { assertCityAccess, assertPermission, type Actor } from '@/domains/shared/scope';
 import { db, type DbExecutor } from '@/lib/db';
 import {
   a,
@@ -191,7 +191,7 @@ export async function myDocumentLink(actor: Actor, documentId: string): Promise<
   return viewDocumentLink(await ownDocument(db, row, documentId), PRESENT_DOCUMENT_STATUSES);
 }
 
-/** Staff viewing an applicant's document: scoped to their branch, and always audited. */
+/** Staff viewing an applicant's document: city-scoped like the profile read (audit 2026-11-11, M-23), and always audited. */
 export async function staffDocumentLink(
   ctx: SignedIn,
   applicantId: string,
@@ -199,7 +199,7 @@ export async function staffDocumentLink(
 ): Promise<DocumentLink> {
   assertPermission(ctx.actor, 'applicant:read');
   const row = await loadApplicant(db, applicantId);
-  assertBranchAccess(ctx.actor, row.branchId, { entityType: 'applicant', entityId: row.id });
+  await assertCityAccess(ctx.actor, row.branchId, { entityType: 'applicant', entityId: row.id });
   const doc = await ownDocument(db, row, documentId);
   const link = await viewDocumentLink(doc, PRESENT_DOCUMENT_STATUSES);
   await recordAudit(ctx, {

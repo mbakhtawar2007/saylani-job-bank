@@ -45,9 +45,10 @@ import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
 import { likeContains, likeStartsWith } from '@/domains/shared/filters';
 import {
   assertBranchAccess,
+  assertCityAccess,
   assertPermission,
   assertRole,
-  branchScope,
+  cityScope,
   hasRole,
   hasPermission,
   isSuperAdmin,
@@ -162,7 +163,11 @@ export async function listCompanies(
   if (visibleStatuses.length === 0) return { items: [], pagination: paginationMeta(query, 0) };
 
   const conditions: (SQL | undefined)[] = [
-    branchScope(actor, c.branchId),
+    // Audit 2026-11-11 (L-25): city scope — the newer rule — like the
+    // verifier queue, the job list and the applicant list. Reads are
+    // city-scoped; branch-bound writes (suspend, correct, onboard, …)
+    // stay exact-branch below.
+    cityScope(actor, c.branchId),
     inArray(c.status, visibleStatuses),
     f.branchId ? eq(c.branchId, f.branchId) : undefined,
     // Staff see the companies they onboarded; Branch Admin / Super Admin see the branch.
@@ -238,7 +243,7 @@ export async function getCompanyDetail(actor: Actor, companyId: string): Promise
   const canManage = hasPermission(actor, 'company:manage');
   if (!canManage) assertPermission(actor, 'company:read');
   const row = await loadCompany(db, companyId);
-  assertBranchAccess(actor, row.branchId, { entityType: 'company', entityId: row.id });
+  await assertCityAccess(actor, row.branchId, { entityType: 'company', entityId: row.id });
   // H4: the list endpoint deliberately restricts non-managers to
   // VERIFIED/SUSPENDED; the detail endpoint must match — a DRAFT company's
   // contacts, NTN and notes are not public to company:read holders.
@@ -502,7 +507,7 @@ export async function getCompanyOnboarding(
 ): Promise<CompanyOnboarding | null> {
   assertPermission(actor, 'company:read');
   const row = await loadCompany(db, companyId);
-  assertBranchAccess(actor, row.branchId, { entityType: 'company', entityId: row.id });
+  await assertCityAccess(actor, row.branchId, { entityType: 'company', entityId: row.id });
   // Audit 2026-11-11 (L-24): same non-manager status rule as
   // getCompanyDetail — outreach notes for a DRAFT company are not open to
   // company:read holders. (Managers — SA/BA/verifier — are unaffected.)

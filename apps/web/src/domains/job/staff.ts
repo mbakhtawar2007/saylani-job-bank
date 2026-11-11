@@ -27,7 +27,6 @@ import {
   assertCityAccess,
   assertPermission,
   assertRole,
-  branchScope,
   cityScope,
   hasRole,
   isSuperAdmin,
@@ -324,7 +323,8 @@ export async function getCompanyJobDetail(actor: Actor, companyId: string, jobId
   }
   const company = await getCompanyDetail(actor, companyId);
   const row = await loadJob(db, jobId);
-  assertBranchAccess(actor, row.branchId, { entityType: 'job', entityId: row.id });
+  // Audit 2026-11-11 (L-25): city scope, like getJobDetail.
+  await assertCityAccess(actor, row.branchId, { entityType: 'job', entityId: row.id });
   if (row.companyId !== companyId || row.branchId !== company.branch?.id) {
     throw new NotFoundError('Job');
   }
@@ -346,12 +346,13 @@ export async function listCompanyJobs(actor: Actor, companyId: string): Promise<
     .from(schema.companies)
     .where(eq(schema.companies.id, companyId));
   if (!company) throw new NotFoundError('Company', companyId);
-  assertBranchAccess(actor, company.branchId, {
+  // Audit 2026-11-11 (L-25): city scope, like listJobs.
+  await assertCityAccess(actor, company.branchId, {
     entityType: 'company',
     entityId: companyId,
   });
 
-  const scope = branchScope(actor, j.branchId);
+  const scope = cityScope(actor, j.branchId);
   const rows = await db
     .select()
     .from(j)

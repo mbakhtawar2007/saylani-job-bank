@@ -13,6 +13,7 @@ import {
 import { ConflictError, ForbiddenError, NotFoundError } from '@/domains/shared/errors';
 import {
   assertBranchAccess,
+  assertCityAccess,
   assertPermission,
   hasPermission,
   isSuperAdmin,
@@ -258,7 +259,8 @@ export async function staffCompanyDocumentLink(
   const canManage = hasPermission(ctx.actor, 'company:manage');
   if (!canManage) assertPermission(ctx.actor, 'company:read');
   const row = await loadCompany(db, companyId);
-  assertBranchAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
+  // Audit 2026-11-11 (L-25): city scope, like getCompanyDetail.
+  await assertCityAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
   if (!canManage && !(PUBLIC_COMPANY_STATUSES as readonly string[]).includes(row.status)) {
     throw new ForbiddenError('This company is not yet verified');
   }
