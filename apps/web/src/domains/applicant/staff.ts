@@ -52,6 +52,7 @@ import {
   assertBranchAccess,
   assertPermission,
   assertRole,
+  cityScope as branchCityScope,
   hasPermission,
   isSuperAdmin,
   type Actor,
@@ -852,39 +853,19 @@ export async function listApplicants(
     });
   }
 
-  // City-based scoping: staff see all applicants whose city matches any city of their branches.
-  // A branch stores its city as a display name ("Rahim Yar Khan") while the applicant address
-  // stores the master-data CITY code ("RAHIM_YAR_KHAN"), so the comparison goes through the
-  // CITY label (M30) — never branch name vs city code. A Super Admin with a branch selected
-  // in the switcher sees only that branch's applicants, like every other dashboard count (H9).
+  // City-based scoping: staff see all applicants whose branch's city matches
+  // any city of their branches. Scoped on the applicant's branch (a.branchId),
+  // NOT on the address row: counter registrations create no address, and an
+  // applicant whose address city differs from their branch city must still
+  // be listed (audit 2026-11-11, H-04 — address-scoped lists hid exactly
+  // those applicants, while the detail route already scoped on branchId).
+  // A Super Admin with a branch selected in the switcher sees only that
+  // branch's applicants, like every other dashboard count (H9).
   const cityScope: SQL | undefined = isSuperAdmin(actor)
     ? actor.activeBranchId
       ? eq(a.branchId, actor.activeBranchId)
       : undefined
-    : actor.branchIds.length === 0
-      ? sql`false`
-      : exists(
-          db
-            .select({ one: sql`1` })
-            .from(schema.branches)
-            .where(
-              and(
-                inArray(schema.branches.id, actor.branchIds),
-                exists(
-                  db
-                    .select({ one: sql`1` })
-                    .from(schema.masterData)
-                    .where(
-                      and(
-                        eq(schema.masterData.type, 'CITY'),
-                        eq(schema.masterData.code, addr.cityCode),
-                        sql`upper(${schema.masterData.label}) = upper(${schema.branches.city})`,
-                      ),
-                    ),
-                ),
-              ),
-            ),
-        );
+    : branchCityScope(actor, a.branchId);
 
   const conditions: (SQL | undefined)[] = [
     cityScope,
@@ -1476,15 +1457,24 @@ export async function verifyApplicantIdentity(
     });
     await tx.update(a).set({ identityStatus: input.outcome }).where(eq(a.id, row.id));
     if (input.method === 'DOCUMENT_REVIEW') {
-      await tx
-        .update(docs)
-        .set({
-          status: input.outcome === 'VERIFIED' ? 'ACCEPTED' : 'REJECTED',
-          reviewNote: input.outcome === 'VERIFIED' ? null : input.notes,
-          reviewedBy: ctx.actor.userId,
-          reviewedAt: now,
-        })
-        .where(inArray(docs.id, [front!.id, back!.id]));
+      // Audit 2026-11-11 (H-05): only the sides that were actually uploaded
+      // get a review status. The old code asserted front!.id/back!.id, so
+      // rejecting precisely because the CNIC was never uploaded (or only the
+      // front was) threw TypeError, rolled the transaction back, and never
+      // recorded the rejection. A rejection note is already required by the
+      // schema, so the reason is on the verification row either way.
+      const docIds = [front, back].filter((d): d is NonNullable<typeof d> => d !== null).map((d) => d.id);
+      if (docIds.length > 0) {
+        await tx
+          .update(docs)
+          .set({
+            status: input.outcome === 'VERIFIED' ? 'ACCEPTED' : 'REJECTED',
+            reviewNote: input.outcome === 'VERIFIED' ? null : input.notes,
+            reviewedBy: ctx.actor.userId,
+            reviewedAt: now,
+          })
+          .where(inArray(docs.id, docIds));
+      }
     }
     audit({
       action:

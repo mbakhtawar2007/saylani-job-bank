@@ -206,6 +206,16 @@ export async function requireOwnCompany(
   actor: Actor,
   options: { forUpdate?: boolean } = {},
 ): Promise<CompanyRow> {
+  // Audit 2026-11-11 (H-03): a synthesised act-for-employer actor carries
+  // companyId but no companyMembers row (its userId is the staff member's),
+  // so the membership lookup below 404d on every /jobs/me/* route. Honour
+  // companyId when present; the membership lookup stays the fallback for
+  // real employers. companyId is only ever set by actingForEmployer
+  // (VERIFIED + city-scoped, Super Admin rejected) or from the employer's
+  // own membership, so honouring it grants nothing new.
+  if (actor.companyId) {
+    return loadCompany(executor, actor.companyId, options);
+  }
   const row = await findCompanyForUser(executor, actor.userId, options);
   if (!row) throw new NotFoundError('Company profile');
   return row;
