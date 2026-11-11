@@ -43,6 +43,7 @@ import { schema } from '@jobbank/db';
 import { buildJobView, j, jr, loadJob, type JobView } from './repository';
 import { jobMachine } from './machine';
 import {
+  assertCompanyNotSuspended,
   assertJobUpdateReferencesValid,
   assertMergedJobUpdateValid,
   mapJobCheckViolation,
@@ -591,6 +592,15 @@ export async function staffUpdateJob(
     if (['FILLED', 'CLOSED', 'EXPIRED'].includes(row.status)) {
       throw new ForbiddenError('A completed job cannot be edited');
     }
+    // Audit 2026-11-11 (L-26): suspension freezes job edits — including
+    // staff edits. The company row is read under the same transaction so a
+    // suspension landing mid-edit is honoured.
+    const [company] = await tx
+      .select({ status: schema.companies.status })
+      .from(schema.companies)
+      .where(eq(schema.companies.id, row.companyId));
+    if (!company) throw new NotFoundError('Company', row.companyId);
+    assertCompanyNotSuspended(company.status);
 
     // Audit 2026-11-11 (M-25): the same merged-value checks the employer
     // path enforces (salary order, future closesAt, vacancies >= filled) —

@@ -26,6 +26,7 @@ import type { RequestContext } from '@/domains/shared/audit';
 import { jobMachine } from './machine';
 import { buildJobView, j, jl, jr, js, loadJob, jobsByCompany, type JobView } from './repository';
 import {
+  assertCompanyNotSuspended,
   assertDesignationSalaryRange,
   assertJobUpdateReferencesValid,
   assertMergedJobUpdateValid,
@@ -172,6 +173,8 @@ export async function updateJob(
   const company = await requireOwnCompany(db, ctx.actor);
   const row = await loadJob(db, jobId);
   if (row.companyId !== company.id) throw new NotFoundError('Job', jobId);
+  // Audit 2026-11-11 (L-26): suspension freezes job edits.
+  assertCompanyNotSuspended(company.status);
   if (jobEditability(row.status) !== 'editable') {
     throw new ForbiddenError('Job can only be edited while in DRAFT, OPEN, or PAUSED status');
   }
@@ -384,6 +387,8 @@ export async function setJobLocation(
   const company = await requireOwnCompany(db, ctx.actor);
   const row = await loadJob(db, jobId);
   if (row.companyId !== company.id) throw new NotFoundError('Job', jobId);
+  // Audit 2026-11-11 (L-26): suspension freezes job edits.
+  assertCompanyNotSuspended(company.status);
   // M29: location can only change while the job is editable.
   if (jobEditability(row.status) !== 'editable') {
     throw new ForbiddenError(
@@ -463,6 +468,8 @@ export async function saveJobRequirements(
   const company = await requireOwnCompany(db, ctx.actor);
   const row = await loadJob(db, jobId);
   if (row.companyId !== company.id) throw new NotFoundError('Job', jobId);
+  // Audit 2026-11-11 (L-26): suspension freezes job edits.
+  assertCompanyNotSuspended(company.status);
   // M29: requirements can only change while the job is editable.
   if (jobEditability(row.status) !== 'editable') {
     throw new ForbiddenError(
@@ -585,6 +592,8 @@ export async function saveJobSkills(
   const company = await requireOwnCompany(db, ctx.actor);
   const row = await loadJob(db, jobId);
   if (row.companyId !== company.id) throw new NotFoundError('Job', jobId);
+  // Audit 2026-11-11 (L-26): suspension freezes job edits.
+  assertCompanyNotSuspended(company.status);
   // M29: skills can only change while the job is editable.
   if (jobEditability(row.status) !== 'editable') {
     throw new ForbiddenError(

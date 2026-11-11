@@ -1,12 +1,13 @@
 import {
   deriveMedicalCoverage,
+  type CompanyStatus,
   type JobRequirementsInput,
   type JobStatus,
   type MedicalCoverageType,
   type Role,
   type UpdateJobInput,
 } from '@jobbank/shared';
-import { isCheckViolation, ValidationError } from '@/domains/shared/errors';
+import { ForbiddenError, isCheckViolation, ValidationError } from '@/domains/shared/errors';
 import { assertActiveMasterData, findMasterDataByCodes } from '@/domains/settings';
 import type { DbExecutor } from '@/lib/db';
 
@@ -14,6 +15,21 @@ export type JobEditability = 'editable' | 'read_only';
 
 export function jobEditability(status: JobStatus): JobEditability {
   return status === 'DRAFT' || status === 'OPEN' || status === 'PAUSED' ? 'editable' : 'read_only';
+}
+
+/**
+ * Audit 2026-11-11 (L-26): suspension freezes job edits. A SUSPENDED
+ * company's jobs cannot be edited by anyone — employer or staff — until the
+ * company is reinstated. Scoped to SUSPENDED only: DRAFT / INFO_REQUESTED /
+ * REJECTED companies must still be able to edit draft jobs (normal
+ * onboarding flow) and VERIFIED companies are unaffected.
+ */
+export function assertCompanyNotSuspended(status: CompanyStatus): void {
+  if (status === 'SUSPENDED') {
+    throw new ForbiddenError(
+      'This company is suspended — its jobs cannot be edited while it is suspended',
+    );
+  }
 }
 
 // ─── Employer field restrictions (referral workflow §3) ─────────────────
