@@ -84,7 +84,7 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | L-14 | fixed | 851fb27 — invite-accept + password-reset-confirm now have the same per-token 10/15m limit as invite lookup (SHA-256 hash of the presented token) |
 | L-15 | fixed | 851fb27 — health cap 300→60/min/IP, result cached 5s, exposeErrors only in local dev (NODE_ENV === 'development') |
 | L-16 | fixed | 851fb27 — per-email login bucket now counts only FAILED attempts (consumed in failed()); per-IP bucket still gates before verification; successes never spend the budget |
-| L-17 | decision-needed | Documented deliberate fail-open behaviour; accept, do not change |
+| L-17 | no change needed | Fail-open KEPT (documented deliberate: an outage must never lock users out). Monitoring already in place — verified 2026-11-11: both failure paths log a structured warning via the existing logger (`breached-password.ts`: non-OK response logs `hibp range request failed` with status; network/timeout logs `hibp breach check failed open` with the error). No duplicate logging added; behaviour unchanged. |
 | L-18 | decision-needed | Standard practice; do not change |
 | L-19 | fixed | 50aceb5 — documented in README 'Build-time environment': never set SKIP_ENV_VALIDATION in production; the deploy checklist must assert it is unset (it bypasses validation including the secret-length rule). secret.ts still throws at startup unless the auth secret exists and is >=32 chars |
 | L-20 | fixed | 851fb27 — per-user rate limits on placement writes: shortlist 30/hr, refer-to-employer 30/hr (both paths share one bucket), refer-job-applicant 30/hr, employer-decision 30/hr, application-message 60/hr per sender+application, offer-response 10/hr per applicant |
