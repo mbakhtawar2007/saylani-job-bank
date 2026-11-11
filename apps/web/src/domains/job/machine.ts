@@ -27,6 +27,10 @@ export const jobMachine = defineMachine<JobStatus, string, Record<never, never>,
     { from: 'CLOSED', event: 'REOPEN', to: 'OPEN', actors: ['EMPLOYER'] },
     // System events (filled by matching, expired by scheduler)
     { from: 'OPEN', event: 'FILL', to: 'FILLED' },
+    // Audit 2026-11-11 (L-09): a PAUSED job whose last vacancy fills must
+    // become FILLED too — otherwise it stays PAUSED with zero free vacancies
+    // and can later be RESUMED to OPEN with nothing to fill.
+    { from: 'PAUSED', event: 'FILL', to: 'FILLED' },
     // C3: a declined offer frees the vacancy; a FILLED job whose vacancy
     // frees re-opens (closedAt is cleared by the caller).
     { from: 'FILLED', event: 'UNFILL', to: 'OPEN' },

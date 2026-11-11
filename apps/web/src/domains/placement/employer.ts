@@ -19,7 +19,13 @@ import {
   hasPermission,
   type Actor,
 } from '@/domains/shared/scope';
-import { jobMachine } from '@/domains/job';
+import {
+  assertJobLive,
+  assertVacancyAvailable,
+  jobMachine,
+  loadJob,
+  loadJobForUpdate,
+} from '@/domains/job';
 import { requireReasonCode } from '@/domains/matching';
 import { db } from '@/lib/db';
 import { formatPkMobileDisplay } from '@/lib/format/phone';
@@ -31,6 +37,7 @@ import {
   type ApplicationStatus,
   type PlacementListQuery,
 } from './index';
+import { assertFutureInterviewAt, futureInterviewAtSchema } from './interview-date';
 import { lockAndTransitionApplication } from './machine';
 
 type SignedIn = RequestContext & { actor: Actor };
@@ -507,6 +514,20 @@ export async function recordEmployerDecision(
     ]);
   }
 
+  // Audit 2026-11-11 (H-11): decisions are in-flight pipeline steps — the
+  // job must still be live (OPEN or PAUSED) and the company still VERIFIED.
+  // An employer whose company was SUSPENDED after referral, or whose job
+  // closed, must not be able to extend an offer. Re-checked under row locks
+  // inside the transaction.
+  assertJobLive(await loadJob(db, row.jobId), 'decide on this application');
+  const [companyStatusRow] = await db
+    .select({ status: schema.companies.status })
+    .from(schema.companies)
+    .where(eq(schema.companies.id, row.companyId))
+    .limit(1);
+  if (companyStatusRow?.status !== 'VERIFIED')
+    throw new ForbiddenError('Only verified companies can make hiring decisions');
+
   const event =
     input.decision === 'HOLD'
       ? 'EMPLOYER_DECIDE_HOLD'
@@ -530,6 +551,14 @@ export async function recordEmployerDecision(
   const jobTitle = jobRow?.title ?? '';
 
   const view = await runCommand(ctx, async ({ tx, audit }) => {
+    assertJobLive(await loadJobForUpdate(tx, row.jobId), 'decide on this application');
+    const [lockedCompany] = await tx
+      .select({ status: schema.companies.status })
+      .from(schema.companies)
+      .where(eq(schema.companies.id, row.companyId))
+      .for('update');
+    if (lockedCompany?.status !== 'VERIFIED')
+      throw new ForbiddenError('Only verified companies can make hiring decisions');
     const { to: newStatus } = await lockAndTransitionApplication(tx, applicationId, event);
     const [updated] = await tx
       .update(ap)
@@ -539,6 +568,10 @@ export async function recordEmployerDecision(
         employerDecisionAt: new Date(),
         employerDecisionBy: ctx.actor.userId,
         employerDecisionNote: input.note ?? null,
+        // Audit 2026-11-11 (M-10): reset so a repeat decision — a second
+        // HOLD, which leaves the status unchanged — re-appears in the call
+        // list instead of being hidden as already-called.
+        lastCallStatus: null,
         updatedAt: new Date(),
       })
       .where(eq(ap.id, applicationId))
@@ -608,6 +641,231 @@ export async function recordEmployerDecision(
     }).catch(() => null);
   }
 
+  return view;
+}
+
+// ─── Employer interviews (audit 2026-11-11, H-09) ────────────────────────
+
+/**
+ * The decided sequence is staff first, then company: JobBank staff interview
+ * (SCHEDULE_INTERVIEW) only from SHORTLISTED/INTERVIEW_* states, and the
+ * employer interview only once the candidate is FORWARDED. The machine
+ * already had the SCHEDULE_/RESCHEDULE_/POSTPONE_/CANCEL_EMPLOYER_INTERVIEW
+ * events and the employerInterviewAt/Location/Note columns — nothing ever
+ * called them, so employers could only Hold/Accept/Reject from FORWARDED.
+ *
+ * Edit rights: once the employer schedules, the employer owns the interview
+ * — only the employer (or staff acting for the employer) may reschedule,
+ * postpone or cancel it, through updateEmployerInterviewStatus below. Staff
+ * JobBank interview functions never touch the employerInterview* columns,
+ * and the machine cannot move an application back from FORWARDED to a
+ * JobBank interview state.
+ */
+export const scheduleEmployerInterviewSchema = z.object({
+  interviewAt: futureInterviewAtSchema,
+  interviewLocation: z.string().trim().min(3).max(300).optional(),
+  interviewNote: z.string().trim().max(500).optional(),
+});
+export type ScheduleEmployerInterviewInput = z.infer<typeof scheduleEmployerInterviewSchema>;
+
+export const EMPLOYER_INTERVIEW_UPDATE_STATUSES = [
+  'EMPLOYER_INTERVIEW_POSTPONED',
+  'EMPLOYER_INTERVIEW_CANCELLED',
+  'EMPLOYER_INTERVIEW_SCHEDULED',
+] as const;
+export type EmployerInterviewUpdateStatus = (typeof EMPLOYER_INTERVIEW_UPDATE_STATUSES)[number];
+
+export const updateEmployerInterviewStatusSchema = z
+  .object({
+    status: z.enum(EMPLOYER_INTERVIEW_UPDATE_STATUSES),
+    interviewAt: futureInterviewAtSchema.optional(),
+    interviewLocation: z.string().trim().max(300).optional(),
+    interviewNote: z.string().trim().max(500).optional(),
+  })
+  .superRefine((v, ctx) => {
+    // Rescheduling back to SCHEDULED without a new date would silently keep
+    // the old date; the new date is required (same rule as JobBank interviews).
+    if (v.status === 'EMPLOYER_INTERVIEW_SCHEDULED' && !v.interviewAt) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['interviewAt'],
+        message: 'Provide a new interview date & time when rescheduling',
+      });
+    }
+  });
+export type UpdateEmployerInterviewStatusInput = z.infer<
+  typeof updateEmployerInterviewStatusSchema
+>;
+
+const EMPLOYER_INTERVIEW_STATES: ApplicationStatus[] = [
+  'EMPLOYER_INTERVIEW_SCHEDULED',
+  'EMPLOYER_INTERVIEW_POSTPONED',
+  'EMPLOYER_INTERVIEW_CANCELLED',
+];
+
+async function assertOwnCompanyVerified(companyId: string): Promise<void> {
+  const [companyRow] = await db
+    .select({ status: schema.companies.status })
+    .from(schema.companies)
+    .where(eq(schema.companies.id, companyId))
+    .limit(1);
+  if (companyRow?.status !== 'VERIFIED')
+    throw new ForbiddenError('Only verified companies can schedule interviews');
+}
+
+async function notifyApplicantOfEmployerInterview(
+  applicantId: string,
+  view: ApplicationView,
+  kind: 'SCHEDULED' | 'RESCHEDULED' | 'POSTPONED' | 'CANCELLED',
+): Promise<void> {
+  const [applicantRow] = await db
+    .select({ userId: schema.applicants.userId })
+    .from(schema.applicants)
+    .where(eq(schema.applicants.id, applicantId))
+    .limit(1);
+  if (!applicantRow) return;
+  const type = (
+    {
+      SCHEDULED: 'INTERVIEW_SCHEDULED',
+      RESCHEDULED: 'INTERVIEW_RESCHEDULED',
+      POSTPONED: 'INTERVIEW_POSTPONED',
+      CANCELLED: 'INTERVIEW_CANCELLED',
+    } as const
+  )[kind];
+  const when = view.employerInterviewAt
+    ? new Date(view.employerInterviewAt).toLocaleString('en-PK', {
+        day: 'numeric',
+        month: 'short',
+        hour: 'numeric',
+        minute: '2-digit',
+      })
+    : '';
+  const verb =
+    kind === 'SCHEDULED'
+      ? 'has scheduled an interview with you'
+      : kind === 'RESCHEDULED'
+        ? 'has rescheduled your interview'
+        : kind === 'POSTPONED'
+          ? 'has postponed your interview'
+          : 'has cancelled your interview';
+  await createNotification(db, {
+    userId: applicantRow.userId,
+    type,
+    title: `Interview ${kind === 'CANCELLED' ? 'cancelled' : kind === 'POSTPONED' ? 'postponed' : 'scheduled'} — ${view.jobTitle}`,
+    body: `${view.companyName} ${verb} for ${view.jobTitle}${when ? ` — ${when}` : ''}.`,
+    data: { applicationId: view.id, jobTitle: view.jobTitle, companyName: view.companyName },
+  });
+}
+
+/** Employer: schedule their interview with a forwarded candidate. */
+export async function scheduleEmployerInterview(
+  ctx: SignedIn,
+  applicationId: string,
+  input: ScheduleEmployerInterviewInput,
+): Promise<ApplicationView> {
+  assertPermission(ctx.actor, 'decision:employer');
+  const row = await assertEmployerOwnsApplication(ctx.actor, applicationId);
+  assertEmployerCanView(row.status, applicationId);
+  assertFutureInterviewAt(input.interviewAt);
+  // In-flight step: the job must still be live and the company verified.
+  assertJobLive(await loadJob(db, row.jobId), 'schedule an interview for this application');
+  await assertOwnCompanyVerified(row.companyId);
+
+  const view = await runCommand(ctx, async ({ tx, audit }) => {
+    assertJobLive(await loadJobForUpdate(tx, row.jobId), 'schedule an interview for this application');
+    const [lockedCompany] = await tx
+      .select({ status: schema.companies.status })
+      .from(schema.companies)
+      .where(eq(schema.companies.id, row.companyId))
+      .for('update');
+    if (lockedCompany?.status !== 'VERIFIED')
+      throw new ForbiddenError('Only verified companies can schedule interviews');
+    const { to } = await lockAndTransitionApplication(
+      tx,
+      applicationId,
+      'SCHEDULE_EMPLOYER_INTERVIEW',
+    );
+    const [updated] = await tx
+      .update(ap)
+      .set({
+        status: to,
+        employerInterviewAt: new Date(input.interviewAt),
+        employerInterviewLocation: input.interviewLocation ?? null,
+        employerInterviewNote: input.interviewNote ?? null,
+        // Reset so the newly scheduled interview re-appears in the call list.
+        lastCallStatus: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(ap.id, applicationId))
+      .returning();
+    audit({
+      action: 'application.employer_interview_scheduled',
+      entityType: 'application',
+      entityId: applicationId,
+      branchId: row.branchId,
+      metadata: { jobId: row.jobId },
+    });
+    return updated!;
+  }).then(buildView);
+
+  void notifyApplicantOfEmployerInterview(row.applicantId, view, 'SCHEDULED').catch(() => null);
+  return view;
+}
+
+/** Employer: reschedule, postpone or cancel their interview. */
+export async function updateEmployerInterviewStatus(
+  ctx: SignedIn,
+  applicationId: string,
+  input: UpdateEmployerInterviewStatusInput,
+): Promise<ApplicationView> {
+  assertPermission(ctx.actor, 'decision:employer');
+  const row = await assertEmployerOwnsApplication(ctx.actor, applicationId);
+  assertEmployerCanView(row.status, applicationId);
+  if (!EMPLOYER_INTERVIEW_STATES.includes(row.status))
+    throw new ForbiddenError('Can only update an interview that has been scheduled');
+  if (input.status === 'EMPLOYER_INTERVIEW_SCHEDULED' && input.interviewAt) {
+    assertFutureInterviewAt(input.interviewAt);
+  }
+  assertJobLive(await loadJob(db, row.jobId), 'update the interview for this application');
+
+  const view = await runCommand(ctx, async ({ tx, audit }) => {
+    assertJobLive(await loadJobForUpdate(tx, row.jobId), 'update the interview for this application');
+    const event =
+      input.status === 'EMPLOYER_INTERVIEW_SCHEDULED'
+        ? 'RESCHEDULE_EMPLOYER_INTERVIEW'
+        : input.status === 'EMPLOYER_INTERVIEW_POSTPONED'
+          ? 'POSTPONE_EMPLOYER_INTERVIEW'
+          : 'CANCEL_EMPLOYER_INTERVIEW';
+    const { to } = await lockAndTransitionApplication(tx, applicationId, event);
+    const patch: Partial<typeof ap.$inferInsert> = {
+      status: to,
+      lastCallStatus: null,
+      updatedAt: new Date(),
+    };
+    if (input.status === 'EMPLOYER_INTERVIEW_SCHEDULED') {
+      if (input.interviewAt) patch.employerInterviewAt = new Date(input.interviewAt);
+      if (input.interviewLocation !== undefined)
+        patch.employerInterviewLocation = input.interviewLocation;
+      if (input.interviewNote !== undefined) patch.employerInterviewNote = input.interviewNote;
+    }
+    const [updated] = await tx.update(ap).set(patch).where(eq(ap.id, applicationId)).returning();
+    audit({
+      action: 'application.employer_interview_updated',
+      entityType: 'application',
+      entityId: applicationId,
+      branchId: row.branchId,
+      metadata: { status: input.status },
+    });
+    return updated!;
+  }).then(buildView);
+
+  const kind =
+    input.status === 'EMPLOYER_INTERVIEW_SCHEDULED'
+      ? 'RESCHEDULED'
+      : input.status === 'EMPLOYER_INTERVIEW_POSTPONED'
+        ? 'POSTPONED'
+        : 'CANCELLED';
+  void notifyApplicantOfEmployerInterview(row.applicantId, view, kind).catch(() => null);
   return view;
 }
 
@@ -726,6 +984,14 @@ export async function acceptJobOffer(
   if (row.status !== 'OFFER_EXTENDED')
     throw new ConflictError('Only OFFER_EXTENDED applications can be accepted');
 
+  // Audit 2026-11-11 (H-11/H-12): the job must still be live (OPEN or
+  // PAUSED) and have a free vacancy — an offer extended before the job
+  // closed or filled must not be accept-able afterwards. Re-checked under
+  // the job lock inside the transaction.
+  const liveJob = await loadJob(db, row.jobId);
+  assertJobLive(liveJob, 'accept this offer');
+  assertVacancyAvailable(liveJob);
+
   const [jobRow] = await db
     .select({ title: schema.jobs.title, companyId: schema.jobs.companyId })
     .from(schema.jobs)
@@ -749,32 +1015,26 @@ export async function acceptJobOffer(
       .returning();
     if (!updated) throw new ConflictError('Only OFFER_EXTENDED applications can be accepted');
 
-    // Fill one vacancy in the same transaction, under a row lock.
-    const [job] = await tx
-      .select({
-        id: schema.jobs.id,
-        status: schema.jobs.status,
-        vacancies: schema.jobs.vacancies,
-        vacanciesFilled: schema.jobs.vacanciesFilled,
-      })
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, row.jobId))
-      .for('update');
-    if (job) {
-      const filled = job.vacanciesFilled + 1;
-      const patch: Partial<typeof schema.jobs.$inferInsert> = {
-        vacanciesFilled: filled,
-        updatedAt: new Date(),
-      };
-      if (filled >= job.vacancies && (job.status === 'OPEN' || job.status === 'PAUSED')) {
-        const check = jobMachine.check(job.status, 'FILL', {}, 'system');
-        if (check.ok) {
-          patch.status = check.to;
-          patch.closedAt = new Date();
-        }
+    // Fill one vacancy in the same transaction, under a row lock. The live
+    // and vacancy guards above are re-checked here, so a concurrent close
+    // or fill landing between the pre-check and this write cannot over-fill
+    // the job (audit H-12).
+    const job = await loadJobForUpdate(tx, row.jobId);
+    assertJobLive(job, 'accept this offer');
+    assertVacancyAvailable(job);
+    const filled = job.vacanciesFilled + 1;
+    const patch: Partial<typeof schema.jobs.$inferInsert> = {
+      vacanciesFilled: filled,
+      updatedAt: new Date(),
+    };
+    if (filled >= job.vacancies && (job.status === 'OPEN' || job.status === 'PAUSED')) {
+      const check = jobMachine.check(job.status, 'FILL', {}, 'system');
+      if (check.ok) {
+        patch.status = check.to;
+        patch.closedAt = new Date();
       }
-      await tx.update(schema.jobs).set(patch).where(eq(schema.jobs.id, job.id));
     }
+    await tx.update(schema.jobs).set(patch).where(eq(schema.jobs.id, job.id));
 
     audit({
       action: 'application.applicant_accepted',

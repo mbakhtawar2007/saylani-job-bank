@@ -48,10 +48,11 @@ export function EmployerReferralActions({ applicationId, status, companyName, jo
     }
   }
 
-  // No interview scheduling: the employer contacts the candidate directly
-  // (full phone + email on this page) and decides here. FORWARDED is
-  // decidable on the server too; the interview states are legacy rows
-  // from before scheduling was removed.
+  // Employer interview scheduling lives in EmployerInterviewScheduler
+  // (audit H-09): the employer schedules, reschedules, postpones or cancels
+  // their own interview here; the applicant is notified of every change.
+  // FORWARDED is decidable on the server too; the interview states are the
+  // employer's own interview states.
   const canDecide =
     status === 'FORWARDED' ||
     status === 'ON_HOLD' ||

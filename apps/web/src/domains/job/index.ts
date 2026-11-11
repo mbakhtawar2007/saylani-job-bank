@@ -3,6 +3,14 @@
 export { expirePastCloseJobs } from './expiry';
 export { jobMachine } from './machine';
 export {
+  assertJobLive,
+  assertJobOpen,
+  assertVacancyAvailable,
+  loadJob,
+  loadJobForUpdate,
+  type GuardedJob,
+} from './status-guard';
+export {
   createJob,
   deleteJob,
   getMyJob,

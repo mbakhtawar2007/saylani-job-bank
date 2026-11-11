@@ -15,7 +15,13 @@ import {
 import { assertCityAccess, assertPermission, assertRole, type Actor } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
 import { createNotification, notifyCompanyEmployers } from '@/domains/notifications';
-import { isReferrableApplicant } from '@/domains/job';
+import {
+  assertJobLive,
+  assertJobOpen,
+  isReferrableApplicant,
+  loadJob,
+  loadJobForUpdate,
+} from '@/domains/job';
 import type { RequestContext } from '@/domains/shared/audit';
 import { lockAndTransitionApplication } from './machine';
 import { assertFutureInterviewAt, futureInterviewAtSchema } from './interview-date';
@@ -275,7 +281,7 @@ export async function shortlistApplicant(
   return view;
 }
 
-/** Branch Admin only: schedule a Job Bank interview for an application. */
+/** Staff / Branch Admin: schedule a Job Bank interview for an application. */
 export async function scheduleInterview(
   ctx: SignedIn,
   applicationId: string,
@@ -289,6 +295,11 @@ export async function scheduleInterview(
   if (row.status === 'REJECTED' || row.status === 'HIRED')
     throw new ForbiddenError('Cannot schedule an interview for a closed application');
 
+  // Audit 2026-11-11 (M-09): interviews are in-flight pipeline steps — the
+  // job must still be live (OPEN or PAUSED), never closed/expired/filled.
+  // Re-checked under the job lock inside the transaction.
+  assertJobLive(await loadJob(db, row.jobId), 'schedule an interview for this application');
+
   // H11 — service-level backstop: the schema already rejects past dates, but
   // direct callers bypass it.
   assertFutureInterviewAt(input.interviewAt);
@@ -299,6 +310,7 @@ export async function scheduleInterview(
   });
 
   const view = await runCommand(ctx, async ({ tx, audit }) => {
+    assertJobLive(await loadJobForUpdate(tx, row.jobId), 'schedule an interview for this application');
     const { to } = await lockAndTransitionApplication(tx, applicationId, 'SCHEDULE_INTERVIEW');
     const [updated] = await tx
       .update(ap)
@@ -358,6 +370,9 @@ export async function updateInterviewStatus(
   if (!interviewStatuses.includes(row.status))
     throw new ForbiddenError('Can only update status for applications with a scheduled interview');
 
+  // Audit 2026-11-11 (M-09): same live-job rule as scheduleInterview.
+  assertJobLive(await loadJob(db, row.jobId), 'update the interview for this application');
+
   // H11 — a supplied new date must be in the future.
   if (input.status === 'INTERVIEW_SCHEDULED' && input.interviewAt) {
     assertFutureInterviewAt(input.interviewAt);
@@ -371,6 +386,7 @@ export async function updateInterviewStatus(
   }
 
   const view = await runCommand(ctx, async ({ tx, audit }) => {
+    assertJobLive(await loadJobForUpdate(tx, row.jobId), 'update the interview for this application');
     const event =
       input.status === 'INTERVIEW_SCHEDULED'
         ? 'RESCHEDULE_INTERVIEW'
@@ -513,6 +529,13 @@ export async function referApplicantToEmployer(
   if (companyRow?.status !== 'VERIFIED')
     throw new ForbiddenError('Only verified companies can receive referred candidates');
 
+  // Audit 2026-11-11 (H-10): new referrals require an OPEN job — a candidate
+  // shortlisted while the job was OPEN must not be forwarded after it was
+  // closed, expired or filled. Re-checked under the job lock inside the
+  // transaction, so a close landing between the check and the write cannot
+  // slip through.
+  assertJobOpen(await loadJob(db, row.jobId), 'refer this candidate');
+
   // Audit 2026-11-10 (D-F1): re-check eligibility at forward time — the
   // applicant may have become RESTRICTED (or identity REJECTED) after
   // being shortlisted. Same interim rule as shortlist/direct-refer.
@@ -524,6 +547,7 @@ export async function referApplicantToEmployer(
     throw new ForbiddenError('Candidates cannot be referred from restricted or rejected profiles');
 
   const view = await runCommand(ctx, async ({ tx, audit }) => {
+    assertJobOpen(await loadJobForUpdate(tx, row.jobId), 'refer this candidate');
     const { to } = await lockAndTransitionApplication(tx, applicationId, 'REFER');
     const [updated] = await tx
       .update(ap)

@@ -4,6 +4,7 @@ import { Badge } from '@/components/atoms';
 import { KeyValue } from '@/components/molecules';
 import { MessageCircle } from 'lucide-react';
 import { EmployerReferralActions } from './EmployerReferralActions';
+import { EmployerInterviewScheduler } from './EmployerInterviewScheduler';
 import { ChatPanel } from './ChatPanel';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -295,6 +296,21 @@ export async function ReferralDetail({ actor, id }: { actor: Actor; id: string }
               status={app.status}
               companyName={app.companyName}
               jobTitle={app.jobTitle}
+            />
+          </section>
+
+          {/* Employer interview (audit H-09): staff first, then company */}
+          <section
+            className="rounded-xl border p-5"
+            style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
+          >
+            <h2 className="text-fg mb-4 text-base font-semibold">Your Interview</h2>
+            <EmployerInterviewScheduler
+              applicationId={app.id}
+              status={app.status}
+              employerInterviewAt={app.employerInterviewAt}
+              employerInterviewLocation={app.employerInterviewLocation}
+              employerInterviewNote={app.employerInterviewNote}
             />
           </section>
 
