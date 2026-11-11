@@ -1314,6 +1314,16 @@ export async function markApplicantRegistrationVerifiedSigned(
     if (row.registrationVerifiedSignedAt) {
       throw new ConflictError('This registration form was already marked verified and signed.');
     }
+    // Audit 2026-11-11 (M-24): same separation-of-duties rule as the
+    // company path — the staff member who registered the applicant at
+    // the counter must not mark their own paper form verified & signed.
+    // A colleague in the branch records it instead.
+    if (row.counterRegisteredBy === ctx.actor.userId) {
+      throw new ConflictError(
+        'You cannot mark a registration form verified and signed for an applicant you registered. Ask another staff member in your branch.',
+        { reason: 'SELF_ATTESTATION' },
+      );
+    }
     await tx
       .update(a)
       .set({

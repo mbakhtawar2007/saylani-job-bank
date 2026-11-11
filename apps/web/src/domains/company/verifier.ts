@@ -19,7 +19,7 @@ import {
 } from '@/domains/shared/errors';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
 import { assertCityAccess, assertPermission, cityScope, type Actor } from '@/domains/shared/scope';
-import { db } from '@/lib/db';
+import { db, type DbExecutor } from '@/lib/db';
 import {
   companyInfoRequestedEmail,
   companyRejectedEmail,
@@ -210,13 +210,20 @@ function assertAssignedVerifier(round: VerificationRow, actor: Actor) {
   }
 }
 
-async function autoConflictCheck(actor: Actor, companyId: string): Promise<string | null> {
-  const [verifier] = await db
+async function autoConflictCheck(
+  actor: Actor,
+  companyId: string,
+  // Audit 2026-11-11 (L-07): pass the transaction when checking inside
+  // one — a plain `db` read there would still be a pre-transaction
+  // snapshot for the TOCTOU the claim guard is meant to close.
+  ex: DbExecutor = db,
+): Promise<string | null> {
+  const [verifier] = await ex
     .select({ email: schema.users.email, phone: schema.users.phoneNumber })
     .from(schema.users)
     .where(eq(schema.users.id, actor.userId));
   if (!verifier) return null;
-  const contactRows = await db
+  const contactRows = await ex
     .select({ phone: contacts.phone, email: contacts.email })
     .from(contacts)
     .where(eq(contacts.companyId, companyId));
@@ -230,8 +237,12 @@ async function autoConflictCheck(actor: Actor, companyId: string): Promise<strin
 }
 
 /** Same conflict message as claimCompany, for the review paths below. */
-async function assertNoConflictOfInterest(actor: Actor, companyId: string): Promise<void> {
-  const conflict = await autoConflictCheck(actor, companyId);
+async function assertNoConflictOfInterest(
+  actor: Actor,
+  companyId: string,
+  ex: DbExecutor = db,
+): Promise<void> {
+  const conflict = await autoConflictCheck(actor, companyId, ex);
   if (conflict) {
     throw new ConflictError(
       `You cannot verify this company: ${conflict}. Ask another verifier or your Super Admin.`,
@@ -315,6 +326,10 @@ export async function claimCompany(ctx: SignedIn, companyId: string): Promise<Co
   await runCommand(ctx, async ({ tx, audit }) => {
     const row = await loadCompany(tx, companyId, { forUpdate: true });
     await assertCityAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
+    // Audit 2026-11-11 (L-07): the conflict check runs again inside the
+    // transaction, against the locked row — a contact added between the
+    // pre-check above and this commit now blocks the claim.
+    await assertNoConflictOfInterest(ctx.actor, companyId, tx);
     const to = companyMachine.transition(row.status, 'CLAIM', READY, ctx.actor.roles);
     const round = await openVerification(tx, row.id, { forUpdate: true });
     if (!round) throw new NotFoundError('Open verification for company', companyId);
@@ -530,6 +545,35 @@ export async function verifyCompany(
     const round = await openVerification(tx, row.id, { forUpdate: true });
     if (!round) throw new NotFoundError('Open verification for company', companyId);
     assertAssignedVerifier(round, ctx.actor);
+    // Audit 2026-11-11 (M-11): for field-visit (onboarded) companies the
+    // paper-form attestation must be fresh for THIS round. A legal
+    // correction clears it (see correctCompanyDetails), so a VERIFY on a
+    // stale attestation is blocked until a colleague marks the new form
+    // verified & signed. Employer self-registered companies have no paper
+    // form by design, so the check is scoped to onboarded companies.
+    // Resubmits reuse the same round (submittedAt unchanged), so the
+    // INFO_REQUESTED flow is unaffected; the first round sets the
+    // attestation and the round in the same transaction, so signedAt ==
+    // submittedAt there and passes.
+    const [onboarding] = await tx
+      .select({ companyId: schema.companyOnboarding.companyId })
+      .from(schema.companyOnboarding)
+      .where(
+        and(
+          eq(schema.companyOnboarding.companyId, row.id),
+          eq(schema.companyOnboarding.agreed, true),
+        ),
+      )
+      .limit(1);
+    if (onboarding) {
+      const signedAt = row.registrationVerifiedSignedAt;
+      if (!signedAt || signedAt < round.submittedAt) {
+        throw new ConflictError(
+          'This company’s paper registration form must be marked verified and signed for the current details before it can be verified. Ask a staff member who did not onboard the company.',
+          { reason: 'PAPER_FORM_NOT_SIGNED' },
+        );
+      }
+    }
     const now = new Date();
     await tx
       .update(ver)

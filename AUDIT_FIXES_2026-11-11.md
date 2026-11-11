@@ -22,8 +22,8 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | H-10 | fixed | 8edffa5 — referApplicantToEmployer requires OPEN (pre-check + locked re-check in tx) via shared job guard |
 | H-11 | fixed | 8edffa5 — shared job guard (job/status-guard.ts): decisions/accepts/interviews blocked unless OPEN/PAUSED, re-checked under job lock; company VERIFIED re-checked on decisions; applicant Jobs page already badges non-OPEN jobs (page.tsx:40-45) |
 | H-12 | fixed | 8edffa5 — acceptJobOffer vacancy guard under job lock (ConflictError NO_VACANCY); double-accept loser gets a clear 409, not a cryptic 422 |
-| H-13 | fixed | COMMIT — git rm public/final-hero-video.mp4 (88 MB, zero references) |
-| H-14 | fixed | COMMIT — deleted both applicants/new routes (branch-admin + super-admin) and the "Register job seeker" button on the applicants list; registration starts at the sidebar "Issue token" dialog and completes via the form in edit mode. No test or referenced flow broke (verified: no remaining references, tsc clean) |
+| H-13 | fixed | 3a1f066 — git rm public/final-hero-video.mp4 (88 MB, zero references) |
+| H-14 | fixed | 3a1f066 — deleted both applicants/new routes (branch-admin + super-admin) and the "Register job seeker" button on the applicants list; registration starts at the sidebar "Issue token" dialog and completes via the form in edit mode. No test or referenced flow broke (verified: no remaining references, tsc clean) |
 
 ## Medium
 
@@ -39,7 +39,7 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | M-08 | pending | |
 | M-09 | fixed | 8edffa5 — scheduleInterview/updateInterviewStatus require live job (OPEN/PAUSED, pre-check + locked re-check); docstring corrected to Staff / Branch Admin |
 | M-10 | fixed | 8edffa5 — recordEmployerDecision sets lastCallStatus: null, so a repeat HOLD re-appears in the call list |
-| M-11 | pending | |
+| M-11 | fixed | COMMIT — legal correction clears registrationVerifiedSignedAt/By; verifyCompany blocks onboarded companies until a fresh mark-signed for the current round (signedAt >= round.submittedAt; resubmits reuse the round so INFO_REQUESTED flow is unaffected; employer self-registered companies exempt) |
 | M-12 | pending | |
 | M-13 | decision-needed | Product decision: include INACTIVE applicants in matching pool, or document ACTIVE-only |
 | M-14 | pending | Port from fork clone only if diff is clear and self-contained; else remaining |
@@ -50,11 +50,11 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | M-19 | pending | |
 | M-20 | pending | Phase 4 work; attempt only if straightforward and safe, else remaining |
 | M-21 | pending | |
-| M-22 | fixed | COMMIT — idempotent: true on POST /api/v1/applicants; dialog now sends an Idempotency-Key |
+| M-22 | fixed | 3a1f066 — idempotent: true on POST /api/v1/applicants; dialog now sends an Idempotency-Key |
 | M-23 | pending | |
-| M-24 | pending | |
+| M-24 | fixed | COMMIT — markApplicantRegistrationVerifiedSigned now 409s SELF_ATTESTATION when row.counterRegisteredBy is the actor, mirroring the company path |
 | M-25 | pending | |
-| M-26 | fixed | COMMIT — idempotent: true on POST /jobs/me + POST /companies/me/sites; JobWizard create sends a key. Found while fixing: StaffPostJobForm posted to the already-idempotent POST /jobs with NO key, so every staff job post 400d — key added there too |
+| M-26 | fixed | 3a1f066 — idempotent: true on POST /jobs/me + POST /companies/me/sites; JobWizard create sends a key. Found while fixing: StaffPostJobForm posted to the already-idempotent POST /jobs with NO key, so every staff job post 400d — key added there too |
 | M-27 | pending | |
 | M-28 | pending | |
 | M-29 | pending | |
@@ -74,8 +74,8 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | L-04 | pending | |
 | L-05 | remaining | Needs deployment/scheduler decision (e.g. Vercel Cron + CRON_SECRET) |
 | L-06 | pending | |
-| L-07 | pending | |
-| L-08 | pending | |
+| L-07 | fixed | COMMIT — claimCompany now re-runs the conflict check inside the transaction (autoConflictCheck/assertNoConflictOfInterest take a DbExecutor, tx passed in-tx) |
+| L-08 | fixed | COMMIT — resubmitOnboardedCompany + setOnboardedCompanyHeadOffice now 409 SELF_ATTESTATION when the actor onboarded the company; a colleague or Branch/Super Admin (who hold company:onboard) acts instead |
 | L-09 | fixed | 8edffa5 — jobMachine FILL now allows PAUSED → FILLED, so a paused job whose last vacancy fills becomes FILLED instead of staying PAUSED with zero free vacancies |
 | L-10 | decision-needed | Documented intent ("Missing optional data is NEUTRAL"); do not change weights |
 | L-11 | pending | |
@@ -96,7 +96,7 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | L-26 | decision-needed | Product decision: should suspension freeze job edits? |
 | L-27 | pending | |
 | L-28 | pending | |
-| L-29 | fixed | COMMIT — resend route idempotent: true + client key; inviteStaff/resendInvitation rate-limited 5 per actor+target per hour; resendInvitation rejects within 5 min of the last live invite (cooldown via pendingInvitation.createdAt) |
+| L-29 | fixed | 3a1f066 — resend route idempotent: true + client key; inviteStaff/resendInvitation rate-limited 5 per actor+target per hour; resendInvitation rejects within 5 min of the last live invite (cooldown via pendingInvitation.createdAt) |
 | L-30 | pending | |
 | L-31 | pending | |
 | L-32 | pending | |

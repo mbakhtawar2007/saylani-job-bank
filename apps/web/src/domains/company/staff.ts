@@ -889,6 +889,16 @@ export async function resubmitOnboardedCompany(
       { reason: 'NOT_ONBOARDED' },
     );
   }
+  // Audit 2026-11-11 (L-08): separation of duties — the staff member who
+  // onboarded the company must not single-handedly bounce it back to the
+  // verifier. A colleague (or Branch/Super Admin, who hold company:onboard)
+  // sends it back instead.
+  if (company.createdBy === ctx.actor.userId) {
+    throw new ConflictError(
+      'You cannot send back a company you onboarded yourself. Ask another staff member in your branch.',
+      { reason: 'SELF_ATTESTATION' },
+    );
+  }
   const now = new Date();
   const dueOn = await verificationDueOn(now);
   await runCommand(ctx, async ({ tx, audit }) => {
@@ -970,6 +980,15 @@ export async function setOnboardedCompanyHeadOffice(
     throw new ConflictError(
       'Only a company registered after a field visit can have its head office set this way.',
       { reason: 'NOT_ONBOARDED' },
+    );
+  }
+  // Audit 2026-11-11 (L-08): separation of duties — the staff member who
+  // onboarded the company must not single-handedly set its head office.
+  // A colleague (or Branch/Super Admin, who hold company:onboard) does it.
+  if (company.createdBy === ctx.actor.userId) {
+    throw new ConflictError(
+      'You cannot set the head office of a company you onboarded yourself. Ask another staff member in your branch.',
+      { reason: 'SELF_ATTESTATION' },
     );
   }
   if (company.status !== 'DRAFT' && company.status !== 'INFO_REQUESTED') {
@@ -1080,6 +1099,9 @@ export async function correctCompanyDetails(
       // verifiedAt is cleared. Non-legal changes keep the badge. There is no
       // VERIFIED → SUBMITTED machine transition, so the round opens directly
       // (same shape as markCompanyRegistrationVerifiedSigned).
+      // Audit 2026-11-11 (M-11): the paper-form attestation is cleared too
+      // — it attested to the OLD legal details. verifyCompany blocks the
+      // new round until a colleague marks the new form verified & signed.
       if (touchesLegal && row.status === 'VERIFIED') {
         const now = new Date();
         const dueOn = await verificationDueOn(now);
@@ -1100,7 +1122,13 @@ export async function correctCompanyDetails(
           .returning();
         await tx
           .update(c)
-          .set({ ...changes, status: 'SUBMITTED', verifiedAt: null })
+          .set({
+            ...changes,
+            status: 'SUBMITTED',
+            verifiedAt: null,
+            registrationVerifiedSignedAt: null,
+            registrationVerifiedSignedBy: null,
+          })
           .where(eq(c.id, row.id));
         await recordTransition(tx, {
           verificationId: round!.id,
