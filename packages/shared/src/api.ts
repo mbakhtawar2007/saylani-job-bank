@@ -64,5 +64,9 @@ export interface ApiPage<T> {
 export const HEADERS = {
   correlationId: 'x-correlation-id',
   idempotencyKey: 'idempotency-key',
+  /** Applicant id a staff member is entering data for, at a counter. */
+  onBehalfOf: 'x-jb-on-behalf-of',
+  /** Company a staff member is acting for, when an employer cannot use the system itself. */
+  onBehalfOfCompany: 'x-jb-on-behalf-of-company',
   idempotentReplay: 'idempotent-replayed',
 } as const;

@@ -8,6 +8,7 @@ const idParam = z.object({ id: z.uuid() });
 /** GET /api/v1/jobs/me/[id] — get employer's own job. */
 export const GET = apiHandler({
   permission: 'job:manage_own',
+  onBehalfOfEmployer: true,
   params: idParam,
   handler: async ({ actor, params }) => ok(await getMyJob(actor!, params.id)),
 });
@@ -15,6 +16,7 @@ export const GET = apiHandler({
 /** PATCH /api/v1/jobs/me/[id] — update draft job details. */
 export const PATCH = apiHandler({
   permission: 'job:manage_own',
+  onBehalfOfEmployer: true,
   params: idParam,
   body: updateJobSchema,
   handler: async ({ ctx, actor, params, body }) =>
@@ -24,6 +26,7 @@ export const PATCH = apiHandler({
 /** DELETE /api/v1/jobs/me/[id] — delete a draft job. */
 export const DELETE = apiHandler({
   permission: 'job:manage_own',
+  onBehalfOfEmployer: true,
   params: idParam,
   handler: async ({ ctx, actor, params }) => {
     await deleteJob({ ...ctx, actor: actor! }, params.id);

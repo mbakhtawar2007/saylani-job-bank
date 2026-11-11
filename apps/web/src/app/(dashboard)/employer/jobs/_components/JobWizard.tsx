@@ -100,11 +100,17 @@ interface Props {
    * editing and creation stay fully editable.
    */
   restricted?: boolean;
+  /** Where the employer screens live: staff consoles use their own path. */
+  basePath?: string;
 }
 
 // ─── Component ──────────────────────────────────────────────────────────
 
-export function JobWizard({ initialJob = null, restricted = false }: Props) {
+export function JobWizard({
+  initialJob = null,
+  restricted = false,
+  basePath = '/employer',
+}: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -412,7 +418,7 @@ export function JobWizard({ initialJob = null, restricted = false }: Props) {
           });
         }
 
-        if (isNew) router.push(`/employer/jobs/${jobId}`);
+        if (isNew) router.push(`${basePath}/jobs/${jobId}`);
         else router.refresh();
       } catch (e) {
         setError(friendlyError(e));

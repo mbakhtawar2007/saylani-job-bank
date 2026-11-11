@@ -3,6 +3,8 @@ import type { Actor } from '../scope';
 
 /** Everything a domain operation needs to know about who/what/where is calling. */
 export interface RequestContext {
+  /** The staff member entering data for `actor` at a counter / for a company; audit rows name them. */
+  enteredBy?: Actor | null;
   /** null for anonymous requests and scheduled jobs. */
   actor: Actor | null;
   /** True for scheduled jobs and internal automation. */

@@ -23,6 +23,8 @@ import {
 import { searchParamsToObject } from '../pagination';
 import { hasPermission, hasRole, type Actor } from '../scope';
 import { resolveActor } from './actor';
+import { actingForEmployer } from '@/domains/company';
+import { resolveOnBehalfActor } from './on-behalf';
 import type { HandlerResult } from './responses';
 
 type AnySchema = z.ZodType;
@@ -62,6 +64,10 @@ export interface ApiHandlerOptions<
    * an unexpected field fails the request instead of leaking (PRD rule 3).
    */
   output?: AnySchema;
+  /** Staff may call this job seeker route for a counter-registered candidate (see on-behalf.ts). */
+  onBehalf?: boolean;
+  /** Staff may call this employer route for a company in their city (see act-for-employer.ts). */
+  onBehalfOfEmployer?: boolean;
   /** Require an Idempotency-Key header and replay duplicates (PRD §8). */
   idempotent?: boolean;
   maxBodyBytes?: number;
@@ -252,6 +258,25 @@ export function apiHandler<
         throw new ForbiddenError('Set up two-factor authentication to continue', {
           reason: 'TWO_FACTOR_SETUP_REQUIRED',
         });
+      }
+      // On-behalf resolution happens before the role/permission gates, so those
+      // gates are checked against the resolved actor (the candidate, or the
+      // synthesised employer actor) — never against the staff member's own roles.
+      const onBehalfOf = options.onBehalf ? request.headers.get(HEADERS.onBehalfOf) : null;
+      if (onBehalfOf && actor) {
+        const staff = actor;
+        actor = await resolveOnBehalfActor(staff, onBehalfOf);
+        ctx.actor = actor;
+        ctx.enteredBy = staff;
+      }
+      const forCompany = options.onBehalfOfEmployer
+        ? request.headers.get(HEADERS.onBehalfOfCompany)
+        : null;
+      if (forCompany && actor) {
+        const staff = actor;
+        actor = (await actingForEmployer(staff, forCompany)).actor;
+        ctx.actor = actor;
+        ctx.enteredBy = staff;
       }
       if (options.roles && (!actor || !hasRole(actor, ...options.roles))) {
         throw new ForbiddenError();

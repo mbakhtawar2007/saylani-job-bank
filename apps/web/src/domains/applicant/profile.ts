@@ -280,7 +280,9 @@ export async function setMyLocation(
       .from(schema.branches)
       .where(and(ilike(schema.branches.city, cityLabel), eq(schema.branches.isActive, true)))
       .limit(1);
-    if (cityBranches.length === 0) {
+    // Staff entering an address for a counter candidate (ctx.enteredBy set) do not need a
+    // branch in the chosen city: the candidate stays with the branch that registered them.
+    if (cityBranches.length === 0 && !ctx.enteredBy) {
       throw new ValidationError([
         {
           path: 'cityCode',
@@ -288,7 +290,8 @@ export async function setMyLocation(
         },
       ]);
     }
-    const assignedBranchId = cityBranches[0]!.id;
+    // A counter's candidates stay with the branch that registered them; staff can transfer them.
+    const assignedBranchId = ctx.enteredBy ? row.branchId! : cityBranches[0]!.id;
     const branchChanged = row.branchId !== assignedBranchId;
     if (branchChanged && branchLocked(row)) {
       // A locked (active) profile cannot move branches on its own — staff transfer only.

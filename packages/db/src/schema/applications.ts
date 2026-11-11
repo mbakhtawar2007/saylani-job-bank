@@ -49,6 +49,10 @@ export const applications = pgTable(
     // Applicant refusal
     applicantRefusalReason: text('applicant_refusal_reason'),
     applicantRefusedAt: timestamp('applicant_refused_at', { withTimezone: true }),
+    // Counter call list: which status the candidate was last phoned about.
+    lastCallStatus: text('last_call_status'),
+    lastCalledAt: timestamp('last_called_at', { withTimezone: true }),
+    lastCalledBy: uuid('last_called_by'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -57,5 +61,31 @@ export const applications = pgTable(
     index('applications_applicant_idx').on(t.applicantId),
     index('applications_job_idx').on(t.jobId),
     index('applications_branch_idx').on(t.branchId),
+  ],
+);
+
+/**
+ * Every employer decision, kept forever (PRD 7.2). Rows can only be added: the database rejects
+ * UPDATE and DELETE. `applications` and `job_matches` hold the current state; this is the record.
+ * Ported from Najam (2026-11-11) as migration 0045; the REJECTED evidence rule follows this
+ * repo's M19 threshold (note ≥ 5 chars) rather than Najam's ≥ 10.
+ */
+export const employerDecisions = pgTable(
+  'employer_decisions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    jobId: uuid('job_id').notNull(),
+    applicantId: uuid('applicant_id').notNull(),
+    /** Set for the referral workflow; null when decided from the match shortlist. */
+    applicationId: uuid('application_id'),
+    decision: text('decision').notNull(),
+    reasonCode: text('reason_code'),
+    evidence: text('evidence'),
+    decidedBy: uuid('decided_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('employer_decisions_application_idx').on(t.applicationId),
+    index('employer_decisions_job_applicant_idx').on(t.jobId, t.applicantId),
   ],
 );

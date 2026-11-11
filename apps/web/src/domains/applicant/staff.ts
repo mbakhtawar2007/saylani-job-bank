@@ -6,6 +6,7 @@ import {
   ROLE_LABELS,
   ROLES,
   type ApplicantStatus,
+  type CounterRegisterInput,
   type IdentityMethod,
   type IdentityOutcome,
   type IdentityStatus,
@@ -104,6 +105,134 @@ async function assertCityArea(
         { path: `${path}.areaCode`, message: `This area is not in ${city.label}` },
       ]);
     }
+  }
+}
+
+// ─── Counter registration ──────────────────────────────────────────────
+
+/**
+ * Staff register someone with no smartphone or email at a counter. The account has no
+ * password, so nobody can sign in to it; staff keep the profile up to date for them.
+ * Ported from Najam (2026-11-11), adapted to this repo's rules:
+ * - No email is accepted at all (the schema has no email field): the users row gets a
+ *   placeholder email under the repo's own placeholder domain, and the applicant row
+ *   stores email null. A walk-in's real email must never be stored unverified.
+ * - The phone is NOT allowed to be shared with another account. This repo signs
+ *   applicants in by phone OTP and the OTP lookup takes the first row for a number,
+ *   so a shared number would sign the wrong person in. A taken phone is a 409
+ *   PHONE_TAKEN; the phone is optional, so staff leave it blank when the candidate
+ *   has no number of their own. (Najam dropped the phone unique constraint because
+ *   that repo dropped OTP entirely — not portable here.)
+ * - Consent is evidence, not a checkbox alone: consentConfirmedAt is set only
+ *   because the schema requires consentConfirmed=true, which staff tick after the
+ *   candidate signs the paper consent form kept at the branch. The audit row
+ *   records it; there is no separate consent-reference column yet (open decision).
+ * - Applicants are ACTIVE from creation (no DRAFT in this repo). registrationSource
+ *   is STAFF_ASSISTED — there is no COUNTER value in the enum; counterRegisteredBy
+ *   is what marks a counter registration.
+ * - branchId, when supplied, must be one of the actor's branches and active;
+ *   otherwise the actor's active branch (Super Admin switcher) or their single
+ *   branch is used. The token flow is untouched: this is a separate path for
+ *   walk-ins without smartphones, and it creates no token.
+ */
+export async function registerApplicantAtCounter(
+  ctx: SignedIn,
+  input: CounterRegisterInput,
+): Promise<{ id: string }> {
+  assertPermission(ctx.actor, 'applicant:manage');
+  let phoneNumber: string | null = null;
+  if (input.phone) {
+    phoneNumber = normalizePkMobile(input.phone);
+    if (!phoneNumber || !isSupportedPkMobile(phoneNumber)) {
+      throw new ValidationError([
+        { path: 'phone', message: 'Enter a valid Pakistani mobile number' },
+      ]);
+    }
+  }
+  const { phone: _phone, consentConfirmed: _consent, branchId: inputBranchId, ...personal } = input;
+
+  try {
+    return await runCommand(ctx, async (cmd) => {
+      const { tx, audit } = cmd;
+      let branchId = inputBranchId ?? null;
+      if (branchId) {
+        const [branch] = await tx
+          .select({ id: schema.branches.id, isActive: schema.branches.isActive })
+          .from(schema.branches)
+          .where(eq(schema.branches.id, branchId));
+        if (!branch || !branch.isActive) {
+          throw new ValidationError([{ path: 'branchId', message: 'Choose an active branch' }]);
+        }
+        assertBranchAccess(ctx.actor, branch.id, {
+          entityType: 'branch',
+          entityId: branch.id,
+        });
+      } else {
+        branchId =
+          ctx.actor.activeBranchId ??
+          (ctx.actor.branchIds.length === 1 ? ctx.actor.branchIds[0]! : null);
+      }
+      if (!branchId) {
+        throw new ValidationError([{ path: 'branchId', message: 'Choose a branch first' }]);
+      }
+      if (phoneNumber) {
+        const [phoneOwner] = await tx
+          .select({ id: schema.users.id })
+          .from(schema.users)
+          .where(eq(schema.users.phoneNumber, phoneNumber));
+        if (phoneOwner) {
+          throw new ConflictError(
+            'This mobile number already has an account. Register without a phone number — the candidate checks in at the branch.',
+            { reason: 'PHONE_TAKEN' },
+          );
+        }
+      }
+      const owner = await cnicOwner(tx, input.cnic);
+      if (owner) throw await cnicTakenError(tx, owner);
+      const [user] = await tx
+        .insert(schema.users)
+        .values({
+          name: input.fullName,
+          email: phoneNumber
+            ? placeholderEmailFor(phoneNumber)
+            : `${crypto.randomUUID()}@${schema.PLACEHOLDER_EMAIL_DOMAIN}`,
+          phoneNumber,
+          status: 'ACTIVE',
+        })
+        .returning({ id: schema.users.id });
+      await tx.insert(schema.userRoles).values({ userId: user!.id, roleCode: 'APPLICANT' });
+      const [row] = await tx
+        .insert(a)
+        .values({
+          ...personal,
+          email: null,
+          userId: user!.id,
+          branchId,
+          status: 'ACTIVE',
+          registrationSource: 'STAFF_ASSISTED',
+          registrationReference: createRegistrationReference(),
+          registeredBy: ctx.actor.userId,
+          counterRegisteredBy: ctx.actor.userId,
+          consentConfirmedAt: new Date(),
+        })
+        .returning({ id: a.id });
+      audit({
+        action: 'applicant.counter_register',
+        entityType: 'applicant',
+        entityId: row!.id,
+        branchId,
+        after: personal,
+        metadata: { consentConfirmed: true },
+      });
+      await refreshProfileState(cmd, row!.id);
+      return { id: row!.id };
+    });
+  } catch (error) {
+    if (isUniqueViolation(error, 'applicants_cnic_unique')) {
+      const owner = await cnicOwner(db, input.cnic);
+      if (owner) throw await cnicTakenError(db, owner);
+    }
+    throw error;
   }
 }
 
@@ -882,6 +1011,8 @@ export interface ApplicantStaffView extends ApplicantProfile {
   userId: string;
   statusReason: string | null;
   createdByStaff: { name: string | null; roleLabel: string | null } | null;
+  /** Registered by staff at a counter: no login, and staff act for the candidate. */
+  counterRegistered: boolean;
   identityHistory: IdentityCheckView[];
   /** What the signed-in staff member may do (drives the UI). */
   can: {
@@ -1268,6 +1399,7 @@ export async function getApplicantForStaff(
     createdByStaff: staffCreator
       ? { name: staffCreator.name, roleLabel: creatorRole ? ROLE_LABELS[creatorRole] : null }
       : null,
+    counterRegistered: row.counterRegisteredBy !== null,
     identityHistory: history.map((h) => ({
       id: h.id,
       outcome: h.outcome,

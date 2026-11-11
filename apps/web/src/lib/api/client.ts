@@ -36,6 +36,22 @@ interface ApiFetchOptions {
   /** Pass for idempotent writes; reuse the same key when retrying the same action. */
   idempotencyKey?: string;
   signal?: AbortSignal;
+  /** Staff at a counter acting for this candidate. */
+  onBehalfOf?: string;
+}
+
+let onBehalfOf: string | null = null;
+
+/** While a counter screen is open, job seeker API calls are made for this candidate. */
+export function setApiOnBehalfOf(applicantId: string | null): void {
+  onBehalfOf = applicantId;
+}
+
+let onBehalfOfCompany: string | null = null;
+
+/** While an employer console is open, employer API calls are made for this company. */
+export function setApiOnBehalfOfCompany(companyId: string | null): void {
+  onBehalfOfCompany = companyId;
 }
 
 /** Same-origin JSON client for /api/v1. Returns the `data` (and `meta`) of the envelope. */
@@ -46,6 +62,9 @@ export async function apiFetch<T>(
   const headers: Record<string, string> = { accept: 'application/json' };
   if (options.body !== undefined) headers['content-type'] = 'application/json';
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
+  const candidate = options.onBehalfOf ?? onBehalfOf;
+  if (candidate) headers['x-jb-on-behalf-of'] = candidate;
+  if (onBehalfOfCompany) headers['x-jb-on-behalf-of-company'] = onBehalfOfCompany;
 
   let response: Response;
   try {

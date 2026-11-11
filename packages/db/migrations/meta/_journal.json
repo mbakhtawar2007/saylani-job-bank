@@ -309,6 +309,20 @@
       "when": 1793895995000,
       "tag": "0043_applicant_registration_verification",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1794387358261,
+      "tag": "0044_counter_registration",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1794387358262,
+      "tag": "0045_employer_decisions",
+      "breakpoints": true
     }
   ]
 }

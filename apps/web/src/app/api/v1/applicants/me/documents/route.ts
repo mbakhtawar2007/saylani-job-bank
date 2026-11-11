@@ -5,6 +5,7 @@ import { apiHandler, created, ok } from '@/domains/shared/http';
 /** GET /api/v1/applicants/me/documents — document types with their upload rules. */
 export const GET = apiHandler({
   permission: 'applicant:self',
+  onBehalf: true,
   handler: async () => ok(await listApplicantDocumentTypes()),
 });
 
@@ -14,6 +15,7 @@ export const GET = apiHandler({
  */
 export const POST = apiHandler({
   permission: 'applicant:self',
+  onBehalf: true,
   body: presignDocumentSchema,
   handler: async ({ ctx, actor, body }) =>
     created(await presignMyDocument({ ...ctx, actor: actor! }, body)),

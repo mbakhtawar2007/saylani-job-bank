@@ -6,6 +6,7 @@ import { apiHandler, ok } from '@/domains/shared/http';
 /** GET /api/v1/applicants/me — own profile with completeness; 404 before registering. */
 export const GET = apiHandler({
   permission: 'applicant:self',
+  onBehalf: true,
   output: applicantProfileSchema,
   handler: async ({ actor }) => {
     const profile = await getMyProfile(actor!);
@@ -17,6 +18,7 @@ export const GET = apiHandler({
 /** PATCH /api/v1/applicants/me — personal details (identity fields lock once verified). */
 export const PATCH = apiHandler({
   permission: 'applicant:self',
+  onBehalf: true,
   body: updatePersonalSchema,
   output: applicantProfileSchema,
   handler: async ({ ctx, actor, body }) =>

@@ -21,6 +21,8 @@ import { ArrowLeft, Pencil, Trash2, Users } from 'lucide-react';
 
 interface Props {
   job: JobView;
+  /** Where the employer screens live: staff consoles use their own path. */
+  basePath?: string;
 }
 
 const STATUS_BADGE: Record<
@@ -60,7 +62,7 @@ function KV({ label, value }: { label: string; value: string | number | null | u
   );
 }
 
-export function JobDetailPanel({ job }: Props) {
+export function JobDetailPanel({ job, basePath = '/employer' }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -92,7 +94,7 @@ export function JobDetailPanel({ job }: Props) {
       setError(null);
       try {
         await apiFetch<{ deleted: boolean }>(`/api/v1/jobs/me/${job.id}`, { method: 'DELETE' });
-        router.push('/employer/jobs');
+        router.push(`${basePath}/jobs`);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Something went wrong.');
       }
@@ -103,7 +105,7 @@ export function JobDetailPanel({ job }: Props) {
     <div className="grid w-full gap-6">
       <div>
         <Link
-          href="/employer/jobs"
+          href={`${basePath}/jobs`}
           variant="unstyled"
           className="text-fg-muted mb-3 flex items-center gap-1 text-sm hover:underline"
         >
@@ -117,7 +119,7 @@ export function JobDetailPanel({ job }: Props) {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <Badge tone={pill.tone}>{JOB_STATUS_LABELS[job.status]}</Badge>
-            <Link href={`/employer/jobs/${job.id}/matches`}>
+            <Link href={`${basePath}/jobs/${job.id}/matches`}>
               <Button size="sm" variant="secondary">
                 <Users className="mr-1.5 size-4" />
                 Shortlist
@@ -125,7 +127,7 @@ export function JobDetailPanel({ job }: Props) {
             </Link>
             {job.status === 'DRAFT' && (
               <>
-                <Link href={`/employer/jobs/${job.id}/edit`}>
+                <Link href={`${basePath}/jobs/${job.id}/edit`}>
                   <Button size="sm" variant="secondary">
                     <Pencil className="mr-1.5 size-4" />
                     Edit

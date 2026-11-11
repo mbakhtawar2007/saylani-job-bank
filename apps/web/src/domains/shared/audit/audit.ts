@@ -25,8 +25,12 @@ export interface AuditEntry {
 
 function toRow(ctx: RequestContext, entry: AuditEntry): typeof schema.auditLogs.$inferInsert {
   return {
-    actorUserId: ctx.actor?.userId ?? null,
-    actorRole: ctx.system ? 'SYSTEM' : (ctx.actor?.roles.join(',') ?? 'ANONYMOUS'),
+    // When staff act on behalf of a candidate or a company, the audit row names
+    // the staff member (enteredBy), not the account acted for.
+    actorUserId: ctx.enteredBy?.userId ?? ctx.actor?.userId ?? null,
+    actorRole: ctx.system
+      ? 'SYSTEM'
+      : ((ctx.enteredBy ?? ctx.actor)?.roles.join(',') ?? 'ANONYMOUS'),
     branchId: entry.branchId ?? null,
     action: entry.action,
     entityType: entry.entityType,
@@ -34,7 +38,17 @@ function toRow(ctx: RequestContext, entry: AuditEntry): typeof schema.auditLogs.
     before: entry.before === undefined ? null : redactPii(entry.before),
     after: entry.after === undefined ? null : redactPii(entry.after),
     reason: redactAuditReason(entry.reason),
-    metadata: entry.metadata ? redactPii(entry.metadata) : null,
+    metadata:
+      entry.metadata || ctx.enteredBy
+        ? redactPii({
+            ...entry.metadata,
+            ...(ctx.enteredBy
+              ? ctx.actor?.companyId
+                ? { onBehalfOfCompanyId: ctx.actor.companyId }
+                : { onBehalfOfUserId: ctx.actor?.userId }
+              : {}),
+          })
+        : null,
     ip: ctx.ip,
     userAgent: ctx.userAgent?.slice(0, 512) ?? null,
     correlationId: ctx.correlationId,

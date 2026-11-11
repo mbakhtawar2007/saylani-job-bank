@@ -211,6 +211,22 @@ const personalFields = {
 export const registerApplicantSchema = z.object(personalFields);
 export type RegisterApplicantInput = z.infer<typeof registerApplicantSchema>;
 
+/**
+ * Staff registering a candidate at a counter. The candidate may have no phone at all.
+ * Adapted from the Najam port (2026-11-11): NO email field — a walk-in candidate's
+ * unverified real email must never be stored (it would look verified); the server
+ * forces a placeholder email. `branchId` is optional: when staff work in several
+ * branches they may name one, and the server validates it against their branches.
+ */
+const { email: _counterEmail, ...counterPersonalFields } = personalFields;
+export const counterRegisterSchema = z.object({
+  ...counterPersonalFields,
+  phone: z.string().trim().max(20).nullish(),
+  consentConfirmed: z.literal(true, 'Confirm that the candidate agreed'),
+  branchId: z.uuid().optional(),
+});
+export type CounterRegisterInput = z.infer<typeof counterRegisterSchema>;
+
 /** Every field optional and without defaults (a default would overwrite on every PATCH). */
 export const updatePersonalSchema = z.object(personalFields).partial();
 export type UpdatePersonalInput = z.infer<typeof updatePersonalSchema>;

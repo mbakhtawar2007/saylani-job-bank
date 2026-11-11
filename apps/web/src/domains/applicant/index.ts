@@ -55,6 +55,7 @@ export {
   getApplicantForStaff,
   listApplicants,
   markApplicantRegistrationVerifiedSigned,
+  registerApplicantAtCounter,
   registerApplicantForStaff,
   staffRegisterApplicant,
   staffUpdateApplicantProfile,

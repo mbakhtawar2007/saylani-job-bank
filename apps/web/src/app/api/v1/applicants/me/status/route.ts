@@ -5,6 +5,7 @@ import { apiHandler, ok } from '@/domains/shared/http';
 /** PATCH /api/v1/applicants/me/status — pause (INACTIVE) or resume (ACTIVE) own profile. */
 export const PATCH = apiHandler({
   permission: 'applicant:self',
+  onBehalf: true,
   body: selfStatusSchema,
   handler: async ({ ctx, actor, body }) =>
     ok(await setMyStatus({ ...ctx, actor: actor! }, body.status)),

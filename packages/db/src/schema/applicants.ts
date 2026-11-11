@@ -66,6 +66,14 @@ export const applicants = pgTable(
     gender: text({ enum: GENDERS }).notNull(),
     /** Optional contact email (the `users` row only has a placeholder). */
     email: text(),
+    /** The staff member who registered this candidate at a counter; null for self sign-up. */
+    counterRegisteredBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+    /**
+     * When staff recorded the candidate's agreement. Set only from the signed
+     * paper consent form kept at the branch (counter registration); never
+     * defaulted — a missing value means no consent evidence is on file.
+     */
+    consentConfirmedAt: timestamp({ withTimezone: true }),
     status: text({ enum: APPLICANT_STATUSES }).notNull().default('ACTIVE'),
     /** Why staff deactivated the profile (shown to staff). */
     statusReason: text(),

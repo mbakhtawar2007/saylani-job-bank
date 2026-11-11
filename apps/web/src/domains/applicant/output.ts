@@ -187,6 +187,7 @@ export const applicantStaffViewSchema = applicantProfileSchema.extend({
   createdByStaff: z
     .object({ name: z.string().nullable(), roleLabel: z.string().nullable() })
     .nullable(),
+  counterRegistered: z.boolean(),
   identityHistory: z.array(identityCheckViewSchema),
   can: z.object({
     verifyIdentity: z.boolean(),

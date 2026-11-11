@@ -6,6 +6,7 @@ import { apiHandler, ok } from '@/domains/shared/http';
 /** PUT /api/v1/jobs/me/[id]/requirements — save job requirements. */
 export const PUT = apiHandler({
   permission: 'job:manage_own',
+  onBehalfOfEmployer: true,
   params: z.object({ id: z.uuid() }),
   body: jobRequirementsSchema,
   handler: async ({ ctx, actor, params, body }) =>

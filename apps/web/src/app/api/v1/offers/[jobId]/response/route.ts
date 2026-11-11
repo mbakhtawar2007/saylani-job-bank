@@ -8,6 +8,7 @@ import { apiHandler, ok } from '@/domains/shared/http';
  */
 export const POST = apiHandler({
   permission: 'decision:applicant',
+  onBehalf: true,
   params: z.object({ jobId: z.uuid() }),
   body: z
     .object({

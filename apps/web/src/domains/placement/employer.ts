@@ -544,6 +544,20 @@ export async function recordEmployerDecision(
       .where(eq(ap.id, applicationId))
       .returning();
 
+    // Permanent record (migration 0045): the referral-workflow decision, with the
+    // note as evidence. reasonCode is null — this repo's decision input has no
+    // reason-code field; the M19 note rule (≥ 5 chars for REJECTED) is enforced
+    // above, so the table's evidence check cannot fail here.
+    await tx.insert(schema.employerDecisions).values({
+      jobId: row.jobId,
+      applicantId: row.applicantId,
+      applicationId,
+      decision: input.decision,
+      reasonCode: null,
+      evidence: input.note ?? null,
+      decidedBy: ctx.actor.userId,
+    });
+
     audit({
       action: 'application.employer_decision',
       entityType: 'application',

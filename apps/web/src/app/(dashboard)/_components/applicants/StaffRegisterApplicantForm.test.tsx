@@ -33,6 +33,7 @@ const applicant: ApplicantStaffView = {
   identityStatus: 'UNVERIFIED',
   identityNote: null,
   branch: null,
+  counterRegistered: false,
   personal: {
     fullName: 'Existing Applicant',
     fatherName: 'Applicant Parent',
