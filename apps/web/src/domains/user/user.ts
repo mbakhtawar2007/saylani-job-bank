@@ -19,6 +19,7 @@ import {
   ValidationError,
 } from '@/domains/shared/errors';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
+import { enforceRateLimit } from '@/domains/shared/rate-limit';
 import { isSuperAdmin, type Actor } from '@/domains/shared/scope';
 import { db, type DbExecutor } from '@/lib/db';
 import { logger } from '@/lib/logger';
@@ -285,6 +286,16 @@ export async function inviteStaff(
   input: InviteStaffInput,
 ): Promise<{ user: StaffDetail; emailSent: boolean }> {
   assertAllowed(canGrantRole(ctx.actor, input.role, input.branchId));
+  // Audit 2026-11-11 (L-29): a compromised user:manage account could
+  // mail-bomb an invitee indefinitely — 5 invites per actor + target
+  // email per hour. (A fresh key per call still sends a fresh email, so
+  // idempotency alone does not stop that.)
+  await enforceRateLimit(
+    'invite-send',
+    `${ctx.actor.userId}:${input.email.toLowerCase()}`,
+    { limit: 5, windowSeconds: 3600 },
+    'Too many invitations sent to this email. Try again later.',
+  );
 
   const invited = await runCommand(ctx, async ({ tx, audit }) => {
     const [existing] = await tx
@@ -357,6 +368,19 @@ export async function resendInvitation(
   ctx: SignedIn,
   userId: string,
 ): Promise<{ emailSent: boolean }> {
+  // Audit 2026-11-11 (L-29): 5 resends per actor + target per hour.
+  await enforceRateLimit(
+    'invite-resend',
+    `${ctx.actor.userId}:${userId}`,
+    { limit: 5, windowSeconds: 3600 },
+    'Too many invitation resends for this person. Try again later.',
+  );
+  // Short cooldown: a resend minutes after the last invite only spams
+  // the invitee and invalidates the link they may already hold.
+  const pending = await pendingInvitation(userId);
+  if (pending && Date.now() - pending.createdAt.getTime() < 5 * 60 * 1000) {
+    throw new ConflictError('An invitation was just sent. Wait a few minutes before resending.');
+  }
   const result = await runCommand(ctx, async ({ tx, audit }) => {
     const { row, assignments } = await loadTarget(tx, ctx.actor, userId);
     assertAllowed(canManageUser(ctx.actor, userId, assignments));

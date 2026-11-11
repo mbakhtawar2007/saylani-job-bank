@@ -29,6 +29,9 @@ export const GET = apiHandler({
 /** POST /api/v1/applicants — staff creates an applicant account for their branch. */
 export const POST = apiHandler({
   permission: 'applicant:manage',
+  // Audit 2026-11-11 (M-22): a retry after a lost response used to return a
+  // misleading 409 CNIC_TAKEN instead of the created profile.
+  idempotent: true,
   body: staffRegisterApplicantSchema,
   output: applicantStaffViewSchema,
   handler: async ({ ctx, actor, body }) =>

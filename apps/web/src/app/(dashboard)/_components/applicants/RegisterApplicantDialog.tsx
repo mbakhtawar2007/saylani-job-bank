@@ -467,6 +467,8 @@ export function RegisterApplicantDialog({
       const { data } = await apiFetch<ApplicantStaffView>('/api/v1/applicants', {
         method: 'POST',
         body: parsed.data,
+        // Audit 2026-11-11 (M-22): the route requires an Idempotency-Key.
+        idempotencyKey: crypto.randomUUID(),
       });
       setApplicant(data);
       // A new applicant mounts a fresh print form (keyed by id): its labels,

@@ -1,5 +1,5 @@
 import type { Role } from '@jobbank/shared';
-import { Button, Link, StatusPill } from '@/components/atoms';
+import { StatusPill } from '@/components/atoms';
 import { DetailPageLayout } from '@/components/templates';
 import {
   APPLICANT_SORTABLE,
@@ -73,19 +73,13 @@ export async function ApplicantListPage({
               : 'Job seekers registered with your branch.'}
           </p>
         </div>
-        {actor.permissions.has('applicant:create') && (
-          <Button asChild size="sm">
-            <Link
-              href={
-                role === 'SUPER_ADMIN'
-                  ? '/super-admin/applicants/new'
-                  : '/branch-admin/applicants/new'
-              }
-            >
-              <span className="font-medium">Register job seeker</span>
-            </Link>
-          </Button>
-        )}
+        {/*
+          Audit 2026-11-11 (H-14): no "Register job seeker" button here
+          any more — the /new routes are deleted. Registration starts with
+          the sidebar "Issue token" dialog (token-only first counter step),
+          then completes through the same form in edit mode on the
+          applicant's complete page.
+        */}
       </header>
       <ApplicantsTable
         rows={data}

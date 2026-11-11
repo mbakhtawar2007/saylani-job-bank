@@ -216,6 +216,10 @@ export function StaffPostJobForm({
         await apiFetch('/api/v1/jobs', {
           method: 'POST',
           body: parsed.data,
+          // POST /jobs is idempotent and requires an Idempotency-Key —
+          // the form never sent one, so every staff job post failed
+          // with 400 IDEMPOTENCY_KEY_REQUIRED (found while fixing M-26).
+          idempotencyKey: crypto.randomUUID(),
         });
         toast.success('Job created as draft');
         router.push(successHref);

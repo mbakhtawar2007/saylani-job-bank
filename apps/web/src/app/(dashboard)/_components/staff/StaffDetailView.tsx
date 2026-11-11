@@ -121,7 +121,12 @@ export function StaffDetailView({
                   try {
                     const { data } = await apiFetch<{ emailSent: boolean }>(
                       `/api/v1/users/${staff.id}/invitation`,
-                      { method: 'POST' },
+                      {
+                        method: 'POST',
+                        // Audit 2026-11-11 (L-29): the route requires an
+                        // Idempotency-Key.
+                        idempotencyKey: crypto.randomUUID(),
+                      },
                     );
                     if (data.emailSent) toast.success('A new invitation was sent');
                     else toast.warning('Could not send the email. Try again shortly.');

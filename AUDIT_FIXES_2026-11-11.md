@@ -22,8 +22,8 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | H-10 | fixed | 8edffa5 — referApplicantToEmployer requires OPEN (pre-check + locked re-check in tx) via shared job guard |
 | H-11 | fixed | 8edffa5 — shared job guard (job/status-guard.ts): decisions/accepts/interviews blocked unless OPEN/PAUSED, re-checked under job lock; company VERIFIED re-checked on decisions; applicant Jobs page already badges non-OPEN jobs (page.tsx:40-45) |
 | H-12 | fixed | 8edffa5 — acceptJobOffer vacancy guard under job lock (ConflictError NO_VACANCY); double-accept loser gets a clear 409, not a cryptic 422 |
-| H-13 | pending | |
-| H-14 | pending | |
+| H-13 | fixed | COMMIT — git rm public/final-hero-video.mp4 (88 MB, zero references) |
+| H-14 | fixed | COMMIT — deleted both applicants/new routes (branch-admin + super-admin) and the "Register job seeker" button on the applicants list; registration starts at the sidebar "Issue token" dialog and completes via the form in edit mode. No test or referenced flow broke (verified: no remaining references, tsc clean) |
 
 ## Medium
 
@@ -50,11 +50,11 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | M-19 | pending | |
 | M-20 | pending | Phase 4 work; attempt only if straightforward and safe, else remaining |
 | M-21 | pending | |
-| M-22 | pending | |
+| M-22 | fixed | COMMIT — idempotent: true on POST /api/v1/applicants; dialog now sends an Idempotency-Key |
 | M-23 | pending | |
 | M-24 | pending | |
 | M-25 | pending | |
-| M-26 | pending | |
+| M-26 | fixed | COMMIT — idempotent: true on POST /jobs/me + POST /companies/me/sites; JobWizard create sends a key. Found while fixing: StaffPostJobForm posted to the already-idempotent POST /jobs with NO key, so every staff job post 400d — key added there too |
 | M-27 | pending | |
 | M-28 | pending | |
 | M-29 | pending | |
@@ -68,9 +68,9 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 
 | ID | Status | Commit / note |
 |----|--------|---------------|
-| L-01 | fixed | COMMIT — CompanyWizard: noValidate on all three step forms; Details/Contacts/Location validate client-side against register/updateCompany, companyContacts and companyHeadOffice schemas with FormErrorSummary + focus + per-field errors; bare acme.com now passes native validation and is normalised server-side; non-numeric NTN flagged on the field. Note: validated payloads are sent unchanged (raw body) so server transforms still apply as before |
+| L-01 | fixed | 2547821 — CompanyWizard: noValidate on all three step forms; Details/Contacts/Location validate client-side against register/updateCompany, companyContacts and companyHeadOffice schemas with FormErrorSummary + focus + per-field errors; bare acme.com now passes native validation and is normalised server-side; non-numeric NTN flagged on the field. Note: validated payloads are sent unchanged (raw body) so server transforms still apply as before |
 | L-02 | pending | |
-| L-03 | fixed | COMMIT — one allowlist: PAKISTAN_MOBILE_PREFIXES now lives in @jobbank/shared and pkMobileSchema refines against it (0399 rejected); web isSupportedPkMobile derives from the same list; PhoneInput free-text path now nulls e164 for unlisted prefixes like the segmented path; token domain fixed via the same schema. Drift-guard test added (dropdown table == shared list). Note: companyContactSchema still uses the broad 3xx regex (company contacts, not applicant mobiles) — out of this finding's scope |
+| L-03 | fixed | 2547821 — one allowlist: PAKISTAN_MOBILE_PREFIXES now lives in @jobbank/shared and pkMobileSchema refines against it (0399 rejected); web isSupportedPkMobile derives from the same list; PhoneInput free-text path now nulls e164 for unlisted prefixes like the segmented path; token domain fixed via the same schema. Drift-guard test added (dropdown table == shared list). Note: companyContactSchema still uses the broad 3xx regex (company contacts, not applicant mobiles) — out of this finding's scope |
 | L-04 | pending | |
 | L-05 | remaining | Needs deployment/scheduler decision (e.g. Vercel Cron + CRON_SECRET) |
 | L-06 | pending | |
@@ -96,12 +96,12 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | L-26 | decision-needed | Product decision: should suspension freeze job edits? |
 | L-27 | pending | |
 | L-28 | pending | |
-| L-29 | pending | |
+| L-29 | fixed | COMMIT — resend route idempotent: true + client key; inviteStaff/resendInvitation rate-limited 5 per actor+target per hour; resendInvitation rejects within 5 min of the last live invite (cooldown via pendingInvitation.createdAt) |
 | L-30 | pending | |
 | L-31 | pending | |
 | L-32 | pending | |
 | L-33 | pending | |
-| L-34 | fixed | COMMIT — nested it() in CompanyWizard.test.tsx moved out to describe level (now 11 tests, all passing); test fixture branch id changed to a real UUID so the new Location-step client validation passes |
+| L-34 | fixed | 2547821 — nested it() in CompanyWizard.test.tsx moved out to describe level (now 11 tests, all passing); test fixture branch id changed to a real UUID so the new Location-step client validation passes |
 | L-35 | pending | |
 | L-36 | pending | Documentation only: build-time env / SKIP_ENV_VALIDATION=1 in README/CI docs |
 | L-37 | pending | |

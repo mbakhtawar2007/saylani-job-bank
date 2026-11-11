@@ -391,6 +391,10 @@ export function JobWizard({
           const { data: created } = await apiFetch<JobView>('/api/v1/jobs/me', {
             method: 'POST',
             body: basicBody,
+            // Audit 2026-11-11 (M-26): the route requires an
+            // Idempotency-Key — without it a double-submit created a
+            // second identical DRAFT job.
+            idempotencyKey: crypto.randomUUID(),
           });
           jobId = created.id;
         } else {

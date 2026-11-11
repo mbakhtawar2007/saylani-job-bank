@@ -272,10 +272,12 @@ export async function resetPassword(
 }
 
 /** The newest unused, unexpired invitation for a user (shown on the user detail page). */
-export async function pendingInvitation(userId: string): Promise<{ expiresAt: Date } | null> {
+export async function pendingInvitation(
+  userId: string,
+): Promise<{ expiresAt: Date; createdAt: Date } | null> {
   const t = schema.accountTokens;
   const [row] = await db
-    .select({ expiresAt: t.expiresAt })
+    .select({ expiresAt: t.expiresAt, createdAt: t.createdAt })
     .from(t)
     .where(
       and(
