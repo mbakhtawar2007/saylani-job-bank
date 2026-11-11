@@ -42,6 +42,14 @@ export const env = createEnv({
      * Local dev has no proxy, so direct connections get no trustworthy IP.
      */
     TRUSTED_PROXY_HOPS: z.coerce.number().int().min(1).max(10).default(1),
+    /**
+     * Optional shared secret for non-browser automation that must make
+     * cookie-authenticated writes (e.g. an unattended smoke test): sent as
+     * the `x-internal-write-token` header. The CSRF check (L-13) accepts it
+     * in production in place of an Origin header. Leave unset unless such
+     * automation exists — an unset value means no bypass exists.
+     */
+    INTERNAL_WRITE_TOKEN: z.string().min(1).optional(),
   },
   client: {
     NEXT_PUBLIC_APP_URL: z.url(),

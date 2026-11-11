@@ -7,6 +7,7 @@ import { and, asc, count, desc, eq, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
 import { paginationMeta } from '@/domains/shared/pagination';
+import { enforceRateLimit } from '@/domains/shared/rate-limit';
 import {
   ConflictError,
   ForbiddenError,
@@ -499,6 +500,15 @@ export async function recordEmployerDecision(
   input: RecordEmployerDecisionInput,
 ): Promise<ApplicationView> {
   assertPermission(ctx.actor, 'decision:employer');
+
+  // Audit 2026-11-11 (L-20): decisions fire notifications — 30 per
+  // employer user per hour.
+  await enforceRateLimit(
+    'employer-decision',
+    ctx.actor.userId,
+    { limit: 30, windowSeconds: 3600 },
+    'Too many decisions. Try again in an hour.',
+  );
 
   const row = await assertEmployerOwnsApplication(ctx.actor, applicationId);
 
@@ -1201,6 +1211,15 @@ export async function sendMessage(
     .from(schema.users)
     .where(eq(schema.users.id, ctx.actor.userId))
     .limit(1);
+
+  // Audit 2026-11-11 (L-20): each message notifies the other party — 60
+  // per sender per application per hour.
+  await enforceRateLimit(
+    'application-message',
+    `${ctx.actor.userId}:${applicationId}`,
+    { limit: 60, windowSeconds: 3600 },
+    'Too many messages. Try again in an hour.',
+  );
 
   const [msgRow] = await runCommand(ctx, async ({ tx, audit }) => {
     const inserted = await tx

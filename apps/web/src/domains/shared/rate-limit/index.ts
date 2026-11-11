@@ -108,6 +108,17 @@ export async function enforceRateLimitByIp(
   rule: RateLimitRule,
   message?: string,
 ): Promise<void> {
+  // Audit 2026-11-11 (M-18): a null IP in production means the proxy chain
+  // is misconfigured (TRUSTED_PROXY_HOPS wrong) or the request bypassed the
+  // proxies — every such user shares one bucket, so say so loudly. Outright
+  // rejection is a deployment decision (see fix log): once the proxies are
+  // confirmed, reject instead of sharing the bucket.
+  if (ip === null && process.env.NODE_ENV === 'production') {
+    logger.error(
+      'rate limit: no trustworthy IP in production — requests share the untrusted bucket; check TRUSTED_PROXY_HOPS',
+      { name },
+    );
+  }
   await enforceRateLimit(name, ip ?? 'untrusted', rule, message);
 }
 

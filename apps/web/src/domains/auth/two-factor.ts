@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import QRCode from 'qrcode';
 import { recordAudit, type RequestContext } from '@/domains/shared/audit';
 import { ForbiddenError, RateLimitedError, UnauthenticatedError } from '@/domains/shared/errors';
-import { enforceRateLimit } from '@/domains/shared/rate-limit';
+import { enforceRateLimit, enforceRateLimitByIp } from '@/domains/shared/rate-limit';
 import type { Actor } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
 import { loadActor, requiresTwoFactor } from './actor';
@@ -138,9 +138,9 @@ export async function confirmTwoFactorEnrollment(
       { limit: 5, windowSeconds: 900 },
       'Too many incorrect codes. Try again in 15 minutes.',
     );
-    if (ctx.ip) {
-      await enforceRateLimit('2fa-confirm-ip', ctx.ip, { limit: 30, windowSeconds: 900 });
-    }
+    // Audit 2026-11-11 (M-17): a null IP used to skip this limit entirely —
+    // route through the helper so it lands in the shared 'untrusted' bucket.
+    await enforceRateLimitByIp(ctx.ip, '2fa-confirm-ip', { limit: 30, windowSeconds: 900 });
   } catch (error) {
     if (error instanceof RateLimitedError) {
       await recordAudit(ctx, {

@@ -5,6 +5,7 @@ import { and, count, desc, eq, inArray, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
+import { enforceRateLimit } from '@/domains/shared/rate-limit';
 import {
   ConflictError,
   ForbiddenError,
@@ -187,6 +188,14 @@ export async function shortlistApplicant(
   input: ShortlistInput,
 ): Promise<ApplicationView> {
   assertPermission(ctx.actor, 'match_case:manage');
+  // Audit 2026-11-11 (L-20): shortlists fire notifications — 30 per
+  // staff member per hour is plenty for real work, and stops spam.
+  await enforceRateLimit(
+    'shortlist',
+    ctx.actor.userId,
+    { limit: 30, windowSeconds: 3600 },
+    'Too many shortlists. Try again in an hour.',
+  );
 
   // Verify applicant exists and actor has city access
   const [applicantRow] = await db
@@ -244,27 +253,36 @@ export async function shortlistApplicant(
     .where(and(eq(ap.applicantId, input.applicantId), eq(ap.jobId, input.jobId)));
   if (existing) throw new ConflictError('This applicant is already shortlisted for this job');
 
-  const view = await runCommand(ctx, async ({ tx, audit }) => {
-    const [row] = await tx
-      .insert(ap)
-      .values({
-        applicantId: input.applicantId,
-        jobId: input.jobId,
-        branchId: jobRow.branchId,
-        createdBy: ctx.actor.userId,
-        note: input.note ?? null,
-        status: 'SHORTLISTED',
-      })
-      .returning();
+  let view: ApplicationView;
+  try {
+    view = await runCommand(ctx, async ({ tx, audit }) => {
+      const [row] = await tx
+        .insert(ap)
+        .values({
+          applicantId: input.applicantId,
+          jobId: input.jobId,
+          branchId: jobRow.branchId,
+          createdBy: ctx.actor.userId,
+          note: input.note ?? null,
+          status: 'SHORTLISTED',
+        })
+        .returning();
 
-    audit({
-      action: 'application.shortlist',
-      entityType: 'application',
-      entityId: row!.id,
-      branchId: jobRow.branchId,
-    });
-    return row!;
-  }).then(buildView);
+      audit({
+        action: 'application.shortlist',
+        entityType: 'application',
+        entityId: row!.id,
+        branchId: jobRow.branchId,
+      });
+      return row!;
+    }).then(buildView);
+  } catch (error) {
+    // Audit 2026-11-11 (L-21): two concurrent shortlists race the
+    // duplicate pre-check above — the unique index catches it. Map it to
+    // the same specific message as the pre-check instead of a generic 409.
+    if (!isUniqueViolation(error, 'applications_applicant_job_uq')) throw error;
+    throw new ConflictError('This applicant is already shortlisted for this job');
+  }
 
   // M25 — the applicant must hear they were shortlisted: until now only the
   // referral was notified, so a shortlisted applicant heard nothing.
@@ -509,6 +527,14 @@ export async function referApplicantToEmployer(
   input: ReferApplicantInput,
 ): Promise<ApplicationView> {
   assertPermission(ctx.actor, 'match_case:refer');
+  // Audit 2026-11-11 (L-20): referrals fire notifications — 30 per staff
+  // member per hour (shared with the direct-refer path below).
+  await enforceRateLimit(
+    'refer-to-employer',
+    ctx.actor.userId,
+    { limit: 30, windowSeconds: 3600 },
+    'Too many referrals. Try again in an hour.',
+  );
 
   const [row] = await db.select().from(ap).where(eq(ap.id, applicationId));
   if (!row) throw new NotFoundError('Application', applicationId);
@@ -653,6 +679,14 @@ export async function referApplicantToEmployerForJob(
 ): Promise<ApplicationView> {
   assertPermission(ctx.actor, 'match_case:manage');
   assertPermission(ctx.actor, 'match_case:refer');
+  // Audit 2026-11-11 (L-20): same 'refer-to-employer' bucket as the
+  // two-step refer path above — one action, one budget.
+  await enforceRateLimit(
+    'refer-to-employer',
+    ctx.actor.userId,
+    { limit: 30, windowSeconds: 3600 },
+    'Too many referrals. Try again in an hour.',
+  );
 
   const [jobRow] = await db
     .select({

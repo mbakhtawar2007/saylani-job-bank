@@ -233,6 +233,20 @@ export async function registerApplicantAtCounter(
       const owner = await cnicOwner(db, input.cnic);
       if (owner) throw await cnicTakenError(db, owner);
     }
+    // Audit 2026-11-11 (L-21): a concurrent phone collision races the
+    // in-transaction phone check — the users insert hits the phone unique
+    // index (or the phone-derived placeholder email's). Map it to the same
+    // specific PHONE_TAKEN message instead of a generic 409.
+    if (
+      phoneNumber &&
+      (isUniqueViolation(error, 'users_phoneNumber_unique') ||
+        isUniqueViolation(error, 'users_email_unique'))
+    ) {
+      throw new ConflictError(
+        'This mobile number already has an account. Register without a phone number — the candidate checks in at the branch.',
+        { reason: 'PHONE_TAKEN' },
+      );
+    }
     throw error;
   }
 }

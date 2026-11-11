@@ -7,7 +7,7 @@ import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm';
 import { recordAudit, runCommand, type RequestContext } from '@/domains/shared/audit';
 import { DomainError } from '@/domains/shared/errors';
 import { maskEmail } from '@/domains/shared/masking';
-import { enforceRateLimit } from '@/domains/shared/rate-limit';
+import { enforceRateLimit, enforceRateLimitByIp } from '@/domains/shared/rate-limit';
 import { db, type DbExecutor } from '@/lib/db';
 import { env } from '@/lib/env';
 import { sendMail } from '@/lib/mail/mailer';
@@ -158,7 +158,16 @@ export async function acceptInvitation(
   password: string,
   requestHeaders: Headers,
 ): Promise<SignInResult | Awaited<ReturnType<typeof loginWithPassword>>> {
-  if (ctx.ip) await enforceRateLimit('invite-accept-ip', ctx.ip, { limit: 20, windowSeconds: 900 });
+  // Audit 2026-11-11 (M-17 + L-14): IP limit via the helper (a null IP
+  // lands in the shared 'untrusted' bucket instead of skipping), plus the
+  // same per-token 10/15m limit the invite lookup uses — keyed on the
+  // token's SHA-256 hash, never the raw token.
+  await enforceRateLimitByIp(ctx.ip, 'invite-accept-ip', { limit: 20, windowSeconds: 900 });
+  await enforceRateLimit(
+    'invite-accept-token',
+    createHash('sha256').update(token).digest('hex'),
+    { limit: 10, windowSeconds: 900 },
+  );
 
   // Breach check runs BEFORE the transaction: a slow HIBP response must not
   // hold a database transaction open. Fails open on HIBP errors (see
@@ -202,8 +211,8 @@ export async function requestPasswordReset(ctx: RequestContext, rawEmail: string
     { limit: 3, windowSeconds: 3600 },
     'Too many reset requests. Try again in an hour.',
   );
-  if (ctx.ip)
-    await enforceRateLimit('password-reset-ip', ctx.ip, { limit: 20, windowSeconds: 3600 });
+  // Audit 2026-11-11 (M-17): null IP lands in the 'untrusted' bucket.
+  await enforceRateLimitByIp(ctx.ip, 'password-reset-ip', { limit: 20, windowSeconds: 3600 });
 
   const [user] = await db
     .select()
@@ -249,8 +258,17 @@ export async function resetPassword(
   token: string,
   password: string,
 ): Promise<void> {
-  if (ctx.ip)
-    await enforceRateLimit('password-reset-confirm-ip', ctx.ip, { limit: 20, windowSeconds: 900 });
+  // Audit 2026-11-11 (M-17 + L-14): IP limit via the helper, plus the
+  // per-token 10/15m limit (same pattern as invite-accept above).
+  await enforceRateLimitByIp(ctx.ip, 'password-reset-confirm-ip', {
+    limit: 20,
+    windowSeconds: 900,
+  });
+  await enforceRateLimit(
+    'password-reset-token',
+    createHash('sha256').update(token).digest('hex'),
+    { limit: 10, windowSeconds: 900 },
+  );
   // Breach check runs BEFORE the transaction (see acceptInvitation above).
   await assertPasswordNotBreached(password);
   // clearTrustedDevices uses the global db handle, so it runs after the

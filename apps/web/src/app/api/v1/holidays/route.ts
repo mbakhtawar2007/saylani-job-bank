@@ -9,7 +9,7 @@ import { apiHandler, created, ok } from '@/domains/shared/http';
 /** GET /api/v1/holidays?year=2026 — public holidays used for working-day SLAs. */
 export const GET = apiHandler({
   query: listHolidaysQuery,
-  handler: async ({ query }) => ok(await listHolidays(query)),
+  handler: async ({ actor, query }) => ok(await listHolidays(actor!, query)),
 });
 
 /** POST /api/v1/holidays — Super Admin adds a holiday (Idempotency-Key required). */

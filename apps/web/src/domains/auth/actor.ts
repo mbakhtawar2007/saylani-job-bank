@@ -4,7 +4,7 @@ import { schema } from '@jobbank/db';
 import { and, eq } from 'drizzle-orm';
 import type { Actor } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
-import { getAuth, isPlaceholderEmail } from './auth';
+import { getAuth, isPlaceholderEmail, SESSION_TTL_SECONDS } from './auth';
 
 export const ACTIVE_BRANCH_COOKIE = 'jb-active-branch';
 
@@ -98,6 +98,15 @@ export async function loadActor(userId: string, requestedActiveBranch?: string):
 export async function getAuthState(headers: Headers): Promise<AuthState> {
   const session = await getAuth().api.getSession({ headers });
   if (!session) return { status: 'anonymous' };
+
+  // Audit 2026-11-11 (M-19): absolute session lifetime — Better Auth only
+  // slides expiry (updateAge 24h), so a daily-active session never expired.
+  // A session older than SESSION_TTL_SECONDS (7 days) from creation is
+  // rejected outright, however recently it was used. The caller just signs
+  // in again; nothing else changes (the sliding window still applies
+  // inside the 7 days).
+  const createdAt = new Date(session.session.createdAt).getTime();
+  if (Date.now() - createdAt > SESSION_TTL_SECONDS * 1000) return { status: 'anonymous' };
 
   const [row] = await db
     .select({

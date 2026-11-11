@@ -284,15 +284,22 @@ export const updateHolidaySchema = createHolidaySchema.partial().extend({
 export type CreateHolidayInput = z.infer<typeof createHolidaySchema>;
 export type UpdateHolidayInput = z.infer<typeof updateHolidaySchema>;
 
-/** Holidays in date order; a year narrows the list. */
-export async function listHolidays(query: { year?: number } = {}): Promise<Holiday[]> {
-  const where = query.year
-    ? and(gte(h.date, `${query.year}-01-01`), lt(h.date, `${query.year + 1}-01-01`))
-    : undefined;
+/** Holidays in date order; a year narrows the list. Inactive holidays are only shown to managers (same rule as listMasterData) — any signed-in user could otherwise see deactivated holidays. */
+export async function listHolidays(
+  actor: Actor,
+  query: { year?: number; includeInactive?: boolean } = {},
+): Promise<Holiday[]> {
+  const showInactive = query.includeInactive && hasPermission(actor, 'master_data:manage');
+  const conditions: SQL[] = [];
+  if (query.year)
+    conditions.push(
+      and(gte(h.date, `${query.year}-01-01`), lt(h.date, `${query.year + 1}-01-01`))!,
+    );
+  if (!showInactive) conditions.push(eq(h.isActive, true));
   return db
     .select(holidayColumns)
     .from(h)
-    .where(where)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(asc(h.date))
     .limit(MAX_UNPAGINATED_LIST_ROWS);
 }

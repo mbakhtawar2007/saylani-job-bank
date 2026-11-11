@@ -6,6 +6,7 @@ import { createNotification } from '@/domains/notifications';
 import { runCommand } from '@/domains/shared/audit';
 import type { RequestContext } from '@/domains/shared/audit';
 import { ForbiddenError, isUniqueViolation, NotFoundError } from '@/domains/shared/errors';
+import { enforceRateLimit } from '@/domains/shared/rate-limit';
 import { assertCityAccess, assertPermission, cityScope, type Actor } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
 import { buildJobView, j, loadJob, type JobView } from './repository';
@@ -84,6 +85,14 @@ export async function referJobToApplicant(
   input: ReferJobToApplicantInput,
 ): Promise<JobApplicantReferralView> {
   assertPermission(ctx.actor, 'job:refer');
+  // Audit 2026-11-11 (L-20): job→applicant referrals fire notifications —
+  // 30 per staff member per hour.
+  await enforceRateLimit(
+    'refer-job-applicant',
+    ctx.actor.userId,
+    { limit: 30, windowSeconds: 3600 },
+    'Too many referrals. Try again in an hour.',
+  );
   const job = await loadJob(db, jobId);
   await assertCityAccess(ctx.actor, job.branchId, { entityType: 'job', entityId: job.id });
 

@@ -39,7 +39,7 @@ export default async function MasterDataPage({ searchParams }: { searchParams: S
             {current === 'HOLIDAYS' ? 'Public holidays' : MASTER_DATA_TYPE_LABELS[current]}
           </h2>
           {current === 'HOLIDAYS' ? (
-            <HolidaysView yearParam={params.year} />
+            <HolidaysView actor={actor} yearParam={params.year} />
           ) : (
             <ListView type={current} actor={actor} />
           )}
@@ -70,12 +70,18 @@ async function ListView({
   );
 }
 
-async function HolidaysView({ yearParam }: { yearParam: string | string[] | undefined }) {
+async function HolidaysView({
+  actor,
+  yearParam,
+}: {
+  actor: Awaited<ReturnType<typeof requireRole>>['actor'];
+  yearParam: string | string[] | undefined;
+}) {
   const thisYear = Number(pktDate(new Date()).slice(0, 4));
   const requested = Number(yearParam);
   const year =
     Number.isInteger(requested) && requested >= 2000 && requested <= 2100 ? requested : thisYear;
-  const holidays = await listHolidays({ year });
+  const holidays = await listHolidays(actor, { year, includeInactive: true });
   const years = [...new Set([thisYear - 1, thisYear, thisYear + 1, year])].sort();
   return <HolidaysManager holidays={holidays} year={year} years={years} />;
 }

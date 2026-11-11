@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { HEADERS, type Permission, type Role } from '@jobbank/shared';
 import type { z } from 'zod';
 import { env } from '@/lib/env';
@@ -170,11 +171,36 @@ function assertSameOrigin(request: Request, url: URL, log: Logger): void {
   }
   const cookie = request.headers.get('cookie') ?? '';
   if (SESSION_COOKIE_NAMES.some((name) => cookie.includes(`${name}=`))) {
+    // Audit 2026-11-11 (L-13): in production an origin-less write carrying
+    // a session cookie is blocked — CSRF protection must not rest on
+    // browsers always sending Origin. The only production escape is the
+    // explicit non-browser credential (x-internal-write-token, set via
+    // INTERNAL_WRITE_TOKEN) for unattended automation. Test and development
+    // keep the lenient path: test harnesses, Playwright warm-up and curl
+    // send no Origin by design, and dev carries no production data.
+    if (env.NODE_ENV === 'production' && !hasInternalWriteToken(request)) {
+      log.warn('blocked origin-less cookie-authenticated write in production', {
+        method: request.method,
+        path: url.pathname,
+      });
+      throw new ForbiddenError('Cross-site request blocked');
+    }
     log.warn('origin-less cookie-authenticated write from a non-browser client', {
       method: request.method,
       path: url.pathname,
     });
   }
+}
+
+/** Explicit non-browser credential for unattended automation (L-13). */
+function hasInternalWriteToken(request: Request): boolean {
+  const expected = env.INTERNAL_WRITE_TOKEN;
+  if (!expected) return false;
+  const presented = request.headers.get('x-internal-write-token');
+  if (!presented) return false;
+  const a = Buffer.from(presented);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 function parseWith<S extends AnySchema>(schema: S, value: unknown, label: string): z.infer<S> {

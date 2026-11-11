@@ -563,6 +563,14 @@ export async function respondToJobOffer(
   assertPermission(ctx.actor, 'decision:applicant');
   const applicantId = ctx.actor.applicantId;
   if (!applicantId) throw new ForbiddenError('No applicant profile on this account');
+  // Audit 2026-11-11 (L-20): an offer response notifies the employer —
+  // 10 per applicant per hour is plenty (one response per offer).
+  await enforceRateLimit(
+    'offer-response',
+    applicantId,
+    { limit: 10, windowSeconds: 3600 },
+    'Too many offer responses. Try again in an hour.',
+  );
 
   const reason =
     input.applicantResponse === 'DECLINED'

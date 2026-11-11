@@ -19,6 +19,12 @@ export async function GET(request: Request) {
   if (auth.status !== 'active') {
     return new Response('Unauthorized', { status: 401 });
   }
+  // Audit 2026-11-11 (L-28): the stream bypassed the two-factor-pending
+  // gate every other route enforces — an admin who hasn't enrolled 2FA
+  // could still receive their notifications here. Same check as apiHandler.
+  if (auth.actor.twoFactorPending) {
+    return new Response('Forbidden', { status: 403 });
+  }
   const { userId } = auth.actor;
 
   const url = new URL(request.url);
@@ -60,7 +66,14 @@ export async function GET(request: Request) {
         try {
           const items = await getNewNotificationsSince(userId, cursor);
           if (items.length > 0) {
-            cursor = items[0]!.createdAt; // items are newest-first
+            // Audit 2026-11-11 (L-30): advance to the OLDEST returned
+            // item, not the newest — the query caps at 20 rows, so a
+            // newest-first cursor silently dropped anything past 20 in one
+            // window. (Duplicates from the overlap only re-trigger a page
+            // refresh on the client; nothing renders twice.) One residual
+            // edge: rows sharing one createdAt timestamp past the cap can
+            // still be missed — paging by id would close that too.
+            cursor = items[items.length - 1]!.createdAt;
             send('notifications', items);
           } else {
             send('ping', { ts: new Date().toISOString() });

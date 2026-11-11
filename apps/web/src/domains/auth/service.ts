@@ -252,16 +252,21 @@ export async function loginWithPassword(
   requestHeaders: Headers,
 ): Promise<SignInResult | TwoFactorChallenge | TwoFactorSetupRequired> {
   const email = rawEmail.trim().toLowerCase();
-  await enforceRateLimit(
-    'login-email',
-    email,
-    { limit: 5, windowSeconds: 900 },
-    'Too many sign-in attempts. Try again in 15 minutes.',
-  );
+  // Audit 2026-11-11 (L-16): only FAILED attempts count toward the
+  // per-email bucket (consumed in `failed` below) — a user signing in 5
+  // times in 15 minutes across devices must not lock themselves out, and
+  // successes never spend the budget. The per-IP bucket still gates before
+  // verification, so brute force is throttled either way.
   await rateLimitByIp(ctx, 'login-ip', 30, 900);
 
   const user = await findUserByEmail(email);
   const failed = async (reason: string) => {
+    await enforceRateLimit(
+      'login-email',
+      email,
+      { limit: 5, windowSeconds: 900 },
+      'Too many sign-in attempts. Try again in 15 minutes.',
+    );
     await recordAudit(ctx, {
       action: 'auth.login_failed',
       entityType: 'user',

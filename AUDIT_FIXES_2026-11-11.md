@@ -45,10 +45,10 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | M-14 | fixed | 42110aa — ported listMatchedJobsForStaff + MatchedJobsForReferralCard from the fork clone's uncommitted matched-jobs work (read-only; fork untouched). Staff applicant detail now shows the AI-ranked list with refer buttons, VERIFIED-company + city-scope guards, already-referred flags |
 | M-15 | pending | |
 | M-16 | fixed | 42110aa — OFFER_EXTENDED notification type introduced for the employer-extending-an-offer direction (recordEmployerDecision); OFFER_ACCEPTED kept only for the applicant-accept direction. (Note: the brief's "M-16 (2FA reset)" is the audit's M-28 — see M-28. The MATCH_REJECTED reuse noted in M-16 is lower concern and left as is) |
-| M-17 | pending | |
-| M-18 | pending | |
-| M-19 | pending | |
-| M-20 | pending | Phase 4 work; attempt only if straightforward and safe, else remaining |
+| M-17 | fixed | COMMIT — all 6 `if (ctx.ip)` skips routed through enforceRateLimitByIp (signup-code-ip, signup-ip, 2fa-confirm-ip, invite-accept-ip, password-reset-ip, password-reset-confirm-ip); null IP now lands in the shared 'untrusted' bucket |
+| M-18 | fixed (partial) | COMMIT — enforceRateLimitByIp logs an error in production when no trustworthy IP is known (proxy misconfiguration signal). Outright rejection + TRUSTED_PROXY_HOPS health check remain deployment decisions (see note in code) |
+| M-19 | fixed | COMMIT — absolute 7-day session lifetime enforced in getAuthState (sessions older than SESSION_TTL_SECONDS from creation are anonymous, however recently used); sliding window unchanged inside the 7 days; rememberMe left as is |
+| M-20 | remaining | Phase 4 work — CSP nonces need per-request middleware + layout nonce plumbing; a mistake breaks all scripts/styles at runtime and cannot be verified without a live browser here. Do NOT attempt blind; plan: middleware nonce, layout theme script nonce, drop unsafe-inline/unsafe-eval |
 | M-21 | pending | |
 | M-22 | fixed | 3a1f066 — idempotent: true on POST /api/v1/applicants; dialog now sends an Idempotency-Key |
 | M-23 | pending | |
@@ -80,24 +80,24 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | L-10 | decision-needed | Documented intent ("Missing optional data is NEUTRAL"); do not change weights |
 | L-11 | fixed | 42110aa — updateInterviewStatus now notifies INTERVIEW_RESCHEDULED (not "scheduled") when rescheduling an already-scheduled interview |
 | L-12 | fixed | 42110aa — recordEmployerDecision now notifies the referring staff member (application createdBy, new REFERRAL_DECISION type), skipped when the decider is the referrer |
-| L-13 | pending | |
-| L-14 | pending | |
-| L-15 | pending | |
-| L-16 | pending | |
+| L-13 | fixed | COMMIT — production now blocks origin-less cookie-authenticated writes unless the x-internal-write-token service header matches INTERNAL_WRITE_TOKEN (new optional env); test/dev keep the lenient path with a warning |
+| L-14 | fixed | COMMIT — invite-accept + password-reset-confirm now have the same per-token 10/15m limit as invite lookup (SHA-256 hash of the presented token) |
+| L-15 | fixed | COMMIT — health cap 300→60/min/IP, result cached 5s, exposeErrors only in local dev (NODE_ENV === 'development') |
+| L-16 | fixed | COMMIT — per-email login bucket now counts only FAILED attempts (consumed in failed()); per-IP bucket still gates before verification; successes never spend the budget |
 | L-17 | decision-needed | Documented deliberate fail-open behaviour; accept, do not change |
 | L-18 | decision-needed | Standard practice; do not change |
 | L-19 | pending | |
-| L-20 | pending | |
-| L-21 | pending | |
+| L-20 | fixed | COMMIT — per-user rate limits on placement writes: shortlist 30/hr, refer-to-employer 30/hr (both paths share one bucket), refer-job-applicant 30/hr, employer-decision 30/hr, application-message 60/hr per sender+application, offer-response 10/hr per applicant |
+| L-21 | fixed | COMMIT — shortlistApplicant catches the unique violation and throws the specific 'already shortlisted' message; counter-register maps a concurrent phone collision (users_phoneNumber_unique / users_email_unique) to the specific PHONE_TAKEN message |
 | L-22 | decision-needed | Document-vs-fix decision: identity verification STAFF-only |
 | L-23 | pending | |
 | L-24 | pending | |
 | L-25 | pending | |
 | L-26 | decision-needed | Product decision: should suspension freeze job edits? |
 | L-27 | pending | |
-| L-28 | pending | |
+| L-28 | fixed | COMMIT — SSE stream returns 403 when the actor is twoFactorPending, same gate as apiHandler |
 | L-29 | fixed | 3a1f066 — resend route idempotent: true + client key; inviteStaff/resendInvitation rate-limited 5 per actor+target per hour; resendInvitation rejects within 5 min of the last live invite (cooldown via pendingInvitation.createdAt) |
-| L-30 | pending | |
+| L-30 | fixed | COMMIT — listHolidays now takes the actor and hides inactive rows unless includeInactive + master_data:manage (management page passes includeInactive); SSE cursor advances to the OLDEST returned item so >20-in-a-window notifications are no longer dropped (same-timestamp bulk edge noted in code) |
 | L-31 | pending | |
 | L-32 | pending | |
 | L-33 | pending | |
