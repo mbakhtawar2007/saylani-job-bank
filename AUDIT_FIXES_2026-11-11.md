@@ -39,7 +39,7 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | M-08 | pending | |
 | M-09 | fixed | 8edffa5 — scheduleInterview/updateInterviewStatus require live job (OPEN/PAUSED, pre-check + locked re-check); docstring corrected to Staff / Branch Admin |
 | M-10 | fixed | 8edffa5 — recordEmployerDecision sets lastCallStatus: null, so a repeat HOLD re-appears in the call list |
-| M-11 | fixed | COMMIT — legal correction clears registrationVerifiedSignedAt/By; verifyCompany blocks onboarded companies until a fresh mark-signed for the current round (signedAt >= round.submittedAt; resubmits reuse the round so INFO_REQUESTED flow is unaffected; employer self-registered companies exempt) |
+| M-11 | fixed | 3a80b40 — legal correction clears registrationVerifiedSignedAt/By; verifyCompany blocks onboarded companies until a fresh mark-signed for the current round (signedAt >= round.submittedAt; resubmits reuse the round so INFO_REQUESTED flow is unaffected; employer self-registered companies exempt) |
 | M-12 | pending | |
 | M-13 | decision-needed | Product decision: include INACTIVE applicants in matching pool, or document ACTIVE-only |
 | M-14 | pending | Port from fork clone only if diff is clear and self-contained; else remaining |
@@ -52,7 +52,7 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | M-21 | pending | |
 | M-22 | fixed | 3a1f066 — idempotent: true on POST /api/v1/applicants; dialog now sends an Idempotency-Key |
 | M-23 | pending | |
-| M-24 | fixed | COMMIT — markApplicantRegistrationVerifiedSigned now 409s SELF_ATTESTATION when row.counterRegisteredBy is the actor, mirroring the company path |
+| M-24 | fixed | 3a80b40 — markApplicantRegistrationVerifiedSigned now 409s SELF_ATTESTATION when row.counterRegisteredBy is the actor, mirroring the company path |
 | M-25 | pending | |
 | M-26 | fixed | 3a1f066 — idempotent: true on POST /jobs/me + POST /companies/me/sites; JobWizard create sends a key. Found while fixing: StaffPostJobForm posted to the already-idempotent POST /jobs with NO key, so every staff job post 400d — key added there too |
 | M-27 | pending | |
@@ -74,8 +74,8 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | L-04 | pending | |
 | L-05 | remaining | Needs deployment/scheduler decision (e.g. Vercel Cron + CRON_SECRET) |
 | L-06 | pending | |
-| L-07 | fixed | COMMIT — claimCompany now re-runs the conflict check inside the transaction (autoConflictCheck/assertNoConflictOfInterest take a DbExecutor, tx passed in-tx) |
-| L-08 | fixed | COMMIT — resubmitOnboardedCompany + setOnboardedCompanyHeadOffice now 409 SELF_ATTESTATION when the actor onboarded the company; a colleague or Branch/Super Admin (who hold company:onboard) acts instead |
+| L-07 | fixed | 3a80b40 — claimCompany now re-runs the conflict check inside the transaction (autoConflictCheck/assertNoConflictOfInterest take a DbExecutor, tx passed in-tx) |
+| L-08 | fixed | 3a80b40 — resubmitOnboardedCompany + setOnboardedCompanyHeadOffice now 409 SELF_ATTESTATION when the actor onboarded the company; a colleague or Branch/Super Admin (who hold company:onboard) acts instead |
 | L-09 | fixed | 8edffa5 — jobMachine FILL now allows PAUSED → FILLED, so a paused job whose last vacancy fills becomes FILLED instead of staying PAUSED with zero free vacancies |
 | L-10 | decision-needed | Documented intent ("Missing optional data is NEUTRAL"); do not change weights |
 | L-11 | pending | |
