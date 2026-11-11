@@ -44,6 +44,11 @@ export const KNOWN_NOTIFICATION_TYPES = [
   'COMPANY_REINSTATED',
   'VERIFIER_ASSIGNED',
   'COMPANY_TRANSFERRED',
+  // Audit 2026-11-11 (M-15): verification outcomes were email-only; they
+  // now notify in-app too (employer members + the staff onboarder).
+  'COMPANY_VERIFIED',
+  'COMPANY_REJECTED',
+  'COMPANY_INFO_REQUESTED',
 ] as const;
 
 export type NotificationType = (typeof KNOWN_NOTIFICATION_TYPES)[number];

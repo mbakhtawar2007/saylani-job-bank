@@ -26,7 +26,7 @@ import {
   companyVerifiedEmail,
 } from '@/lib/mail/templates';
 import { companyMachine, READY, type CompanyMachineContext } from './machine';
-import { emailEmployers } from './notify';
+import { emailEmployers, notifyCompanyOutcome } from './notify';
 import {
   buildCompanyView,
   c,
@@ -524,6 +524,15 @@ export async function requestInfo(
       url,
     }),
   );
+  // Audit 2026-11-11 (M-15): the outcome was email-only; notify in-app too
+  // (employer members + the staff onboarder). Best-effort, post-commit.
+  void notifyCompanyOutcome(db, companyId, ({ userId }) => ({
+    userId,
+    type: 'COMPANY_INFO_REQUESTED',
+    title: `More information needed — ${view.details.legalName}`,
+    body: `The verifier asked for more information about ${view.details.legalName}: ${input.note}`,
+    data: { companyId },
+  })).catch((err) => ctx.log.error('company info-request notification failed', { companyId, err }));
   return view;
 }
 
@@ -607,6 +616,15 @@ export async function verifyCompany(
   await emailEmployers(ctx, companyId, ({ name, url }) =>
     companyVerifiedEmail({ name, companyName: view.details.legalName, url }),
   );
+  // Audit 2026-11-11 (M-15): the outcome was email-only; notify in-app too
+  // (employer members + the staff onboarder). Best-effort, post-commit.
+  void notifyCompanyOutcome(db, companyId, ({ userId }) => ({
+    userId,
+    type: 'COMPANY_VERIFIED',
+    title: `Company verified — ${view.details.legalName}`,
+    body: `${view.details.legalName} has been verified and can now post jobs.`,
+    data: { companyId },
+  })).catch((err) => ctx.log.error('company verify notification failed', { companyId, err }));
   return view;
 }
 
@@ -680,5 +698,14 @@ export async function rejectCompany(
       url,
     }),
   );
+  // Audit 2026-11-11 (M-15): the outcome was email-only; notify in-app too
+  // (employer members + the staff onboarder). Best-effort, post-commit.
+  void notifyCompanyOutcome(db, companyId, ({ userId }) => ({
+    userId,
+    type: 'COMPANY_REJECTED',
+    title: `Company verification rejected — ${view.details.legalName}`,
+    body: `${view.details.legalName} was not verified (${rejectionLabels[input.reasonCode] ?? input.reasonCode}). ${input.note}`,
+    data: { companyId, reasonCode: input.reasonCode },
+  })).catch((err) => ctx.log.error('company reject notification failed', { companyId, err }));
   return view;
 }

@@ -1,8 +1,9 @@
 import 'server-only';
 import { schema } from '@jobbank/db';
 import { and, eq, isNotNull } from 'drizzle-orm';
+import { createNotifications, type CreateNotificationInput } from '@/domains/notifications';
 import type { RequestContext } from '@/domains/shared/audit';
-import { db } from '@/lib/db';
+import { db, type DbExecutor } from '@/lib/db';
 import { env } from '@/lib/env';
 import { sendMail, type MailMessage } from '@/lib/mail/mailer';
 
@@ -70,4 +71,37 @@ export async function emailEmployers(
       ctx.log.error('company email failed', { companyId, err });
     }
   }
+}
+
+/**
+ * Audit 2026-11-11 (M-15): the in-app counterpart of emailEmployers.
+ * Verification outcomes went only by email, and the staff member who
+ * onboarded the company got nothing at all. This notifies the employer
+ * members plus the onboarder (from company_onboarding, when one exists),
+ * deduplicated — a self-registered employer is already a member.
+ * Best-effort like the emails: callers fire it post-commit and log failures.
+ */
+export async function notifyCompanyOutcome(
+  executor: DbExecutor,
+  companyId: string,
+  build: (input: { userId: string }) => CreateNotificationInput | null,
+): Promise<void> {
+  const [members, [onboarding]] = await Promise.all([
+    executor
+      .select({ userId: schema.companyMembers.userId })
+      .from(schema.companyMembers)
+      .where(eq(schema.companyMembers.companyId, companyId)),
+    executor
+      .select({ onboardedBy: schema.companyOnboarding.onboardedBy })
+      .from(schema.companyOnboarding)
+      .where(eq(schema.companyOnboarding.companyId, companyId))
+      .limit(1),
+  ]);
+  const userIds = new Set(members.map((member) => member.userId));
+  if (onboarding?.onboardedBy) userIds.add(onboarding.onboardedBy);
+  const payloads = [...userIds].flatMap((userId) => {
+    const payload = build({ userId });
+    return payload ? [payload] : [];
+  });
+  await createNotifications(executor, payloads);
 }
