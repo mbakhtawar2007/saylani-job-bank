@@ -241,6 +241,15 @@ export function MatchesShortlist({ jobId, matches, page, pageSize, reasons }: Pr
                     style={{ width: `${Math.min(100, r.score ?? 0)}%` }}
                   />
                 </div>
+                {r.thinProfile && (
+                  <Badge
+                    tone="warning"
+                    size="sm"
+                    title="Thin profile: fewer than half the scored factors had real data behind them, so this score is weakly evidenced. Ask the applicant to complete their profile before shortlisting."
+                  >
+                    Thin profile
+                  </Badge>
+                )}
               </div>
             ),
           },
@@ -382,6 +391,15 @@ export function MatchesShortlist({ jobId, matches, page, pageSize, reasons }: Pr
         {breakdown && (
           <div className="grid gap-4">
             <p className="text-fg-muted text-sm">{breakdown.summary}</p>
+            {breakdown.completeness !== null && (
+              <p className="text-fg-muted text-sm">
+                Profile completeness: {Math.round(breakdown.completeness * 100)}% of factors
+                scored from real data
+                {breakdown.thinProfile
+                  ? ' — thin profile, treat this score as weakly evidenced.'
+                  : '.'}
+              </p>
+            )}
             <ul className="grid gap-3">
               {breakdown.factors.map((f) => {
                 const pct = f.weight > 0 ? Math.round((f.score / f.weight) * 100) : 0;
@@ -390,6 +408,9 @@ export function MatchesShortlist({ jobId, matches, page, pageSize, reasons }: Pr
                     <div className="flex items-baseline justify-between gap-3">
                       <span className="text-fg text-sm font-medium">
                         {FACTOR_LABELS[f.factor] ?? f.factor}
+                        {!f.hasData && (
+                          <span className="text-fg-subtle font-normal"> · no data</span>
+                        )}
                       </span>
                       <span className="text-fg-subtle numeric text-xs">
                         {f.score.toFixed(1)} / {f.weight.toFixed(1)}

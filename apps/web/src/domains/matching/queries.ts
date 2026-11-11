@@ -33,6 +33,12 @@ export interface JobMatchFactorView {
   score: number;
   weight: number;
   reason: string;
+  /**
+   * Audit 2026-11-11 (L-10): false when the factor defaulted to full weight
+   * for lack of data ("neutral"). Old runs predate the flag — their detail
+   * has no has_data key, which reads as true (cannot be judged thin).
+   */
+  hasData: boolean;
 }
 
 export interface JobMatchView {
@@ -52,6 +58,14 @@ export interface JobMatchView {
   refusalReasonCode: string | null;
   summary: string;
   factors: JobMatchFactorView[];
+  /**
+   * Audit 2026-11-11 (L-10): share of factors scored from real data
+   * (0–1), null when the run stored no factors. thinProfile is true when
+   * fewer than half the factors had real data — the score may still be high
+   * (missing data is neutral), but staff should treat it as weakly evidenced.
+   */
+  completeness: number | null;
+  thinProfile: boolean;
 }
 
 export interface MatchRunSummary {
@@ -174,27 +188,43 @@ async function finishPage(
       startedAt: runRow.startedAt,
       completedAt: runRow.completedAt,
     },
-    matches: rows.map(({ match: r, fullName }) => ({
-      applicantId: r.applicantId,
-      fullName,
-      score: r.score,
-      distanceM: r.distanceM,
-      distanceKm: r.distanceM != null ? formatKm(r.distanceM) : null,
-      reviewStatus: r.reviewStatus,
-      reviewReasonCode: r.reviewReasonCode,
-      reviewNote: r.reviewNote,
-      applicantResponse: r.applicantResponse,
-      refusalReasonCode: r.refusalReasonCode,
-      summary: r.summary,
-      factors: factors
+    matches: rows.map(({ match: r, fullName }) => {
+      const matchFactors = factors
         .filter((f) => f.jobMatchId === r.id)
         .map((f) => ({
           factor: f.factor,
           score: Number(f.score),
           weight: Number(f.weight),
           reason: f.reason,
-        })),
-    })),
+          // Old runs predate the flag: a missing key reads as "had data".
+          hasData: (f.detail as { has_data?: unknown } | null)?.has_data !== false,
+        }));
+      // Audit 2026-11-11 (L-10): completeness is the share of factors with
+      // real data; thin when fewer than half had any. No factors (old or
+      // empty runs) → null / false, never thin by default.
+      const completeness =
+        matchFactors.length > 0
+          ? Math.round(
+              (matchFactors.filter((f) => f.hasData).length / matchFactors.length) * 100,
+            ) / 100
+          : null;
+      return {
+        applicantId: r.applicantId,
+        fullName,
+        score: r.score,
+        distanceM: r.distanceM,
+        distanceKm: r.distanceM != null ? formatKm(r.distanceM) : null,
+        reviewStatus: r.reviewStatus,
+        reviewReasonCode: r.reviewReasonCode,
+        reviewNote: r.reviewNote,
+        applicantResponse: r.applicantResponse,
+        refusalReasonCode: r.refusalReasonCode,
+        summary: r.summary,
+        factors: matchFactors,
+        completeness,
+        thinProfile: completeness !== null && completeness < 0.5,
+      };
+    }),
     total,
   };
 }

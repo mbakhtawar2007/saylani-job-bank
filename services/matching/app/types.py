@@ -118,6 +118,11 @@ class FactorScore(BaseModel):
     score: float
     weight: float
     reason: str
+    # Audit 2026-11-11 (L-10): True when the factor was scored from real
+    # data. False when it defaulted to full weight for lack of data
+    # ("neutral") — the score is unchanged either way; this flag only says
+    # how much evidence the score rests on. Persisted in job_match_factors.detail.
+    has_data: bool = True
     detail: dict = Field(default_factory=dict)
 
 
@@ -133,6 +138,12 @@ class MatchResult(BaseModel):
     distance_m: int | None = None
     summary: str = ""
     factors: list[FactorScore] = Field(default_factory=list)
+    # Audit 2026-11-11 (L-10): fraction of the 9 factors scored from real
+    # data (0.0–1.0). thin_profile is True when fewer than half the factors
+    # had real data — the score may still be high (missing data is neutral),
+    # but staff should treat it as weakly evidenced. Weights are unchanged.
+    completeness: float = 1.0
+    thin_profile: bool = False
 
 
 class MatchRunReport(BaseModel):

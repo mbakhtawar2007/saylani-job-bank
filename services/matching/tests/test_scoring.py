@@ -1,7 +1,7 @@
 """Scoring: weights, boundaries, radius fixtures (7.9 / 9.5 / 10.1 km), tie-breaks."""
 
 from app.scoring import format_distance_km, score_candidate, sort_matches
-from app.types import ApplicantProfile, ApplicantSkill, MatchResult, SkillLevel
+from app.types import ApplicantProfile, ApplicantSkill, JobCriteria, MatchResult, SkillLevel
 
 
 def _points(match: MatchResult) -> float:
@@ -57,6 +57,47 @@ def test_missing_optional_data_is_neutral(frontend_job, perfect_applicant):
     preferences = next(f for f in match.factors if f.factor == "preferences")
     assert salary.score == salary.weight
     assert preferences.score == preferences.weight
+
+
+def test_thin_profile_flagged_without_changing_score():
+    """Audit 2026-11-11 (L-10): an empty profile vs a job with no
+    requirements still scores high (missing data is neutral — weights
+    unchanged) but is flagged thin: no factor had real data to judge."""
+    bare_job = JobCriteria(
+        job_id="job-thin",
+        title="General Helper",
+        category_code="GENERAL",
+        job_type="FULL_TIME",
+        shift="DAY",
+        required_skills=[],
+        preferred_skills=[],
+        min_experience_years=None,
+        min_education_code=None,
+        min_education_rank=None,
+        required_languages=[],
+        salary_max=None,
+    )
+    bare_applicant = ApplicantProfile(applicant_id="thin-1")
+    match = score_candidate(bare_job, bare_applicant)
+    # Only distance scores 0 without a location (weight 14); the other
+    # eight factors are neutral at full weight.
+    assert match.score == 86
+    assert match.completeness == 0.0
+    assert match.thin_profile is True
+    assert all(f.has_data is False for f in match.factors)
+    assert all(f.detail["has_data"] is False for f in match.factors)
+
+
+def test_full_profile_is_not_thin(frontend_job, perfect_applicant):
+    match = score_candidate(frontend_job, perfect_applicant)
+    # Only text_fit lacks data without embeddings (8 of 9 factors real).
+    assert match.completeness == 0.89
+    assert match.thin_profile is False
+    text_fit = next(f for f in match.factors if f.factor == "text_fit")
+    assert text_fit.has_data is False
+    assert all(
+        f.has_data for f in match.factors if f.factor != "text_fit"
+    )
 
 
 def test_salary_gap_reduces_score(frontend_job, perfect_applicant):
