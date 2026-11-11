@@ -87,24 +87,26 @@ describe('two-factor authentication', () => {
   it('Super Admin is blocked until enrolment, then needs a code at every sign-in', async () => {
     const email = 'superadmin@jobbank.local';
     await resetTwoFactor(email);
+    // H-02: a never-enrolled 2FA-required admin gets no session at login —
+    // only a short-lived setup token. Protected routes see no session (401),
+    // and enrolment is the only thing the token buys.
     const jar = await signIn(email);
+    expect(jar.setupToken?.startsWith('v1.')).toBe(true);
 
     const blocked = await call(listBranchesRoute, '/api/v1/branches', { jar });
-    expect(blocked.status).toBe(403);
-    expect(blocked.body.error.details).toEqual({ reason: 'TWO_FACTOR_SETUP_REQUIRED' });
-    expect((await call(me, '/api/v1/auth/me', { jar })).body.data.twoFactorPending).toBe(true);
+    expect(blocked.status).toBe(401);
 
     const badPassword = await call(enroll2fa, '/api/v1/account/2fa/enroll', {
       method: 'POST',
       jar,
-      body: { password: 'wrong-password-1' },
+      body: { password: 'wrong-password-1', setupToken: jar.setupToken },
     });
     expect(badPassword.status).toBe(401);
 
     const start = await call(enroll2fa, '/api/v1/account/2fa/enroll', {
       method: 'POST',
       jar,
-      body: { password: getSeedDevPassword() },
+      body: { password: getSeedDevPassword(), setupToken: jar.setupToken },
     });
     expect(start.status).toBe(200);
     expect(start.body.data.qrSvg).toMatch(/^<svg/);
