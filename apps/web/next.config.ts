@@ -12,38 +12,11 @@ loadEnvConfig(repoRoot, process.env.NODE_ENV !== 'production', console, true);
 
 const isProd = process.env.NODE_ENV === 'production';
 
-/** `https://{s}.tile.example.org/{z}/{x}/{y}.png` → `https://*.tile.example.org` */
-function originOf(url: string | undefined): string | null {
-  const match = url?.match(/^https?:\/\/[^/]+/);
-  return match ? match[0].replace('{s}', '*') : null;
-}
-
-const mapTiles = originOf(process.env.NEXT_PUBLIC_MAP_TILE_URL) ?? 'https://tile.openstreetmap.org';
-// Browsers upload to and download from object storage directly, through presigned URLs.
-const storage = originOf(process.env.S3_ENDPOINT);
-
-const contentSecurityPolicy = [
-  "default-src 'self'",
-  // 'unsafe-inline': the theme script (layout.tsx) and Next's hydration scripts are inline
-  // (no nonces yet — see Phase 4). 'unsafe-eval': only `next dev` needs it.
-  `script-src 'self' 'unsafe-inline'${isProd ? '' : " 'unsafe-eval'"}`,
-  "style-src 'self' 'unsafe-inline'",
-  // images.unsplash.com: landing-page photos. data:/blob:: leaflet markers and previews.
-  ['img-src', "'self'", 'data:', 'blob:', 'https://images.unsplash.com', mapTiles, storage]
-    .filter(Boolean)
-    .join(' '),
-  // next/font/google bundles fonts at build time and serves them from 'self'.
-  "font-src 'self' data:",
-  // connect-src must include storage: document uploads PUT directly to presigned URLs.
-  ['connect-src', "'self'", storage, isProd ? null : 'ws:'].filter(Boolean).join(' '),
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-].join('; ');
-
+// Audit 2026-11-11 (M-20): the Content-Security-Policy is built per request
+// in middleware (src/lib/http/csp.ts) because it carries a nonce —
+// next.config headers are static and cannot hold one. The map-tile host and
+// S3 endpoint it needs are read from env there, same as they were here.
 const securityHeaders = [
-  { key: 'Content-Security-Policy', value: contentSecurityPolicy },
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },

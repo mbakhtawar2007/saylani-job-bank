@@ -1,0 +1,49 @@
+/**
+ * Content Security Policy builder (audit 2026-11-11, M-20 — Phase 4 nonces).
+ *
+ * The CSP header is per-request because it carries a nonce, so it is built
+ * in middleware — not in next.config.ts, whose headers are static. Keep the
+ * directive list in sync with what the app actually needs:
+ *
+ * - script-src: 'self' + per-request nonce. No 'unsafe-inline': the only
+ *   author-written inline script is the theme script (layout.tsx), which
+ *   receives the nonce explicitly, and Next.js applies the same nonce to its
+ *   own hydration scripts from the `x-nonce` request header. 'unsafe-eval'
+ *   stays in non-production only — webpack dev needs it for HMR.
+ * - style-src: 'self' + 'unsafe-inline' (KEPT, deliberately). A nonce cannot
+ *   cover style *attributes*, and the app renders hundreds of React inline
+ *   styles (`style={{...}}`) plus one inline <style> tag (landing page).
+ *   Dropping 'unsafe-inline' here would break the UI with no nonce-based
+ *   alternative. Revisit only if inline styles are ever removed.
+ * - img-src / connect-src include the map-tile host and the S3 endpoint,
+ *   which are build-time env (same values next.config.ts used before).
+ */
+
+function originOf(url: string | undefined): string | null {
+  const match = url?.match(/^https?:\/\/[^/]+/);
+  return match ? match[0].replace('{s}', '*') : null;
+}
+
+export function buildCsp(nonce: string): string {
+  const isProd = process.env.NODE_ENV === 'production';
+  const mapTiles =
+    originOf(process.env.NEXT_PUBLIC_MAP_TILE_URL) ?? 'https://tile.openstreetmap.org';
+  const storage = originOf(process.env.S3_ENDPOINT);
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}'${isProd ? '' : " 'unsafe-eval'"}`,
+    "style-src 'self' 'unsafe-inline'",
+    // images.unsplash.com: landing-page photos. data:/blob:: leaflet markers and previews.
+    ['img-src', "'self'", 'data:', 'blob:', 'https://images.unsplash.com', mapTiles, storage]
+      .filter(Boolean)
+      .join(' '),
+    // next/font/google bundles fonts at build time and serves them from 'self'.
+    "font-src 'self' data:",
+    // connect-src must include storage: document uploads PUT directly to presigned URLs.
+    ['connect-src', "'self'", storage, isProd ? null : 'ws:'].filter(Boolean).join(' '),
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
