@@ -50,6 +50,16 @@ export const env = createEnv({
      * automation exists — an unset value means no bypass exists.
      */
     INTERNAL_WRITE_TOKEN: z.string().min(1).optional(),
+    /**
+     * Optional shared secret for the unattended job-expiry scheduler
+     * (audit 2026-11-11, L-05): sent as the `x-cron-secret` header to
+     * POST /api/v1/admin/maintenance/expire-jobs. A scheduler cannot hold a
+     * user session, so the Super Admin role gate alone cannot authenticate
+     * it. Leave unset unless a scheduler exists — an unset value means no
+     * cron bypass exists and only a signed-in Super Admin may expire jobs.
+     * Generate with: openssl rand -base64 32
+     */
+    CRON_SECRET: z.string().min(1).optional(),
   },
   client: {
     NEXT_PUBLIC_APP_URL: z.url(),

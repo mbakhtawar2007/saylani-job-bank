@@ -1,20 +1,58 @@
+import { timingSafeEqual } from 'node:crypto';
 import { expirePastCloseJobs } from '@/domains/job';
+import { systemContext } from '@/domains/shared/audit';
+import { ForbiddenError, UnauthenticatedError } from '@/domains/shared/errors';
 import { apiHandler, ok } from '@/domains/shared/http';
+import { hasRole } from '@/domains/shared/scope';
+import { env } from '@/lib/env';
 
 /**
  * POST /api/v1/admin/maintenance/expire-jobs — close OPEN/PAUSED jobs whose
- * closesAt has passed (Super Admin only). Returns how many jobs expired.
+ * closesAt has passed. Returns how many jobs expired.
  *
- * HOW IT RUNS: the repo has no scheduler — no cron config, no background
- * worker, no existing sweep to follow. Until one exists, run this daily by
- * hand (a Super Admin POSTs here, e.g. from the admin console or curl with a
- * session cookie) or from whatever schedules the deployment (e.g. Vercel
- * Cron POSTing here). Before wiring it to an unattended caller, add a
- * shared-secret header check (CRON_SECRET in env): an unattended scheduler
- * cannot hold a user session, so the Super Admin role gate alone does not
- * authenticate it. Until then, manual / Super-Admin invocation only.
+ * Two callers, same work:
+ * - A signed-in Super Admin (the manual path — the admin console or curl
+ *   with a session cookie), audited under that admin.
+ * - An unattended scheduler (audit 2026-11-11, L-05): it sends the shared
+ *   secret in the `x-cron-secret` header, or as `Authorization: Bearer
+ *   <CRON_SECRET>` (what Vercel Cron sends by default). The call runs under
+ *   context, so audit rows record actorRole SYSTEM. A scheduler cannot hold
+ *   a user session, so the Super Admin role gate alone cannot authenticate
+ *   it — and a wrong or missing secret falls through to the session gate,
+ *   never to an open door. Leave CRON_SECRET unset and no cron bypass
+ *   exists at all.
+ *
+ * SCHEDULING: the repo has no scheduler config (no vercel.json, no
+ * netlify.toml) and the deployment target is not recorded anywhere, so the
+ * schedule itself is NOT wired here — see the README "Job expiry" section
+ * for the exact cron to add once the target is confirmed. Daily, just after
+ * midnight PKT (19:05 UTC).
  */
 export const POST = apiHandler({
-  roles: ['SUPER_ADMIN'],
-  handler: async ({ ctx }) => ok(await expirePastCloseJobs(ctx)),
+  auth: 'public',
+  handler: async ({ ctx, request }) => {
+    if (hasCronSecret(request)) {
+      return ok(await expirePastCloseJobs(systemContext('expire-jobs', ctx.correlationId)));
+    }
+    if (!ctx.actor) throw new UnauthenticatedError();
+    if (!hasRole(ctx.actor, 'SUPER_ADMIN')) {
+      throw new ForbiddenError('Super Admin only');
+    }
+    return ok(await expirePastCloseJobs(ctx));
+  },
 });
+
+/** Timing-safe compare, mirroring hasInternalWriteToken in handler.ts. */
+function hasCronSecret(request: Request): boolean {
+  const expected = env.CRON_SECRET;
+  if (!expected) return false;
+  const presented =
+    request.headers.get('x-cron-secret') ??
+    // Vercel Cron sends `Authorization: Bearer <CRON_SECRET>` by default and
+    // no custom header — accept it as the same secret, not a second one.
+    request.headers.get('authorization')?.replace(/^Bearer /i, '');
+  if (!presented) return false;
+  const a = Buffer.from(presented);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}

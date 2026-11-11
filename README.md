@@ -58,6 +58,38 @@ fast boot error. The deploy checklist must assert it is unset. `secret.ts`
 still throws at startup unless the auth secret exists and is ≥ 32 chars,
 with no fallback secret anywhere.
 
+`CRON_SECRET` (audit 2026-11-11, L-05) is optional: the shared secret an
+unattended scheduler sends as the `x-cron-secret` header to
+`POST /api/v1/admin/maintenance/expire-jobs`. Generate with
+`openssl rand -base64 32`. Leave it unset and only a signed-in Super Admin
+may expire jobs — no cron bypass exists.
+
+### Job expiry (daily cron)
+
+OPEN/PAUSED jobs whose `closesAt` has passed are closed by
+`POST /api/v1/admin/maintenance/expire-jobs`. Nothing in the app fires
+this on its own, so it needs a daily scheduler — just after midnight PKT,
+i.e. **19:05 UTC** (`5 19 * * *`).
+
+> **Not wired yet — deployment target unconfirmed.** The repo has no
+> `vercel.json`, no `netlify.toml`, and no recorded deployment target, so
+> no cron config was added (audit 2026-11-11, L-05). The route and the
+> `CRON_SECRET` gate are ready; add the schedule on whichever platform
+> hosts the app, e.g. a Vercel Cron entry (the plan mentions Vercel Cron
+> as an option, it is not the confirmed target):
+>
+> ```json
+> { "crons": [{ "path": "/api/v1/admin/maintenance/expire-jobs", "schedule": "5 19 * * *" }] }
+> ```
+>
+> A Vercel Cron call sends no custom header, so if the host cannot send
+> `x-cron-secret`, set `CRON_SECRET` as the cron job's authorization
+> instead (Vercel Cron sends `Authorization: Bearer <CRON_SECRET>` by
+> default) — the route accepts either header. Until a schedule exists,
+> expire jobs by hand: a Super Admin POSTs to the route with a session
+> cookie. Cron calls are audited with actorRole `SYSTEM`.
+
+
 ### Local services
 
 | Service | Address |
