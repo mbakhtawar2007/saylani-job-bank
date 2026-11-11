@@ -308,6 +308,9 @@ export async function scheduleInterview(
         interviewLocation: input.interviewLocation ?? null,
         interviewNote: input.interviewNote ?? null,
         scheduledBy: ctx.actor.userId,
+        // Ported from Najam: reset so the newly scheduled interview
+        // re-appears in the call list (see listPendingCalls).
+        lastCallStatus: null,
         updatedAt: new Date(),
       })
       .where(eq(ap.id, applicationId))
@@ -378,6 +381,10 @@ export async function updateInterviewStatus(
     const patch: Partial<typeof ap.$inferInsert> = {
       status: to,
       note: input.note ?? row.note,
+      // Ported from Najam: reset so a (re)scheduled interview re-appears
+      // in the call list (listPendingCalls hides rows whose lastCallStatus
+      // equals their current status).
+      lastCallStatus: null,
       updatedAt: new Date(),
     };
     if (input.status === 'INTERVIEW_SCHEDULED') {
