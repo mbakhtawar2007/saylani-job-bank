@@ -1,7 +1,7 @@
 import { permissionsFor } from '@jobbank/shared';
 import { schema } from '@jobbank/db';
 import { randomUUID } from 'node:crypto';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PATCH as decideMatch } from '@/app/api/v1/jobs/[id]/matches/[applicantId]/route';
 import { POST as respondOffer } from '@/app/api/v1/offers/[jobId]/response/route';
@@ -338,11 +338,13 @@ describe('employer match decisions (hire / reject)', () => {
       .returning({ readAt: nt.readAt });
     expect(marked[0]!.readAt).not.toBeNull();
 
-    const stillUnread = await db
-      .select()
+    // Only the MATCH_HIRED notification is in scope here: the SHORTLISTED
+    // decision above notifies too, and it stays unread by design.
+    const [after] = await db
+      .select({ readAt: nt.readAt })
       .from(nt)
-      .where(and(eq(nt.userId, f.applicantUserId), isNull(nt.readAt)));
-    expect(stillUnread).toHaveLength(0);
+      .where(and(eq(nt.userId, f.applicantUserId), eq(nt.type, 'MATCH_HIRED')));
+    expect(after!.readAt).not.toBeNull();
   });
 
   it('review decisions enforce the transition table (H19)', async () => {
