@@ -167,6 +167,44 @@ Append-only tables are created with `SELECT jobbank_make_append_only('<table>')`
 | `pnpm db:studio`                             | Drizzle Studio                                       |
 | `pnpm infra:down` / `pnpm infra:reset`       | Stop the services / wipe the volumes and start again |
 
+## Deploy checklist
+
+Before promoting a build to production, confirm every item. The app fails
+fast at boot on a missing secret, but these are deployment-time values the
+build cannot know.
+
+- `SKIP_ENV_VALIDATION` is unset (audit 2026-11-11, L-19). It bypasses
+  validation including the secret-length rule; the deploy must assert it is
+  unset, never set it in production.
+- `TRUSTED_PROXY_HOPS` is set to the real number of reverse proxies in front
+  of the app (audit 2026-11-11, M-18). Count the proxies in the actual chain
+  — do not guess:
+
+  | Deployment | Value |
+  | --- | --- |
+  | Local dev / laptop (no proxy) | `1` (default) |
+  | One reverse proxy (e.g. a single nginx) | `1` |
+  | Cloudflare + nginx | `2` |
+  | Vercel (its edge is the single proxy) | `1` |
+
+  Set it wrong and the failure is silent but safe: too high, and every IP
+  reads as null, so all users share one strict `untrusted` rate-limit bucket
+  (plus a loud production log naming `TRUSTED_PROXY_HOPS`); too low, and the
+  app may trust a client-written `X-Forwarded-For` entry.
+- `CRON_SECRET` is set (see "Job expiry") if a scheduler expires jobs;
+  unset means only a signed-in Super Admin can.
+
+### Why null-IP sign-ins are not rejected
+
+Phone sign-in over LAN (a phone on `http://192.168.0.150:3000`) legitimately
+has no trustworthy IP — there is no proxy in front of the app on the local
+network, and the LAN sign-in fix of 2026-11-09 depends on that path working.
+Rejecting null-IP auth requests outright would break it. Instead, a null IP
+fails closed into the shared `untrusted` rate-limit bucket (strict, one
+bucket for all such users) and logs an error in production. Once the
+production proxies are confirmed, outright rejection is a deployment
+decision to revisit — not a code change to make blind.
+
 ## Troubleshooting
 
 **Docker containers stay in "Created" or "Starting" on macOS.** Docker Desktop may be waiting on a macOS privacy prompt for folder access. The compose file avoids bind mounts for this reason. If it still happens, run `docker desktop restart`. Also check that Docker Desktop has access under System Settings → Privacy & Security → Files and Folders.
