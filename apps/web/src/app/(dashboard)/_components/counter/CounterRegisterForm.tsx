@@ -50,7 +50,26 @@ export function CounterRegisterForm({ basePath }: { basePath: string }) {
       router.push(`${basePath}/${data.id}/complete`);
     } catch (err) {
       if (err instanceof ApiClientError && err.issues.length) {
-        setErrors(Object.fromEntries(err.issues.map((i) => [i.path, i.message])));
+        // Audit 2026-11-11 (M-03): issues for fields this form does not
+        // render (e.g. branchId — "Choose a branch first" when the actor
+        // has no resolvable branch) had nowhere to display, so submit
+        // silently died. Field issues still land on their fields; the
+        // rest become the alert at the bottom of the form.
+        const rendered = new Set([
+          'fullName',
+          'fatherName',
+          'cnic',
+          'dateOfBirth',
+          'gender',
+          'phone',
+          'consentConfirmed',
+        ]);
+        const fieldIssues = err.issues.filter((i) => rendered.has(i.path));
+        const otherIssues = err.issues.filter((i) => !rendered.has(i.path));
+        setErrors(Object.fromEntries(fieldIssues.map((i) => [i.path, i.message])));
+        if (otherIssues.length > 0) {
+          setAlert(otherIssues.map((i) => i.message).join(' '));
+        }
       } else {
         setAlert(err instanceof ApiClientError ? err.message : 'Could not register. Try again.');
       }

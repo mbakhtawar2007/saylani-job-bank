@@ -182,8 +182,12 @@ export function StaffRegisterApplicantForm({
     addressLine: applicant?.address?.addressLine ?? '',
     cityCode: applicant?.address?.cityCode ?? '',
     areaCode: applicant?.address?.areaCode ?? '',
-    lat: applicant?.address?.location.lat ?? 24.8607,
-    lng: applicant?.address?.location.lng ?? 67.0011,
+    // Audit 2026-11-11 (M-01): no pin until the user places one. The old
+    // Karachi-centre default was submitted as the applicant's home
+    // location even when nobody touched the map, which poisoned
+    // nearest-branch and match ranking for anyone outside central Karachi.
+    lat: applicant?.address?.location.lat ?? null,
+    lng: applicant?.address?.location.lng ?? null,
   });
 
   const set = (changes: Partial<typeof form>) => setForm((current) => ({ ...current, ...changes }));
@@ -196,6 +200,14 @@ export function StaffRegisterApplicantForm({
     });
 
   const parse = () => {
+    // Audit 2026-11-11 (M-01): no pin, no registration — fail here with a
+    // plain message instead of letting zod report "Expected object" on the
+    // map field.
+    if (form.lat == null || form.lng == null) {
+      setErrors({ 'address.location': 'Place the applicant’s home pin on the map' });
+      requestErrorFocus();
+      return null;
+    }
     const raw = {
       branchId: form.branchId,
       fullName: form.fullName,
@@ -210,7 +222,8 @@ export function StaffRegisterApplicantForm({
         cityCode: form.cityCode,
         areaCode: form.areaCode || null,
         branchId: form.branchId,
-        location: { lat: form.lat, lng: form.lng },
+        location:
+          form.lat != null && form.lng != null ? { lat: form.lat, lng: form.lng } : null,
       },
       education: {
         items: education.map((item) => ({
@@ -572,9 +585,18 @@ export function StaffRegisterApplicantForm({
                 required
                 error={errors['address.location']}
                 id={fieldControlId('address.location')}
+                hint={
+                  form.lat == null
+                    ? 'Tap the map to place the applicant’s home pin — it is required for matching and branch assignment.'
+                    : undefined
+                }
               >
                 <MapPinPicker
-                  value={{ lat: form.lat, lng: form.lng }}
+                  value={
+                    form.lat != null && form.lng != null
+                      ? { lat: form.lat, lng: form.lng }
+                      : null
+                  }
                   onChange={(location) => set(location)}
                   label="Applicant home location"
                 />

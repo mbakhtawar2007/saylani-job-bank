@@ -501,8 +501,17 @@ function ShortlistDialog({
             />
           )}
         </FormField>
-        <FormField label="Note" hint="Optional note for staff reference.">
-          <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
+        <FormField
+          label="Note"
+          hint="Optional note for staff reference."
+          error={errors.note}
+        >
+          <Textarea
+            rows={2}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={500}
+          />
         </FormField>
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>
@@ -712,6 +721,7 @@ function ReferToEmployerDialog({
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [noteError, setNoteError] = useState<string | undefined>(undefined);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -725,8 +735,14 @@ function ReferToEmployerDialog({
       setOpen(false);
       router.refresh();
     } catch (err) {
-      setError(errorMessage(err));
-      toast.error(errorMessage(err));
+      // Audit 2026-11-11 (M-05): a too-long note failed with only a
+      // generic alert; surface the field issue on the note itself.
+      if (err instanceof ApiClientError && err.issueFor('note')) {
+        setNoteError(err.issueFor('note'));
+      } else {
+        setError(errorMessage(err));
+        toast.error(errorMessage(err));
+      }
     } finally {
       setSaving(false);
     }
@@ -753,13 +769,15 @@ function ReferToEmployerDialog({
             <strong className="text-fg">{jobTitle}</strong>. They will be notified immediately.
           </p>
         </div>
-        <FormField label="Note (optional)">
+        <FormField label="Note (optional)" error={noteError}>
           <Textarea
             rows={2}
             placeholder="Any context for the employer or internal record…"
             value={note}
+            maxLength={500}
             onChange={(e) => {
               setNote(e.target.value);
+              setNoteError(undefined);
               setError(null);
             }}
           />

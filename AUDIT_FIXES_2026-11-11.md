@@ -16,8 +16,8 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | H-04 | fixed | 1f4f35c — GET /applicants list scoped by applicant branch city (branchCityScope on a.branchId); address-less / out-of-city-address applicants now listed |
 | H-05 | fixed | 1f4f35c — DOCUMENT_REVIEW updates only uploaded CNIC sides (null-safe); rejecting a never-uploaded CNIC no longer 500s |
 | H-06 | fixed | 1be1620 — canManageUser asserted in revokeRole after loadTarget, mirroring grantRole |
-| H-07 | fixed | COMMIT — both job forms validate client-side with the server schema (createJobSchema / updateJobSchema / staff extended schema) before any API call; FormErrorSummary + useFocusFieldErrors + field ids on every validated field; API 422 issues mapped back to fields |
-| H-08 | fixed | COMMIT — StaffRegisterApplicantForm wired into FormErrorSummary + useFocusFieldErrors (failed review now jumps to the first bad field); field ids + per-field errors on personal/address/education/experience/certification/preference fields; skills & languages rows stay bare atoms (no FormField to anchor) |
+| H-07 | fixed | 1e89ad5 — both job forms validate client-side with the server schema (createJobSchema / updateJobSchema / staff extended schema) before any API call; FormErrorSummary + useFocusFieldErrors + field ids on every validated field; API 422 issues mapped back to fields |
+| H-08 | fixed | 1e89ad5 — StaffRegisterApplicantForm wired into FormErrorSummary + useFocusFieldErrors (failed review now jumps to the first bad field); field ids + per-field errors on personal/address/education/experience/certification/preference fields; skills & languages rows stay bare atoms (no FormField to anchor) |
 | H-09 | fixed | 8edffa5 — employer interview scheduling implemented: scheduleEmployerInterview + updateEmployerInterviewStatus (decision:employer, own-company check), route applications/[id]/employer-interview, EmployerInterviewScheduler UI in ReferralDetail; employer owns the interview once scheduled; applicant notified on every change |
 | H-10 | fixed | 8edffa5 — referApplicantToEmployer requires OPEN (pre-check + locked re-check in tx) via shared job guard |
 | H-11 | fixed | 8edffa5 — shared job guard (job/status-guard.ts): decisions/accepts/interviews blocked unless OPEN/PAUSED, re-checked under job lock; company VERIFIED re-checked on decisions; applicant Jobs page already badges non-OPEN jobs (page.tsx:40-45) |
@@ -29,11 +29,11 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 
 | ID | Status | Commit / note |
 |----|--------|---------------|
-| M-01 | pending | |
-| M-02 | pending | |
-| M-03 | pending | |
-| M-04 | pending | |
-| M-05 | pending | |
+| M-01 | fixed | COMMIT — assisted form no longer defaults to a Karachi-centre pin: lat/lng start null, MapPinPicker shows no pin (map still centres on Karachi), parse() fails with a plain "place the pin" error on address.location |
+| M-02 | fixed | COMMIT — assisted schema phone now uses pkMobileSchema (same as dialog path); address stays required in the assisted path (counter collects it in person; matching/branch logic needs it), optional in the dialog/token-completion path |
+| M-03 | fixed | COMMIT — CounterRegisterForm: API issues for fields the form does not render (e.g. branchId) now fall back to the alert instead of silently dying |
+| M-04 | fixed | COMMIT — employer decision modal: note labelled required + "at least 5 characters" hint when REJECTED, Confirm disabled until ≥5 chars, maxLength 500, field issue surfaced on the note via issueFor('note') |
+| M-05 | fixed | COMMIT — shortlist dialog: error={errors.note} + maxLength 500 on the note; Refer to employer dialog: note issue surfaced on the field (noteError state) + maxLength 500 |
 | M-06 | pending | |
 | M-07 | pending | |
 | M-08 | pending | |

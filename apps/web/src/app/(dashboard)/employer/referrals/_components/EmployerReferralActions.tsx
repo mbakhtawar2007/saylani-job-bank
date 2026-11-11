@@ -23,6 +23,7 @@ export function EmployerReferralActions({ applicationId, status, companyName, jo
   );
 
   const [decisionNote, setDecisionNote] = useState('');
+  const [decisionNoteError, setDecisionNoteError] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(false);
 
   async function handleDecision(decision: 'HOLD' | 'ACCEPTED' | 'REJECTED') {
@@ -40,13 +41,31 @@ export function EmployerReferralActions({ applicationId, status, companyName, jo
       toast.success(labels[decision]);
       setDecisionOpen(false);
       setPendingDecision(null);
+      setDecisionNote('');
+      setDecisionNoteError(undefined);
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof ApiClientError ? err.message : 'Failed to record decision');
+      // Audit 2026-11-11 (M-04): a short note on REJECTED used to fail
+      // with a toast only and the modal stayed open with no visible
+      // reason. Surface the field issue on the note itself.
+      if (err instanceof ApiClientError) {
+        setDecisionNoteError(err.issueFor('note'));
+        if (!err.issueFor('note')) {
+          toast.error(err.message);
+        }
+      } else {
+        toast.error('Failed to record decision');
+      }
     } finally {
       setLoading(false);
     }
   }
+
+  // Audit 2026-11-11 (M-04): REJECTED requires a note of at least 5
+  // characters server-side, but the modal labelled it "(optional)" and
+  // never disabled Confirm — the failure only surfaced as a toast.
+  const noteRequired = pendingDecision === 'REJECTED';
+  const noteValid = !noteRequired || decisionNote.trim().length >= 5;
 
   // Employer interview scheduling lives in EmployerInterviewScheduler
   // (audit H-09): the employer schedules, reschedules, postpones or cancels
@@ -103,7 +122,11 @@ export function EmployerReferralActions({ applicationId, status, companyName, jo
         open={decisionOpen}
         onOpenChange={(open) => {
           setDecisionOpen(open);
-          if (!open) setPendingDecision(null);
+          if (!open) {
+            setPendingDecision(null);
+            setDecisionNote('');
+            setDecisionNoteError(undefined);
+          }
         }}
         title={
           pendingDecision === 'ACCEPTED'
@@ -121,11 +144,23 @@ export function EmployerReferralActions({ applicationId, status, companyName, jo
                 ? 'The applicant will be notified that they were not selected.'
                 : 'The applicant will be notified that their application is on hold.'}
           </p>
-          <FormField label="Note (optional)">
+          <FormField
+            label={noteRequired ? 'Note (required)' : 'Note (optional)'}
+            hint={
+              noteRequired
+                ? 'Required for Not Selected — at least 5 characters, so the applicant knows why.'
+                : undefined
+            }
+            error={decisionNoteError}
+          >
             <Textarea
               value={decisionNote}
-              onChange={(e) => setDecisionNote(e.target.value)}
+              onChange={(e) => {
+                setDecisionNote(e.target.value);
+                setDecisionNoteError(undefined);
+              }}
               rows={3}
+              maxLength={500}
               placeholder="Any additional context…"
             />
           </FormField>
@@ -136,12 +171,14 @@ export function EmployerReferralActions({ applicationId, status, companyName, jo
               onClick={() => {
                 setDecisionOpen(false);
                 setPendingDecision(null);
+                setDecisionNote('');
+                setDecisionNoteError(undefined);
               }}
             >
               Cancel
             </Button>
             <Button
-              disabled={loading || !pendingDecision}
+              disabled={loading || !pendingDecision || !noteValid}
               onClick={() => pendingDecision && handleDecision(pendingDecision)}
               variant={pendingDecision === 'REJECTED' ? 'danger' : 'primary'}
             >

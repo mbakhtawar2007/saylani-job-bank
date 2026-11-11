@@ -572,7 +572,13 @@ export const assistedApplicantRegistrationSchema = z.object({
   branchId: z.uuid(),
   ...personalFields,
   gender: z.enum(ASSISTED_REGISTRATION_GENDERS, 'Choose Male or Female'),
-  phone: z.string().min(10).max(20),
+  // Audit 2026-11-11 (M-02): same validator as the dialog path
+  // (pkMobileSchema) — the old min/max length check accepted landlines
+  // and short numbers the server domain then had to reject, with
+  // different error text. Address stays required here: the assisted
+  // form collects it at the counter and matching/branch logic needs the
+  // home location; the dialog (token-completion) path keeps it optional.
+  phone: pkMobileSchema,
   address: applicantLocationSchema,
   education: educationSchema.optional().default({ items: [] }),
   experience: experienceSchema.optional().default({ hasNoExperience: false, items: [] }),
