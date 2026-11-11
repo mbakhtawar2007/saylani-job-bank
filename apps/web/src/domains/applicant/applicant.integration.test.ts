@@ -6,6 +6,7 @@ import { POST as markVerifiedSigned } from '@/app/api/v1/applicants/[id]/registr
 import { GET as staffDocUrl } from '@/app/api/v1/applicants/[id]/documents/[docId]/url/route';
 import { POST as verifyIdentity } from '@/app/api/v1/applicants/[id]/identity-verification/route';
 import { PUT as changePhone } from '@/app/api/v1/applicants/[id]/phone/route';
+import { POST as requestPhoneCode } from '@/app/api/v1/applicants/[id]/phone/code/route';
 import { PATCH as staffStatus } from '@/app/api/v1/applicants/[id]/status/route';
 import { POST as transfer } from '@/app/api/v1/applicants/[id]/transfer/route';
 import { GET as branchOptions } from '@/app/api/v1/applicants/me/branch-options/route';
@@ -22,6 +23,7 @@ import { POST as register } from '@/app/api/v1/applicants/register/route';
 import { GET as listApplicants, POST as staffRegister } from '@/app/api/v1/applicants/route';
 import { resetMemoryRateLimits } from '@/domains/shared/rate-limit';
 import { db } from '@/lib/db';
+import { devOutbox } from '@/lib/sms/sms';
 import {
   call,
   owner,
@@ -773,9 +775,21 @@ describe('staff access', () => {
     const { jar, profile } = await activeApplicant();
     const staff = await signIn('staff.khi@jobbank.local');
     const newPhone = randomPhone();
+    // M-21: the new number must prove itself first — request the 6-digit
+    // code texted to it, then spend it on the change.
+    const codeReq = await call(requestPhoneCode, `/api/v1/applicants/${profile.id}/phone/code`, {
+      method: 'POST',
+      body: { phone: newPhone },
+      jar: staff,
+      params: { id: profile.id },
+    });
+    expect(codeReq.status, JSON.stringify(codeReq.body)).toBe(200);
+    const message = [...devOutbox].reverse().find((m) => m.to === newPhone);
+    const code = message?.message.match(/\b(\d{6})\b/)?.[1];
+    expect(code).toBeDefined();
     const changed = await call(changePhone, `/api/v1/applicants/${profile.id}/phone`, {
       method: 'PUT',
-      body: { phone: newPhone, reason: 'Lost SIM, verified at the branch' },
+      body: { phone: newPhone, reason: 'Lost SIM, verified at the branch', code },
       jar: staff,
       params: { id: profile.id },
     });
