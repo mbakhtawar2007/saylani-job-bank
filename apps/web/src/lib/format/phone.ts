@@ -3,6 +3,8 @@
  * Mobile numbers start with 3 after the country code and have 10 national digits.
  */
 
+import { PAKISTAN_MOBILE_PREFIXES as SHARED_MOBILE_PREFIXES } from '@jobbank/shared';
+
 const NATIONAL_MOBILE = /^3\d{9}$/;
 
 /** Original Pakistani mobile allocations; MNP means these do not identify the current operator. */
@@ -18,7 +20,12 @@ export const PAKISTAN_MOBILE_PREFIXES = [
   ...Array.from({ length: 9 }, (_, i) => ({ prefix: `37${i + 1}`, network: 'ONIC' })),
 ] as const;
 
-const supportedPrefixes = new Set(PAKISTAN_MOBILE_PREFIXES.map(({ prefix }) => prefix));
+// Audit 2026-11-11 (L-03): the supported set comes from @jobbank/shared —
+// the same list pkMobileSchema refines against — so the input, the schema
+// and the server domains can never disagree again. The table above only
+// adds the network label for the prefix dropdown; format.test.ts asserts
+// the two lists hold the same prefixes.
+const supportedPrefixes = new Set<string>(SHARED_MOBILE_PREFIXES);
 
 export function isSupportedPkMobile(e164: string): boolean {
   return supportedPrefixes.has(e164.slice(3, 6));

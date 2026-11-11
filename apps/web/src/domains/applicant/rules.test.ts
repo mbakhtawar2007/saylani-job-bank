@@ -258,4 +258,12 @@ describe('phone schemas (M21)', () => {
     expect(pkMobileSchema.safeParse('021 34567890').success).toBe(false);
     expect(pkMobileSchema.safeParse('0213456789').success).toBe(false);
   });
+
+  // Audit 2026-11-11 (L-03): a valid 3xx shape with an unallocated
+  // prefix (0399) is rejected by the schema, like the input and domains.
+  it('rejects a valid-shaped number with an unallocated prefix', () => {
+    expect(pkMobileSchema.safeParse('03991234567').success).toBe(false);
+    expect(pkMobileSchema.safeParse('+923991234567').success).toBe(false);
+    expect(pkMobileSchema.parse('03451234567')).toBe('+923451234567');
+  });
 });

@@ -6,7 +6,11 @@ import {
   COMPANY_SIZE_BANDS,
   COMPANY_SIZE_LABELS,
   RESUBMIT_NOTE_MIN_LENGTH,
+  companyContactsSchema,
+  companyHeadOfficeSchema,
   isResubmitNoteSufficient,
+  registerCompanySchema,
+  updateCompanySchema,
   type CompanyStatus,
 } from '@jobbank/shared';
 import { ArrowLeft, ArrowRight, CheckCircle2, Send } from 'lucide-react';
@@ -14,9 +18,20 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Badge, Input, Select, StatusPill, Textarea } from '@/components/atoms';
 import { FormField, PhoneInput } from '@/components/molecules';
-import { apiFetch, friendlyApiError } from '@/lib/api/client';
+import { apiFetch, ApiClientError, friendlyApiError } from '@/lib/api/client';
 import type { CompanyView } from '@/domains/company';
 import { normalizePkMobile } from '@/lib/format/phone';
+import {
+  FormErrorSummary,
+  fieldControlId,
+  humanizeFieldKey,
+  useFocusFieldErrors,
+} from '../../../_components/FormErrorSummary';
+import {
+  toFieldErrors,
+  zodFieldErrors,
+  type FieldErrors,
+} from '../../../_components/applicants/form';
 
 function friendlyError(err: unknown): string {
   return friendlyApiError(err);
@@ -122,6 +137,9 @@ function DetailsStep({
   const [industries, setIndustries] = useState<{ code: string; label: string }[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, error);
 
   useEffect(() => {
     apiFetch<{ code: string; label: string }[]>('/api/v1/master-data?type=INDUSTRY')
@@ -134,20 +152,32 @@ function DetailsStep({
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
+    const body = {
+      legalName: form.legalName,
+      tradeName: form.tradeName || undefined,
+      legalStructure: form.legalStructure,
+      ntn: form.ntn,
+      registrationNo: form.registrationNo || undefined,
+      industryCode: form.industryCode,
+      sizeBand: form.sizeBand,
+      website: form.website || undefined,
+      description: form.description || undefined,
+    };
+    // Audit 2026-11-11 (L-01): validate client-side with the same schema
+    // the server enforces. Without it a bare "acme.com" was blocked by the
+    // browser's native URL check although the schema accepts it (it
+    // prepends https://), while a 7-char non-numeric NTN passed the
+    // length-only button gate and failed server-side with a generic error.
+    const parsed = (company ? updateCompanySchema : registerCompanySchema).safeParse(body);
+    if (!parsed.success) {
+      setErrors(zodFieldErrors(parsed.error));
+      requestErrorFocus();
+      return;
+    }
+    setErrors({});
     setPending(true);
     setError(null);
     try {
-      const body = {
-        legalName: form.legalName,
-        tradeName: form.tradeName || undefined,
-        legalStructure: form.legalStructure,
-        ntn: form.ntn,
-        registrationNo: form.registrationNo || undefined,
-        industryCode: form.industryCode,
-        sizeBand: form.sizeBand,
-        website: form.website || undefined,
-        description: form.description || undefined,
-      };
       let saved: CompanyView;
       if (!company) {
         const fingerprint = JSON.stringify(body);
@@ -167,7 +197,14 @@ function DetailsStep({
       }
       onSaved(saved);
     } catch (err) {
-      setError(friendlyError(err));
+      if (err instanceof ApiClientError && err.issues.length > 0) {
+        setErrors(toFieldErrors(err.issues));
+        requestErrorFocus();
+      } else {
+        setErrors({});
+        setError(friendlyError(err));
+        requestAlertFocus();
+      }
     } finally {
       setPending(false);
     }
@@ -181,22 +218,42 @@ function DetailsStep({
     form.sizeBand;
 
   return (
-    <form className="grid gap-5 sm:grid-cols-2" onSubmit={(e) => void save(e)}>
-      <FormField label="Registered company name" required>
+    <form
+      className="grid gap-5 sm:grid-cols-2"
+      noValidate
+      ref={formRef}
+      onSubmit={(e) => void save(e)}
+    >
+      <FormField
+        label="Registered company name"
+        required
+        id={fieldControlId('legalName')}
+        error={errors.legalName}
+      >
         <Input
           placeholder="e.g. Saylani Welfare International Trust"
           value={form.legalName}
           onChange={(e) => set('legalName')(e.target.value)}
         />
       </FormField>
-      <FormField label="Trading name" hint="Leave empty if trading under the registered name">
+      <FormField
+        label="Trading name"
+        hint="Leave empty if trading under the registered name"
+        id={fieldControlId('tradeName')}
+        error={errors.tradeName}
+      >
         <Input
           placeholder="e.g. Saylani Welfare"
           value={form.tradeName}
           onChange={(e) => set('tradeName')(e.target.value)}
         />
       </FormField>
-      <FormField label="Business type" required>
+      <FormField
+        label="Business type"
+        required
+        id={fieldControlId('legalStructure')}
+        error={errors.legalStructure}
+      >
         <Select
           value={form.legalStructure}
           onChange={(e) => set('legalStructure')(e.target.value)}
@@ -204,7 +261,12 @@ function DetailsStep({
           placeholder="Choose a type"
         />
       </FormField>
-      <FormField label="NTN (National Tax Number)" required>
+      <FormField
+        label="NTN (National Tax Number)"
+        required
+        id={fieldControlId('ntn')}
+        error={errors.ntn}
+      >
         <Input
           placeholder="e.g. 1234567-8"
           value={form.ntn}
@@ -214,6 +276,8 @@ function DetailsStep({
       <FormField
         label="Registration / SECP number"
         hint="Required for private/public limited companies"
+        id={fieldControlId('registrationNo')}
+        error={errors.registrationNo}
       >
         <Input
           placeholder="e.g. 0012345"
@@ -221,7 +285,12 @@ function DetailsStep({
           onChange={(e) => set('registrationNo')(e.target.value)}
         />
       </FormField>
-      <FormField label="Industry" required>
+      <FormField
+        label="Industry"
+        required
+        id={fieldControlId('industryCode')}
+        error={errors.industryCode}
+      >
         <Select
           value={form.industryCode}
           onChange={(e) => set('industryCode')(e.target.value)}
@@ -229,7 +298,12 @@ function DetailsStep({
           placeholder="Choose an industry"
         />
       </FormField>
-      <FormField label="Company size" required>
+      <FormField
+        label="Company size"
+        required
+        id={fieldControlId('sizeBand')}
+        error={errors.sizeBand}
+      >
         <Select
           value={form.sizeBand}
           onChange={(e) => set('sizeBand')(e.target.value)}
@@ -237,7 +311,11 @@ function DetailsStep({
           placeholder="Choose a size"
         />
       </FormField>
-      <FormField label="Website">
+      <FormField
+        label="Website"
+        id={fieldControlId('website')}
+        error={errors.website}
+      >
         <Input
           type="url"
           placeholder="https://example.com"
@@ -245,7 +323,12 @@ function DetailsStep({
           onChange={(e) => set('website')(e.target.value)}
         />
       </FormField>
-      <FormField label="About the company" className="sm:col-span-2">
+      <FormField
+        label="About the company"
+        className="sm:col-span-2"
+        id={fieldControlId('description')}
+        error={errors.description}
+      >
         <Textarea
           rows={3}
           placeholder="Briefly describe what your company does, its mission, and the kind of staff you are looking for."
@@ -253,7 +336,14 @@ function DetailsStep({
           onChange={(e) => set('description')(e.target.value)}
         />
       </FormField>
-      {error && <p className="text-danger text-sm sm:col-span-2">{error}</p>}
+      {error && (
+        <p role="alert" className="text-danger text-sm sm:col-span-2">
+          {error}
+        </p>
+      )}
+      <div className="sm:col-span-2">
+        <FormErrorSummary errors={errors} labelFor={humanizeFieldKey} />
+      </div>
       <div className="border-border flex justify-end border-t pt-4 sm:col-span-2">
         <Button type="submit" loading={pending} disabled={!isReady} rightIcon={<ArrowRight />}>
           Save and continue
@@ -301,6 +391,9 @@ function ContactsStep({
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, error);
 
   function updateItem(index: number, key: keyof ContactForm, value: string | boolean) {
     setItems((prev) =>
@@ -313,24 +406,42 @@ function ContactsStep({
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
+    const body = {
+      items: items.map((c) => ({
+        name: c.name,
+        designation: c.designation || undefined,
+        phone: c.phone,
+        email: c.email || undefined,
+        isPrimary: c.isPrimary,
+      })),
+    };
+    // Audit 2026-11-11 (L-01): validate client-side with the same schema
+    // the server enforces, so a bad name or phone is flagged on its
+    // contact instead of failing the round trip with a generic error.
+    const parsed = companyContactsSchema.safeParse(body);
+    if (!parsed.success) {
+      setErrors(zodFieldErrors(parsed.error));
+      requestErrorFocus();
+      return;
+    }
+    setErrors({});
     setPending(true);
     setError(null);
     try {
       const { data: saved } = await apiFetch<CompanyView>('/api/v1/companies/me/contacts', {
         method: 'PUT',
-        body: {
-          items: items.map((c) => ({
-            name: c.name,
-            designation: c.designation || undefined,
-            phone: c.phone,
-            email: c.email || undefined,
-            isPrimary: c.isPrimary,
-          })),
-        },
+        body,
       });
       onSaved(saved);
     } catch (err) {
-      setError(friendlyError(err));
+      if (err instanceof ApiClientError && err.issues.length > 0) {
+        setErrors(toFieldErrors(err.issues));
+        requestErrorFocus();
+      } else {
+        setErrors({});
+        setError(friendlyError(err));
+        requestAlertFocus();
+      }
     } finally {
       setPending(false);
     }
@@ -343,7 +454,7 @@ function ContactsStep({
     primaryCount === 1;
 
   return (
-    <form className="grid gap-6" onSubmit={(e) => void save(e)}>
+    <form className="grid gap-6" noValidate ref={formRef} onSubmit={(e) => void save(e)}>
       <p className="text-fg-muted text-sm">
         Add the people Job Bank can contact about your company. Mark one as the main contact.
       </p>
@@ -373,14 +484,23 @@ function ContactsStep({
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="Full name" required>
+            <FormField
+              label="Full name"
+              required
+              id={fieldControlId(`items.${idx}.name`)}
+              error={errors[`items.${idx}.name`]}
+            >
               <Input
                 placeholder="e.g. Ahmed Khan"
                 value={item.name}
                 onChange={(e) => updateItem(idx, 'name', e.target.value)}
               />
             </FormField>
-            <FormField label="Designation">
+            <FormField
+              label="Designation"
+              id={fieldControlId(`items.${idx}.designation`)}
+              error={errors[`items.${idx}.designation`]}
+            >
               <Input
                 placeholder="e.g. HR Manager"
                 value={item.designation}
@@ -391,6 +511,8 @@ function ContactsStep({
               label="Phone"
               required
               hint="Enter a 10-digit Pakistani mobile number starting with 3. The +92 prefix is fixed."
+              id={fieldControlId(`items.${idx}.phone`)}
+              error={errors[`items.${idx}.phone`]}
             >
               <PhoneInput
                 aria-label={`Contact ${idx + 1} phone`}
@@ -398,7 +520,11 @@ function ContactsStep({
                 onChange={(change) => updateItem(idx, 'phone', change.e164 ?? change.national)}
               />
             </FormField>
-            <FormField label="Email">
+            <FormField
+              label="Email"
+              id={fieldControlId(`items.${idx}.email`)}
+              error={errors[`items.${idx}.email`]}
+            >
               <Input
                 type="email"
                 placeholder="contact@company.com"
@@ -418,7 +544,12 @@ function ContactsStep({
           Add another contact
         </Button>
       )}
-      {error && <p className="text-danger text-sm">{error}</p>}
+      {error && (
+        <p role="alert" className="text-danger text-sm">
+          {error}
+        </p>
+      )}
+      <FormErrorSummary errors={errors} labelFor={humanizeFieldKey} />
       <Button
         type="submit"
         fullWidth
@@ -515,6 +646,9 @@ function LocationStep({
   const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, error);
   const [searchQuery, setSearchQuery] = useState(hq?.addressLine ?? '');
   const [suggestions, setSuggestions] = useState<GeoResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -660,19 +794,38 @@ function LocationStep({
         area.trim() && /^[A-Z0-9_]+$/.test(area.trim().toUpperCase())
           ? area.trim().toUpperCase()
           : undefined;
+      const body = {
+        location: { lat: useLat, lng: useLng },
+        addressLine,
+        cityCode: useCityCode,
+        areaCode: areaCodeToSend,
+        branchId: useBranchId,
+      };
+      // Audit 2026-11-11 (L-01): validate the resolved body client-side
+      // with the same schema the server enforces, so a missing city code
+      // or branch is flagged on its field instead of failing the round
+      // trip with a generic error.
+      const parsed = companyHeadOfficeSchema.safeParse(body);
+      if (!parsed.success) {
+        setErrors(zodFieldErrors(parsed.error));
+        requestErrorFocus();
+        return;
+      }
+      setErrors({});
       const { data: saved } = await apiFetch<CompanyView>('/api/v1/companies/me/head-office', {
         method: 'PUT',
-        body: {
-          location: { lat: useLat, lng: useLng },
-          addressLine,
-          cityCode: useCityCode,
-          areaCode: areaCodeToSend,
-          branchId: useBranchId,
-        },
+        body,
       });
       onSaved(saved);
     } catch (err) {
-      setError(friendlyError(err));
+      if (err instanceof ApiClientError && err.issues.length > 0) {
+        setErrors(toFieldErrors(err.issues));
+        requestErrorFocus();
+      } else {
+        setErrors({});
+        setError(friendlyError(err));
+        requestAlertFocus();
+      }
     } finally {
       setPending(false);
     }
@@ -685,7 +838,7 @@ function LocationStep({
   const isReady = addressLine.trim().length >= 5 && city.trim().length >= 2;
 
   return (
-    <form className="grid gap-4" onSubmit={(e) => void save(e)}>
+    <form className="grid gap-4" noValidate ref={formRef} onSubmit={(e) => void save(e)}>
       <p className="text-fg-muted text-sm">
         Search for your head office address. Job Bank will suggest the nearest branch automatically.
       </p>
@@ -730,7 +883,12 @@ function LocationStep({
         </p>
       )}
 
-      <FormField label="Full address" required>
+      <FormField
+        label="Full address"
+        required
+        id={fieldControlId('addressLine')}
+        error={errors.addressLine}
+      >
         <Input
           placeholder="Building name, street, area"
           value={addressLine}
@@ -739,7 +897,12 @@ function LocationStep({
       </FormField>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <FormField label="City" required>
+        <FormField
+          label="City"
+          required
+          id={fieldControlId('cityCode')}
+          error={errors.cityCode}
+        >
           <Input
             placeholder="e.g. Karachi"
             value={city}
@@ -751,7 +914,11 @@ function LocationStep({
             }}
           />
         </FormField>
-        <FormField label="Area">
+        <FormField
+          label="Area"
+          id={fieldControlId('areaCode')}
+          error={errors.areaCode}
+        >
           <Input
             placeholder="e.g. DHA Phase 5"
             value={area}
@@ -761,7 +928,12 @@ function LocationStep({
       </div>
 
       {branches.length > 0 && (
-        <FormField label="Nearest Job Bank branch" required>
+        <FormField
+          label="Nearest Job Bank branch"
+          required
+          id={fieldControlId('branchId')}
+          error={errors.branchId}
+        >
           <Select
             value={branchId}
             onChange={(e) => setBranchId(e.target.value)}
@@ -769,7 +941,12 @@ function LocationStep({
           />
         </FormField>
       )}
-      {error && <p className="text-danger text-sm">{error}</p>}
+      {error && (
+        <p role="alert" className="text-danger text-sm">
+          {error}
+        </p>
+      )}
+      <FormErrorSummary errors={errors} labelFor={humanizeFieldKey} />
       {!hasCoords && isReady && (
         <p className="text-fg-muted text-xs">
           No suggestion picked — we&apos;ll locate this address when you save.

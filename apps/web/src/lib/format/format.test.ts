@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { PAKISTAN_MOBILE_PREFIXES as SHARED_MOBILE_PREFIXES } from '@jobbank/shared';
 import { formatCnic, isValidCnic, maskCnic } from './cnic';
 import { distanceBand, distanceTone, formatDistance } from './distance';
 import {
+  PAKISTAN_MOBILE_PREFIXES,
   formatPkMobileDisplay,
   formatPkMobileNational,
   isSupportedPkMobile,
@@ -35,6 +37,15 @@ describe('normalizePkMobile', () => {
   it('recognizes only listed original allocation prefixes', () => {
     expect(isSupportedPkMobile('+923441234567')).toBe(true);
     expect(isSupportedPkMobile('+923991234567')).toBe(false);
+  });
+
+  // Audit 2026-11-11 (L-03): the dropdown table and the shared schema
+  // list must hold the same prefixes, or the input and the schema
+  // disagree again.
+  it('dropdown prefix table matches the shared allowlist', () => {
+    expect([...PAKISTAN_MOBILE_PREFIXES.map(({ prefix }) => prefix)].sort()).toEqual([
+      ...SHARED_MOBILE_PREFIXES,
+    ].sort());
   });
 });
 

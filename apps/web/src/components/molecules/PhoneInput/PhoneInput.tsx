@@ -76,7 +76,11 @@ export function PhoneInput({
         const next = toNationalMobileDigits(event.target.value);
         setInternal(next);
         const e164 = normalizePkMobile(next);
-        onChange?.({ e164, national: next, valid: e164 !== null });
+        // Audit 2026-11-11 (L-03): the free-text path used to emit E.164
+        // for any 3xx shape, including unallocated prefixes the server
+        // rejects — same allowlist check as the segmented path.
+        const supported = e164 !== null && isSupportedPkMobile(e164);
+        onChange?.({ e164: supported ? e164 : null, national: next, valid: supported });
       }}
       startAdornment={
         <span className="border-border text-fg-muted numeric border-e pe-2 text-sm font-medium">

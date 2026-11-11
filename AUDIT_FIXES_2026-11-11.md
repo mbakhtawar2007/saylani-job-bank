@@ -29,11 +29,11 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 
 | ID | Status | Commit / note |
 |----|--------|---------------|
-| M-01 | fixed | COMMIT — assisted form no longer defaults to a Karachi-centre pin: lat/lng start null, MapPinPicker shows no pin (map still centres on Karachi), parse() fails with a plain "place the pin" error on address.location |
-| M-02 | fixed | COMMIT — assisted schema phone now uses pkMobileSchema (same as dialog path); address stays required in the assisted path (counter collects it in person; matching/branch logic needs it), optional in the dialog/token-completion path |
-| M-03 | fixed | COMMIT — CounterRegisterForm: API issues for fields the form does not render (e.g. branchId) now fall back to the alert instead of silently dying |
-| M-04 | fixed | COMMIT — employer decision modal: note labelled required + "at least 5 characters" hint when REJECTED, Confirm disabled until ≥5 chars, maxLength 500, field issue surfaced on the note via issueFor('note') |
-| M-05 | fixed | COMMIT — shortlist dialog: error={errors.note} + maxLength 500 on the note; Refer to employer dialog: note issue surfaced on the field (noteError state) + maxLength 500 |
+| M-01 | fixed | ff68559 — assisted form no longer defaults to a Karachi-centre pin: lat/lng start null, MapPinPicker shows no pin (map still centres on Karachi), parse() fails with a plain "place the pin" error on address.location |
+| M-02 | fixed | ff68559 — assisted schema phone now uses pkMobileSchema (same as dialog path); address stays required in the assisted path (counter collects it in person; matching/branch logic needs it), optional in the dialog/token-completion path |
+| M-03 | fixed | ff68559 — CounterRegisterForm: API issues for fields the form does not render (e.g. branchId) now fall back to the alert instead of silently dying |
+| M-04 | fixed | ff68559 — employer decision modal: note labelled required + "at least 5 characters" hint when REJECTED, Confirm disabled until ≥5 chars, maxLength 500, field issue surfaced on the note via issueFor('note') |
+| M-05 | fixed | ff68559 — shortlist dialog: error={errors.note} + maxLength 500 on the note; Refer to employer dialog: note issue surfaced on the field (noteError state) + maxLength 500 |
 | M-06 | pending | |
 | M-07 | pending | |
 | M-08 | pending | |
@@ -68,9 +68,9 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 
 | ID | Status | Commit / note |
 |----|--------|---------------|
-| L-01 | pending | |
+| L-01 | fixed | COMMIT — CompanyWizard: noValidate on all three step forms; Details/Contacts/Location validate client-side against register/updateCompany, companyContacts and companyHeadOffice schemas with FormErrorSummary + focus + per-field errors; bare acme.com now passes native validation and is normalised server-side; non-numeric NTN flagged on the field. Note: validated payloads are sent unchanged (raw body) so server transforms still apply as before |
 | L-02 | pending | |
-| L-03 | pending | |
+| L-03 | fixed | COMMIT — one allowlist: PAKISTAN_MOBILE_PREFIXES now lives in @jobbank/shared and pkMobileSchema refines against it (0399 rejected); web isSupportedPkMobile derives from the same list; PhoneInput free-text path now nulls e164 for unlisted prefixes like the segmented path; token domain fixed via the same schema. Drift-guard test added (dropdown table == shared list). Note: companyContactSchema still uses the broad 3xx regex (company contacts, not applicant mobiles) — out of this finding's scope |
 | L-04 | pending | |
 | L-05 | remaining | Needs deployment/scheduler decision (e.g. Vercel Cron + CRON_SECRET) |
 | L-06 | pending | |
@@ -101,7 +101,7 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | L-31 | pending | |
 | L-32 | pending | |
 | L-33 | pending | |
-| L-34 | pending | |
+| L-34 | fixed | COMMIT — nested it() in CompanyWizard.test.tsx moved out to describe level (now 11 tests, all passing); test fixture branch id changed to a real UUID so the new Location-step client validation passes |
 | L-35 | pending | |
 | L-36 | pending | Documentation only: build-time env / SKIP_ENV_VALIDATION=1 in README/CI docs |
 | L-37 | pending | |

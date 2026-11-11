@@ -36,14 +36,14 @@ describe('CompanyWizard', () => {
         };
       }
       if (path.startsWith('/api/v1/companies/me/branch-options')) {
-        return { data: [{ id: 'branch-1', name: 'Karachi Branch' }] };
+        return { data: [{ id: 'b0000000-0000-4000-8000-000000000001', name: 'Karachi Branch' }] };
       }
       if (path === '/api/v1/companies/me/head-office') {
         return {
           data: {
             id: 'company-1',
             status: 'DRAFT',
-            branch: { id: 'branch-1', name: 'Karachi Branch' },
+            branch: { id: 'b0000000-0000-4000-8000-000000000001', name: 'Karachi Branch' },
             details: {
               legalName: 'Example Company',
               tradeName: null,
@@ -387,7 +387,7 @@ describe('CompanyWizard', () => {
           addressLine: 'Zaitoon Ashraf IT Park, Mehmoodabad',
           cityCode: 'KARACHI',
           areaCode: undefined,
-          branchId: 'branch-1',
+          branchId: 'b0000000-0000-4000-8000-000000000001',
         },
       }),
     );
@@ -430,7 +430,7 @@ describe('CompanyWizard', () => {
           addressLine: 'Zaitoon Ashraf IT Park, Mehmoodabad',
           cityCode: 'KARACHI',
           areaCode: undefined,
-          branchId: 'branch-1',
+          branchId: 'b0000000-0000-4000-8000-000000000001',
         },
       }),
     );
@@ -574,8 +574,9 @@ describe('CompanyWizard', () => {
       '/api/v1/companies/me/documents',
       expect.anything(),
     );
+  });
 
-    it('uses a distinct idempotency key for company creation and verification submission', async () => {
+  it('uses a distinct idempotency key for company creation and verification submission', async () => {
       const company = {
         id: 'company-1',
         status: 'DRAFT',
@@ -644,6 +645,5 @@ describe('CompanyWizard', () => {
         expect(submissionCall).toBeDefined();
         expect(registrationCall![1].idempotencyKey).not.toBe(submissionCall![1].idempotencyKey);
       });
-    });
   });
 });
