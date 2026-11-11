@@ -151,8 +151,11 @@ async def load_job_criteria(
 async def load_candidate_pool(
     conn: AsyncConnection, job_id: str, max_radius_m: int
 ) -> list[dict[str, Any]]:
-    """ACTIVE applicants inside the max radius with distance + profile version.
+    """ACTIVE or INACTIVE applicants inside the max radius with distance + profile version.
 
+    INACTIVE applicants are included (audit 2026-11-11, M-13): the interim
+    referral rule explicitly allows referring INACTIVE applicants, so the
+    engine must surface the same candidates staff are allowed to refer.
     REJECTED-identity applicants are excluded here too (audit 2026-11-11,
     M-12): they can never be referred, so the engine must not surface them
     as shortlist candidates. Only identity/distance/version here: everything
@@ -168,7 +171,7 @@ async def load_candidate_pool(
             FROM applicants a
             JOIN applicant_addresses aa ON aa.applicant_id = a.id
             CROSS JOIN (SELECT location FROM job_locations WHERE job_id = %s LIMIT 1) jl
-            WHERE a.status = 'ACTIVE'
+            WHERE a.status IN ('ACTIVE', 'INACTIVE')
               AND a.identity_status <> 'REJECTED'
               AND ST_DWithin(aa.location, jl.location, %s)
             """,
