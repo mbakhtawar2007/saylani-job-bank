@@ -19,7 +19,7 @@ import {
 import { ArrowLeft, Check, Plus, Printer, Trash2, UserPlus } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { Button, Checkbox, Input, RadioGroup, Select, Textarea } from '@/components/atoms';
 import type { SelectOption } from '@/components/atoms';
 import { CNICInput, FormField, PhoneInput, toast } from '@/components/molecules';
@@ -27,6 +27,12 @@ import type { ApplicantStaffView } from '@/domains/applicant';
 import { MapPinPicker } from '@/components/organisms';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import { errorMessage, toFieldErrors, type FieldErrors } from './form';
+import {
+  FormErrorSummary,
+  fieldControlId,
+  humanizeFieldKey,
+  useFocusFieldErrors,
+} from '../FormErrorSummary';
 import { APPLICANT_STATUS_PILL } from './labels';
 
 type EducationRow = {
@@ -94,6 +100,8 @@ export function StaffRegisterApplicantForm({
   } | null>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [alert, setAlert] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, alert);
   const [education, setEducation] = useState<EducationRow[]>(
     () =>
       applicant?.education.map((item, index) => ({
@@ -269,6 +277,9 @@ export function StaffRegisterApplicantForm({
           })),
         ),
       );
+      // Audit 2026-11-11 (H-08): a failed review left the user wherever
+      // they were with no pointer to the first bad field. Jump there.
+      requestErrorFocus();
       return null;
     }
     setErrors({});
@@ -317,8 +328,11 @@ export function StaffRegisterApplicantForm({
     } catch (error) {
       if (error instanceof ApiClientError && error.issues.length > 0) {
         setErrors(toFieldErrors(error.issues));
+        requestErrorFocus();
       } else {
+        setErrors({});
         setAlert(errorMessage(error));
+        requestAlertFocus();
       }
       setReview(false);
     } finally {
@@ -374,12 +388,13 @@ export function StaffRegisterApplicantForm({
   }
 
   return (
-    <form className="grid gap-6" onSubmit={submit} noValidate>
+    <form className="grid gap-6" onSubmit={submit} noValidate ref={formRef}>
       {alert && (
         <p role="alert" className="bg-danger-soft text-danger-soft-fg rounded-lg px-4 py-3 text-sm">
           {alert}
         </p>
       )}
+      <FormErrorSummary errors={errors} labelFor={humanizeFieldKey} />
       {!review ? (
         <>
           <section className="border-border bg-surface shadow-card grid gap-4 rounded-xl border p-5">
@@ -389,7 +404,12 @@ export function StaffRegisterApplicantForm({
                 Assigned branch: {branchName}. Profile editing does not change branch assignment.
               </p>
             ) : (
-              <FormField label="Destination branch" required error={errors.branchId}>
+              <FormField
+                label="Destination branch"
+                required
+                error={errors.branchId}
+                id={fieldControlId('branchId')}
+              >
                 <Select
                   value={form.branchId}
                   onChange={(event) => set({ branchId: event.target.value })}
@@ -401,7 +421,13 @@ export function StaffRegisterApplicantForm({
           </section>
           <section className="border-border bg-surface shadow-card grid gap-4 rounded-xl border p-5 sm:grid-cols-2">
             <h2 className="text-fg text-base font-semibold sm:col-span-2">Personal information</h2>
-            <FormField label="Full name" required error={errors.fullName} className="sm:col-span-2">
+            <FormField
+              label="Full name"
+              required
+              error={errors.fullName}
+              id={fieldControlId('fullName')}
+              className="sm:col-span-2"
+            >
               <Input
                 value={form.fullName}
                 onChange={(event) => set({ fullName: event.target.value })}
@@ -411,6 +437,7 @@ export function StaffRegisterApplicantForm({
               label="Father's or husband's name"
               required
               error={errors.fatherName}
+              id={fieldControlId('fatherName')}
               className="sm:col-span-2"
             >
               <Input
@@ -418,10 +445,20 @@ export function StaffRegisterApplicantForm({
                 onChange={(event) => set({ fatherName: event.target.value })}
               />
             </FormField>
-            <FormField label="CNIC" required error={errors.cnic}>
+            <FormField
+              label="CNIC"
+              required
+              error={errors.cnic}
+              id={fieldControlId('cnic')}
+            >
               <CNICInput value={form.cnic} onChange={(value) => set({ cnic: value.digits })} />
             </FormField>
-            <FormField label="Date of birth" required error={errors.dateOfBirth}>
+            <FormField
+              label="Date of birth"
+              required
+              error={errors.dateOfBirth}
+              id={fieldControlId('dateOfBirth')}
+            >
               <Input
                 type="date"
                 value={form.dateOfBirth}
@@ -432,6 +469,7 @@ export function StaffRegisterApplicantForm({
               label="Gender"
               required
               error={errors.gender}
+              id={fieldControlId('gender')}
               hint={
                 form.gender === 'UNDISCLOSED'
                   ? 'Gender is currently unspecified. Choose an option to change it, or leave it unchanged.'
@@ -457,6 +495,7 @@ export function StaffRegisterApplicantForm({
               label="Mobile number"
               required
               error={errors.phone}
+              id={fieldControlId('phone')}
               hint={
                 applicant
                   ? 'Sign-in mobile is not changed here. Use the separate Change mobile action when account recovery is required.'
@@ -473,6 +512,7 @@ export function StaffRegisterApplicantForm({
             <FormField
               label="Email"
               error={errors.email}
+              id={fieldControlId('email')}
               hint={
                 applicant
                   ? 'This updates the contact email on the profile only; sign-in credentials are unchanged.'
@@ -493,6 +533,7 @@ export function StaffRegisterApplicantForm({
               label="Address"
               required
               error={errors['address.addressLine']}
+              id={fieldControlId('address.addressLine')}
               className="sm:col-span-2"
             >
               <Input
@@ -500,7 +541,12 @@ export function StaffRegisterApplicantForm({
                 onChange={(event) => set({ addressLine: event.target.value })}
               />
             </FormField>
-            <FormField label="City" required error={errors['address.cityCode']}>
+            <FormField
+              label="City"
+              required
+              error={errors['address.cityCode']}
+              id={fieldControlId('address.cityCode')}
+            >
               <Select
                 value={form.cityCode}
                 onChange={(event) => set({ cityCode: event.target.value })}
@@ -508,7 +554,11 @@ export function StaffRegisterApplicantForm({
                 placeholder="Choose a city"
               />
             </FormField>
-            <FormField label="Area" error={errors['address.areaCode']}>
+            <FormField
+              label="Area"
+              error={errors['address.areaCode']}
+              id={fieldControlId('address.areaCode')}
+            >
               <Select
                 value={form.areaCode}
                 onChange={(event) => set({ areaCode: event.target.value })}
@@ -517,7 +567,12 @@ export function StaffRegisterApplicantForm({
               />
             </FormField>
             <div className="sm:col-span-2">
-              <FormField label="Home location" required error={errors['address.location']}>
+              <FormField
+                label="Home location"
+                required
+                error={errors['address.location']}
+                id={fieldControlId('address.location')}
+              >
                 <MapPinPicker
                   value={{ lat: form.lat, lng: form.lng }}
                   onChange={(location) => set(location)}
@@ -538,7 +593,12 @@ export function StaffRegisterApplicantForm({
                 key={index}
                 className="border-border grid gap-4 rounded-lg border p-4 sm:grid-cols-2"
               >
-                <FormField label="Education level" required>
+                <FormField
+                  label="Education level"
+                  required
+                  id={fieldControlId(`education.items.${index}.levelCode`)}
+                  error={errors[`education.items.${index}.levelCode`]}
+                >
                   <Select
                     value={item.levelCode}
                     options={educationLevels}
@@ -552,7 +612,11 @@ export function StaffRegisterApplicantForm({
                     }
                   />
                 </FormField>
-                <FormField label="Institution">
+                <FormField
+                  label="Institution"
+                  id={fieldControlId(`education.items.${index}.institution`)}
+                  error={errors[`education.items.${index}.institution`]}
+                >
                   <Input
                     value={item.institution}
                     onChange={(event) =>
@@ -564,7 +628,11 @@ export function StaffRegisterApplicantForm({
                     }
                   />
                 </FormField>
-                <FormField label="Field of study">
+                <FormField
+                  label="Field of study"
+                  id={fieldControlId(`education.items.${index}.fieldOfStudy`)}
+                  error={errors[`education.items.${index}.fieldOfStudy`]}
+                >
                   <Input
                     value={item.fieldOfStudy}
                     onChange={(event) =>
@@ -576,7 +644,11 @@ export function StaffRegisterApplicantForm({
                     }
                   />
                 </FormField>
-                <FormField label="Completion year">
+                <FormField
+                  label="Completion year"
+                  id={fieldControlId(`education.items.${index}.completionYear`)}
+                  error={errors[`education.items.${index}.completionYear`]}
+                >
                   <Input
                     type="number"
                     value={item.completionYear}
@@ -589,7 +661,11 @@ export function StaffRegisterApplicantForm({
                     }
                   />
                 </FormField>
-                <FormField label="Grade or marks">
+                <FormField
+                  label="Grade or marks"
+                  id={fieldControlId(`education.items.${index}.grade`)}
+                  error={errors[`education.items.${index}.grade`]}
+                >
                   <Input
                     value={item.grade}
                     onChange={(event) =>
@@ -664,7 +740,12 @@ export function StaffRegisterApplicantForm({
                   key={index}
                   className="border-border grid gap-4 rounded-lg border p-4 sm:grid-cols-2"
                 >
-                  <FormField label="Employer" required>
+                  <FormField
+                    label="Employer"
+                    required
+                    id={fieldControlId(`experience.items.${index}.employerName`)}
+                    error={errors[`experience.items.${index}.employerName`]}
+                  >
                     <Input
                       value={item.employerName}
                       onChange={(event) =>
@@ -676,7 +757,12 @@ export function StaffRegisterApplicantForm({
                       }
                     />
                   </FormField>
-                  <FormField label="Job title" required>
+                  <FormField
+                    label="Job title"
+                    required
+                    id={fieldControlId(`experience.items.${index}.jobTitle`)}
+                    error={errors[`experience.items.${index}.jobTitle`]}
+                  >
                     <Input
                       value={item.jobTitle}
                       onChange={(event) =>
@@ -688,7 +774,11 @@ export function StaffRegisterApplicantForm({
                       }
                     />
                   </FormField>
-                  <FormField label="Kind of work">
+                  <FormField
+                    label="Kind of work"
+                    id={fieldControlId(`experience.items.${index}.categoryCode`)}
+                    error={errors[`experience.items.${index}.categoryCode`]}
+                  >
                     <Select
                       value={item.categoryCode}
                       options={categories}
@@ -702,7 +792,12 @@ export function StaffRegisterApplicantForm({
                       }
                     />
                   </FormField>
-                  <FormField label="Started" required>
+                  <FormField
+                    label="Started"
+                    required
+                    id={fieldControlId(`experience.items.${index}.startMonth`)}
+                    error={errors[`experience.items.${index}.startMonth`]}
+                  >
                     <Input
                       type="month"
                       value={item.startMonth}
@@ -716,7 +811,12 @@ export function StaffRegisterApplicantForm({
                     />
                   </FormField>
                   {!item.isCurrent && (
-                    <FormField label="Ended" required>
+                    <FormField
+                      label="Ended"
+                      required
+                      id={fieldControlId(`experience.items.${index}.endMonth`)}
+                      error={errors[`experience.items.${index}.endMonth`]}
+                    >
                       <Input
                         type="month"
                         value={item.endMonth}
@@ -730,7 +830,12 @@ export function StaffRegisterApplicantForm({
                       />
                     </FormField>
                   )}
-                  <FormField label="What did they do?" className="sm:col-span-2">
+                  <FormField
+                    label="What did they do?"
+                    className="sm:col-span-2"
+                    id={fieldControlId(`experience.items.${index}.description`)}
+                    error={errors[`experience.items.${index}.description`]}
+                  >
                     <Textarea
                       rows={2}
                       value={item.description}
@@ -916,7 +1021,12 @@ export function StaffRegisterApplicantForm({
               <h3 className="text-fg text-sm font-semibold">Certificates and courses</h3>
               {certifications.map((item, index) => (
                 <div key={index} className="grid gap-4 sm:grid-cols-2">
-                  <FormField label="Certificate or course" required>
+                  <FormField
+                    label="Certificate or course"
+                    required
+                    id={fieldControlId(`certifications.items.${index}.name`)}
+                    error={errors[`certifications.items.${index}.name`]}
+                  >
                     <Input
                       value={item.name}
                       onChange={(event) =>
@@ -928,7 +1038,11 @@ export function StaffRegisterApplicantForm({
                       }
                     />
                   </FormField>
-                  <FormField label="Issued by">
+                  <FormField
+                    label="Issued by"
+                    id={fieldControlId(`certifications.items.${index}.issuer`)}
+                    error={errors[`certifications.items.${index}.issuer`]}
+                  >
                     <Input
                       value={item.issuer}
                       onChange={(event) =>
@@ -940,7 +1054,11 @@ export function StaffRegisterApplicantForm({
                       }
                     />
                   </FormField>
-                  <FormField label="Issued month">
+                  <FormField
+                    label="Issued month"
+                    id={fieldControlId(`certifications.items.${index}.issuedMonth`)}
+                    error={errors[`certifications.items.${index}.issuedMonth`]}
+                  >
                     <Input
                       type="month"
                       value={item.issuedMonth}
@@ -954,7 +1072,11 @@ export function StaffRegisterApplicantForm({
                     />
                   </FormField>
                   <div className="flex items-end justify-between">
-                    <FormField label="Expires month">
+                    <FormField
+                      label="Expires month"
+                      id={fieldControlId(`certifications.items.${index}.expiresMonth`)}
+                      error={errors[`certifications.items.${index}.expiresMonth`]}
+                    >
                       <Input
                         type="month"
                         value={item.expiresMonth}
@@ -999,7 +1121,12 @@ export function StaffRegisterApplicantForm({
                 <div className="grid gap-3">
                   {preferences.categoryCodes.map((categoryCode, index) => (
                     <div key={`${categoryCode}-${index}`} className="flex items-end gap-2">
-                      <FormField label={`Preferred job category ${index + 1}`} className="flex-1">
+                      <FormField
+                        label={`Preferred job category ${index + 1}`}
+                        className="flex-1"
+                        id={fieldControlId(`preferences.categoryCodes.${index}`)}
+                        error={errors[`preferences.categoryCodes.${index}`] ?? errors['preferences.categoryCodes']}
+                      >
                         <Select
                           value={categoryCode}
                           options={categories.filter(
@@ -1043,7 +1170,11 @@ export function StaffRegisterApplicantForm({
                   )}
                 </div>
               ) : (
-                <FormField label="Preferred job category">
+                <FormField
+                  label="Preferred job category"
+                  id={fieldControlId('preferences.categoryCodes')}
+                  error={errors['preferences.categoryCodes']}
+                >
                   <Select
                     value={preferences.categoryCodes[0] ?? ''}
                     options={categories}
@@ -1057,7 +1188,11 @@ export function StaffRegisterApplicantForm({
                   />
                 </FormField>
               )}
-              <FormField label="Minimum monthly salary (PKR)">
+              <FormField
+                label="Minimum monthly salary (PKR)"
+                id={fieldControlId('preferences.minSalaryPkr')}
+                error={errors['preferences.minSalaryPkr']}
+              >
                 <Input
                   type="number"
                   value={preferences.minSalaryPkr}
@@ -1066,7 +1201,11 @@ export function StaffRegisterApplicantForm({
                   }
                 />
               </FormField>
-              <FormField label="Available from">
+              <FormField
+                label="Available from"
+                id={fieldControlId('preferences.availableFrom')}
+                error={errors['preferences.availableFrom']}
+              >
                 <Input
                   type="date"
                   value={preferences.availableFrom}

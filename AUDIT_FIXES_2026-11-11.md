@@ -12,12 +12,12 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 |----|--------|---------------|
 | H-01 | fixed | 1be1620 — assertRole SUPER_ADMIN/BRANCH_ADMIN in correctCompanyDetails; verifiers excluded, so no conflict check needed |
 | H-02 | fixed | 1be1620 — login returns two_factor_setup_required (HMAC setup token, 15 min, no session); setup-token enrol path + LoginForm setup mode; pending session only during active enrolment |
-| H-03 | fixed | COMMIT — requireOwnCompany honours actor.companyId when present (act-for-employer), falling back to membership lookup; integration test must still run on laptop (not verified live) |
-| H-04 | fixed | COMMIT — GET /applicants list scoped by applicant branch city (branchCityScope on a.branchId); address-less / out-of-city-address applicants now listed |
-| H-05 | fixed | COMMIT — DOCUMENT_REVIEW updates only uploaded CNIC sides (null-safe); rejecting a never-uploaded CNIC no longer 500s |
+| H-03 | fixed | 1f4f35c — requireOwnCompany honours actor.companyId when present (act-for-employer), falling back to membership lookup; integration test must still run on laptop (not verified live) |
+| H-04 | fixed | 1f4f35c — GET /applicants list scoped by applicant branch city (branchCityScope on a.branchId); address-less / out-of-city-address applicants now listed |
+| H-05 | fixed | 1f4f35c — DOCUMENT_REVIEW updates only uploaded CNIC sides (null-safe); rejecting a never-uploaded CNIC no longer 500s |
 | H-06 | fixed | 1be1620 — canManageUser asserted in revokeRole after loadTarget, mirroring grantRole |
-| H-07 | pending | |
-| H-08 | pending | |
+| H-07 | fixed | COMMIT — both job forms validate client-side with the server schema (createJobSchema / updateJobSchema / staff extended schema) before any API call; FormErrorSummary + useFocusFieldErrors + field ids on every validated field; API 422 issues mapped back to fields |
+| H-08 | fixed | COMMIT — StaffRegisterApplicantForm wired into FormErrorSummary + useFocusFieldErrors (failed review now jumps to the first bad field); field ids + per-field errors on personal/address/education/experience/certification/preference fields; skills & languages rows stay bare atoms (no FormField to anchor) |
 | H-09 | fixed | 8edffa5 — employer interview scheduling implemented: scheduleEmployerInterview + updateEmployerInterviewStatus (decision:employer, own-company check), route applications/[id]/employer-interview, EmployerInterviewScheduler UI in ReferralDetail; employer owns the interview once scheduled; applicant notified on every change |
 | H-10 | fixed | 8edffa5 — referApplicantToEmployer requires OPEN (pre-check + locked re-check in tx) via shared job guard |
 | H-11 | fixed | 8edffa5 — shared job guard (job/status-guard.ts): decisions/accepts/interviews blocked unless OPEN/PAUSED, re-checked under job lock; company VERIFIED re-checked on decisions; applicant Jobs page already badges non-OPEN jobs (page.tsx:40-45) |

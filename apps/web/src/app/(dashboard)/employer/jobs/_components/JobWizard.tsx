@@ -8,6 +8,7 @@ import {
   BONUS_FREQUENCY_LABELS,
   BONUS_TIERS,
   BONUS_TIER_LABELS,
+  createJobSchema,
   EXPERIENCE_LEVELS,
   EXPERIENCE_LEVEL_LABELS,
   EXPERIENCE_LEVEL_MIN_MONTHS,
@@ -23,6 +24,7 @@ import {
   SKILL_LEVELS,
   SKILL_LEVEL_LABELS,
   STANDARD_LEAVE_DAYS,
+  updateJobSchema,
   type BonusBasis,
   type BonusFrequency,
   type BonusTier,
@@ -33,10 +35,21 @@ import {
   type SkillLevel,
 } from '@jobbank/shared';
 import type { JobView } from '@/domains/job';
-import { apiFetch, friendlyApiError } from '@/lib/api/client';
+import { apiFetch, ApiClientError, friendlyApiError } from '@/lib/api/client';
 import { Button, Input, Select, Spinner, Textarea } from '@/components/atoms';
 import { FormField } from '@/components/molecules';
 import { MapPinPicker, type LatLng } from '@/components/organisms';
+import {
+  FormErrorSummary,
+  fieldControlId,
+  humanizeFieldKey,
+  useFocusFieldErrors,
+} from '../../../_components/FormErrorSummary';
+import {
+  toFieldErrors,
+  zodFieldErrors,
+  type FieldErrors,
+} from '../../../_components/applicants/form';
 import { useRouter } from 'next/navigation';
 import { Plus, X } from 'lucide-react';
 
@@ -114,6 +127,9 @@ export function JobWizard({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, error);
   const isNew = !initialJob;
 
   // ── Basic info ──────────────────────────────────────────────────────
@@ -356,6 +372,20 @@ export function JobWizard({
               lifeInsurance,
             };
 
+        // Audit 2026-11-11 (H-07): validate client-side with the same
+        // schema the server enforces, so a bad salary, missing shift hours
+        // or missing bonus basis is flagged on its field instead of a round
+        // trip that fails with a one-line error at the bottom of the page.
+        // A restricted edit sends only the editable subset, so it validates
+        // against the PATCH schema; create / full edit against create.
+        const parsed = (restricted ? updateJobSchema : createJobSchema).safeParse(basicBody);
+        if (!parsed.success) {
+          setErrors(zodFieldErrors(parsed.error));
+          requestErrorFocus();
+          return;
+        }
+        setErrors({});
+
         let jobId: string;
         if (isNew) {
           const { data: created } = await apiFetch<JobView>('/api/v1/jobs/me', {
@@ -421,7 +451,15 @@ export function JobWizard({
         if (isNew) router.push(`${basePath}/jobs/${jobId}`);
         else router.refresh();
       } catch (e) {
-        setError(friendlyError(e));
+        if (e instanceof ApiClientError && e.issues.length > 0) {
+          setErrors(toFieldErrors(e.issues));
+          requestErrorFocus();
+        } else {
+          // A non-field server error supersedes any stale field errors.
+          setErrors({});
+          setError(friendlyError(e));
+          requestAlertFocus();
+        }
       }
     });
   }
@@ -429,7 +467,15 @@ export function JobWizard({
   const locationReady = pin && addressLine.trim().length >= 3 && cityCode;
 
   return (
-    <div className="grid w-full gap-8">
+    <form
+      className="grid w-full gap-8"
+      noValidate
+      ref={formRef}
+      onSubmit={(e) => {
+        e.preventDefault();
+        handleSubmit();
+      }}
+    >
       <header>
         <h1 className="text-fg text-2xl font-semibold">{isNew ? 'Post a new job' : 'Edit job'}</h1>
         <p className="text-fg-muted mt-1 text-sm">
@@ -448,7 +494,12 @@ export function JobWizard({
       <div className="grid gap-6">
         {/* ─── Basic Info ─────────────────────────────────────────────── */}
         <Section title="Basic Information">
-          <FormField label="Job title" required>
+          <FormField
+            label="Job title"
+            required
+            id={fieldControlId('title')}
+            error={errors.title}
+          >
             <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -457,7 +508,12 @@ export function JobWizard({
             />
           </FormField>
 
-          <FormField label="Category" required>
+          <FormField
+            label="Category"
+            required
+            id={fieldControlId('categoryCode')}
+            error={errors.categoryCode}
+          >
             {categories.length > 0 ? (
               <Select
                 value={categoryCode}
@@ -478,6 +534,8 @@ export function JobWizard({
 
           <FormField
             label="Designation"
+            id={fieldControlId('designationCode')}
+            error={errors.designationCode}
             hint="The salary must fall inside this designation's salary range, once ranges are set in master data."
           >
             {designations.length > 0 ? (
@@ -498,7 +556,12 @@ export function JobWizard({
             )}
           </FormField>
 
-          <FormField label="Job description" required>
+          <FormField
+            label="Job description"
+            required
+            id={fieldControlId('description')}
+            error={errors.description}
+          >
             <Textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -507,7 +570,12 @@ export function JobWizard({
             />
           </FormField>
 
-          <FormField label="Job type" required>
+          <FormField
+            label="Job type"
+            required
+            id={fieldControlId('jobType')}
+            error={errors.jobType}
+          >
             <Select
               options={JOB_TYPE_OPTIONS}
               value={jobType}
@@ -517,7 +585,13 @@ export function JobWizard({
           </FormField>
 
           {jobType === 'ROTATING' && (
-            <FormField label="How many hours for that shift?" required hint="Hours per shift / day">
+            <FormField
+              label="How many hours for that shift?"
+              required
+              hint="Hours per shift / day"
+              id={fieldControlId('shiftHours')}
+              error={errors.shiftHours}
+            >
               <div className="flex items-center gap-3">
                 <Input
                   type="number"
@@ -535,7 +609,11 @@ export function JobWizard({
           )}
 
           <div className="grid grid-cols-2 gap-4">
-            <FormField label="Gender preference">
+            <FormField
+              label="Gender preference"
+              id={fieldControlId('genderPreference')}
+              error={errors.genderPreference}
+            >
               <Select
                 options={GENDER_OPTIONS}
                 value={genderPreference}
@@ -543,7 +621,12 @@ export function JobWizard({
                 disabled={restricted}
               />
             </FormField>
-            <FormField label="Vacancies" required>
+            <FormField
+              label="Vacancies"
+              required
+              id={fieldControlId('vacancies')}
+              error={errors.vacancies}
+            >
               <Input
                 type="number"
                 min={1}
@@ -555,7 +638,12 @@ export function JobWizard({
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <FormField label="Min salary (PKR/month)" hint="Minimum salary is PKR 41,700">
+            <FormField
+              label="Min salary (PKR/month)"
+              hint="Minimum salary is PKR 41,700"
+              id={fieldControlId('salaryMin')}
+              error={errors.salaryMin}
+            >
               <Input
                 type="number"
                 min={MIN_SALARY_PKR}
@@ -565,7 +653,11 @@ export function JobWizard({
                 disabled={restricted}
               />
             </FormField>
-            <FormField label="Max salary (PKR/month)">
+            <FormField
+              label="Max salary (PKR/month)"
+              id={fieldControlId('salaryMax')}
+              error={errors.salaryMax}
+            >
               <Input
                 type="number"
                 min={MIN_SALARY_PKR}
@@ -700,7 +792,12 @@ export function JobWizard({
         {/* ─── Benefits & Perks ─────────────────────────────────────────── */}
         <Section title="Benefits & Perks">
           <div className="grid grid-cols-2 gap-4">
-            <FormField label="OPD limit (PKR)" hint="Leave blank for no OPD cover">
+            <FormField
+              label="OPD limit (PKR)"
+              hint="Leave blank for no OPD cover"
+              id={fieldControlId('opdLimit')}
+              error={errors.opdLimit}
+            >
               <Input
                 type="number"
                 min={0}
@@ -710,7 +807,12 @@ export function JobWizard({
                 disabled={restricted}
               />
             </FormField>
-            <FormField label="IPD limit (PKR)" hint="Leave blank for no IPD cover">
+            <FormField
+              label="IPD limit (PKR)"
+              hint="Leave blank for no IPD cover"
+              id={fieldControlId('ipdLimit')}
+              error={errors.ipdLimit}
+            >
               <Input
                 type="number"
                 min={0}
@@ -723,7 +825,11 @@ export function JobWizard({
           </div>
 
           {(opdLimit || ipdLimit) && (
-            <FormField label="Medical coverage for">
+            <FormField
+              label="Medical coverage for"
+              id={fieldControlId('medicalCoverageScope')}
+              error={errors.medicalCoverageScope}
+            >
               <Select
                 options={MEDICAL_SCOPE_OPTIONS}
                 value={medicalCoverageScope}
@@ -735,7 +841,11 @@ export function JobWizard({
           )}
 
           <div className="grid grid-cols-3 gap-4">
-            <FormField label="Annual leave (days / year)">
+            <FormField
+              label="Annual leave (days / year)"
+              id={fieldControlId('annualLeaveDays')}
+              error={errors.annualLeaveDays}
+            >
               <Input
                 type="number"
                 min={0}
@@ -745,7 +855,11 @@ export function JobWizard({
                 placeholder="e.g. 14"
               />
             </FormField>
-            <FormField label="Sick leave (days / year)">
+            <FormField
+              label="Sick leave (days / year)"
+              id={fieldControlId('sickLeaveDays')}
+              error={errors.sickLeaveDays}
+            >
               <Input
                 type="number"
                 min={0}
@@ -755,7 +869,11 @@ export function JobWizard({
                 placeholder="e.g. 10"
               />
             </FormField>
-            <FormField label="Casual leave (days / year)">
+            <FormField
+              label="Casual leave (days / year)"
+              id={fieldControlId('casualLeaveDays')}
+              error={errors.casualLeaveDays}
+            >
               <Input
                 type="number"
                 min={0}
@@ -767,7 +885,11 @@ export function JobWizard({
             </FormField>
           </div>
 
-          <FormField label="Performance bonus">
+          <FormField
+            label="Performance bonus"
+            id={fieldControlId('bonusTier')}
+            error={errors.bonusTier}
+          >
             <Select
               options={BONUS_OPTIONS}
               value={bonusTier}
@@ -779,7 +901,12 @@ export function JobWizard({
           {bonusTier !== 'NONE' && (
             <>
               <div className="grid grid-cols-2 gap-4">
-                <FormField label="Bonus calculated on" required>
+                <FormField
+                  label="Bonus calculated on"
+                  required
+                  id={fieldControlId('bonusBasis')}
+                  error={errors.bonusBasis}
+                >
                   <Select
                     options={BONUS_BASIS_OPTIONS}
                     value={bonusBasis}
@@ -788,7 +915,11 @@ export function JobWizard({
                     disabled={restricted}
                   />
                 </FormField>
-                <FormField label="Bonus frequency">
+                <FormField
+                  label="Bonus frequency"
+                  id={fieldControlId('bonusFrequency')}
+                  error={errors.bonusFrequency}
+                >
                   <Select
                     options={BONUS_FREQUENCY_OPTIONS}
                     value={bonusFrequency}
@@ -801,6 +932,8 @@ export function JobWizard({
               <FormField
                 label="Fixed bonus amount (PKR)"
                 hint="Optional — leave blank to use the tier multiple above"
+                id={fieldControlId('bonusAmountPkr')}
+                error={errors.bonusAmountPkr}
               >
                 <Input
                   type="number"
@@ -905,18 +1038,23 @@ export function JobWizard({
           )}
         </div>
 
-        {error && <p className="text-danger text-sm">{error}</p>}
+        {error && (
+          <p role="alert" className="text-danger text-sm">
+            {error}
+          </p>
+        )}
+        <FormErrorSummary errors={errors} labelFor={humanizeFieldKey} />
 
         <div className="flex justify-end gap-3 pb-4">
           <Button variant="secondary" onClick={() => router.back()} disabled={pending}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} loading={pending} disabled={!isReady || pending}>
+          <Button type="submit" loading={pending} disabled={!isReady || pending}>
             {isNew ? 'Create draft' : 'Save changes'}
           </Button>
         </div>
       </div>
-    </div>
+    </form>
   );
 }
 
