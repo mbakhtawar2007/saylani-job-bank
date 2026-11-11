@@ -424,13 +424,6 @@ export const companyContactsSchema = z.object({
 });
 export type CompanyContactsInput = z.infer<typeof companyContactsSchema>;
 
-/** Staff registration captures the contact that provided the company details. */
-export const staffRegisterCompanySchema = registerCompanySchema.extend({
-  branchId: z.uuid('Choose a branch'),
-  contacts: companyContactsSchema,
-});
-export type StaffRegisterCompanyInput = z.infer<typeof staffRegisterCompanySchema>;
-
 const addressFields = {
   location: pakistanPointSchema,
   addressLine: z

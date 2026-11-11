@@ -132,7 +132,7 @@ export async function referJobToApplicant(
     .from(schema.companies)
     .where(eq(schema.companies.id, job.companyId));
   if (companyRow?.status !== 'VERIFIED')
-    throw new ForbiddenError('Only verified companies can receive referred candidates');
+    throw new ForbiddenError('Only jobs from verified companies can be referred to applicants');
 
   // Idempotent: the referral already exists, so there is nothing to write —
   // and runCommand would reject a write with no audit entry. The unique

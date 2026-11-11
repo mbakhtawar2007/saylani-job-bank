@@ -35,7 +35,14 @@ export default defineConfig({
           environment: 'node',
           include: ['src/**/*.test.ts'],
           exclude: ['src/**/*.integration.test.ts'],
-          env: { SKIP_ENV_VALIDATION: '1', LOG_LEVEL: 'silent' },
+          env: {
+            SKIP_ENV_VALIDATION: '1',
+            LOG_LEVEL: 'silent',
+            // Audit 2026-11-11 (M-33): dummy test-only secret (≥32 chars) —
+            // without it the OTP tests fail on a clean checkout because
+            // getAuthSecret() throws. Never a real secret.
+            BETTER_AUTH_SECRET: 'unit-test-secret-unit-test-secret-unit-test',
+          },
         },
       },
       {

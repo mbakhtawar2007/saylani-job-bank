@@ -23,11 +23,11 @@ export const GET = apiHandler({
 
 /**
  * POST /api/v1/applicants/tokens — first counter issues a numbered token for
- * the day from a CNIC + name only (2026-11-07 token-only first step). Same
- * CNIC, same branch, same day returns the token already issued — with 200,
- * not 201 (N7). Idempotent (N7/N22): the caller must send an Idempotency-Key;
- * a replay returns the stored response. Rate-limited per staff account +
- * branch and per IP (N22).
+ * the day from a CNIC + name + phone (2026-11-07 token-only first step).
+ * Same CNIC, same branch, same day returns the token already issued — with
+ * 200, not 201 (N7). Idempotent (N7/N22): the caller must send an
+ * Idempotency-Key; a replay returns the stored response. Rate-limited per
+ * staff account + branch and per IP (N22).
  */
 export const POST = apiHandler({
   permission: 'applicant:manage',

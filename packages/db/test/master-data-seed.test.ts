@@ -9,7 +9,13 @@ import { HOLIDAY_SEED, MASTER_DATA_SEED } from '../src/seed/master-data';
 
 describe('master data seed', () => {
   it('covers every type', () => {
-    for (const type of MASTER_DATA_TYPES) expect(MASTER_DATA_SEED[type].length).toBeGreaterThan(0);
+    // Audit 2026-11-11 (M-34): DESIGNATION is intentionally unseeded — the
+    // user supplies the designation list and ranges — so it is exempt here
+    // rather than seeded with invented rows.
+    for (const type of MASTER_DATA_TYPES) {
+      if (type === 'DESIGNATION') continue;
+      expect(MASTER_DATA_SEED[type].length).toBeGreaterThan(0);
+    }
   });
 
   it('uses valid, unique codes and meta that matches each type schema', () => {
