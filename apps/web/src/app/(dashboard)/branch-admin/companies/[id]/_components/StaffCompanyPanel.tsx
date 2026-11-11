@@ -1056,7 +1056,13 @@ export function StaffCompanyPanel({
         jobLinkBasePath={
           pathname.startsWith('/branch-admin/')
             ? `/branch-admin/companies/${company_.id}`
-            : undefined
+            : pathname.includes('/staff/')
+              ? '/staff/jobs'
+              : pathname.includes('/verifier/')
+                ? '/verifier/jobs'
+                : pathname.includes('super-admin')
+                  ? '/super-admin/jobs'
+                  : undefined
         }
       />
     </div>

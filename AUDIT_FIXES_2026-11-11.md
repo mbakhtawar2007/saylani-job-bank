@@ -57,9 +57,9 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | M-26 | fixed | 3a1f066 — idempotent: true on POST /jobs/me + POST /companies/me/sites; JobWizard create sends a key. Found while fixing: StaffPostJobForm posted to the already-idempotent POST /jobs with NO key, so every staff job post 400d — key added there too |
 | M-27 | fixed | a32708f — C-F2 guards mirrored: pure-applicant denial + pure-employer own-company forcing in listJobApplicantReferrals, getCompanyJobDetail, listCompanyJobs; loadJobForActor now uses isPureEmployer (exported from domains/job/staff) instead of the bare EMPLOYER role check |
 | M-28 | pending | Victim notification only (implement when fixing); second-admin approval is decision-needed — NOTE: the task brief labelled this "M-16 (2FA reset)"; the audit's M-16 is the OFFER type reuse, fixed above |
-| M-29 | pending | |
+| M-29 | fixed | COMMIT — added apps/web/src/app/(dashboard)/error.tsx (client error boundary, EmptyState + Try again + home link, matching the 404/forbidden page language) and caught ScopeViolationError in the verifier, branch-admin and staff job-detail pages, redirecting to /forbidden instead of the default Next.js error screen |
 | M-30 | pending | |
-| M-31 | pending | |
+| M-31 | fixed | COMMIT — StaffCompanyPanel now passes a role-appropriate jobLinkBasePath for every role that renders it (staff → /staff/jobs, verifier → /verifier/jobs, super-admin → /super-admin/jobs); branch-admin keeps the company-job route. Job rows are links again instead of plain text |
 | M-32 | laptop-step | LAPTOP-ONLY, coordinated: renumber 0014/0015 + regenerate 22 missing snapshots. Do NOT hand-edit _journal.json |
 | M-33 | fixed | 7aff2ad — dummy test-only BETTER_AUTH_SECRET (41 chars, 'unit-test-secret-…') added to the vitest unit project's env, mirroring the integration project's test secret; otp.test.ts now passes (3/3) on a clean checkout |
 | M-34 | fixed | 7aff2ad — seed-coverage test exempts DESIGNATION (intentionally unseeded; user supplies the list/ranges). No invented designations seeded; packages/db seed test 4/4 passes |

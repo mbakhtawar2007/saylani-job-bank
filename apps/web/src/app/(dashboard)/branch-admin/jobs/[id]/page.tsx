@@ -1,7 +1,7 @@
 import { requireRole } from '@/domains/auth';
 import { getJobDetail } from '@/domains/job';
 import { masterDataLabels } from '@/domains/settings';
-import { NotFoundError } from '@/domains/shared/errors';
+import { NotFoundError, ScopeViolationError } from '@/domains/shared/errors';
 import { Badge } from '@/components/atoms';
 import {
   BONUS_TIER_LABELS,
@@ -35,7 +35,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import NextLink from 'next/link';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 
 export const metadata = { title: 'Job detail — Branch Admin' };
 
@@ -424,6 +424,10 @@ export default async function BranchAdminJobDetailPage({
     );
   } catch (e) {
     if (e instanceof NotFoundError) return notFound();
+    // Audit 2026-11-11 (M-29): a cross-city job URL throws ScopeViolationError
+    // from assertCityAccess — send the user to /forbidden instead of the
+    // default Next.js error screen.
+    if (e instanceof ScopeViolationError) redirect('/forbidden');
     throw e;
   }
 }
