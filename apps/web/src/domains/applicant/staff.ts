@@ -46,7 +46,7 @@ import {
 } from '@/domains/shared/errors';
 import { maskCnic, maskPhone } from '@/domains/shared/masking';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
-import { multiCode, multiEnum, multiUuid } from '@/domains/shared/filters';
+import { likeContains, multiCode, multiEnum, multiUuid } from '@/domains/shared/filters';
 import {
   assertCityAccess,
   assertBranchAccess,
@@ -371,6 +371,9 @@ export async function registerApplicantForStaff(
         .returning({ id: a.id });
       applicantId = row!.id;
 
+      // Audit 2026-11-11 (L-23): the city must be active and the area must
+      // belong to it — same check staffRegisterApplicant already runs.
+      await assertCityArea(tx, input.address, 'address');
       await tx.insert(addr).values({
         applicantId: applicantId,
         addressLine: input.address.addressLine ?? '',
@@ -575,6 +578,9 @@ export async function staffUpdateApplicantProfile(
           .where(eq(schema.users.id, row.userId));
       }
 
+      // Audit 2026-11-11 (L-23): the city must be active and the area must
+      // belong to it — same check staffRegisterApplicant already runs.
+      await assertCityArea(tx, input.address, 'address');
       await tx
         .insert(addr)
         .values({
@@ -908,7 +914,7 @@ export async function listApplicants(
     const phone = digits.length >= 10 ? normalizePkMobile(digits) : null;
     conditions.push(
       or(
-        ilike(a.fullName, `%${query.q}%`),
+        ilike(a.fullName, likeContains(query.q)),
         digits.length >= 5 ? sql`${a.cnic} like ${`${digits}%`}` : undefined,
         phone ? eq(schema.users.phoneNumber, phone) : undefined,
         exists(
@@ -918,7 +924,7 @@ export async function listApplicants(
             .where(
               and(
                 inArray(schema.masterData.type, ['CITY', 'AREA']),
-                ilike(schema.masterData.label, `%${query.q}%`),
+                ilike(schema.masterData.label, likeContains(query.q)),
                 or(
                   eq(schema.masterData.code, addr.cityCode),
                   eq(schema.masterData.code, addr.areaCode),

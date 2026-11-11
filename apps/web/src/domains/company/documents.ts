@@ -1,5 +1,5 @@
 import 'server-only';
-import type { CompanyPresignInput } from '@jobbank/shared';
+import { PUBLIC_COMPANY_STATUSES, type CompanyPresignInput } from '@jobbank/shared';
 import { and, eq } from 'drizzle-orm';
 import { recordAudit, runCommand } from '@/domains/shared/audit';
 import {
@@ -14,6 +14,7 @@ import { ConflictError, ForbiddenError, NotFoundError } from '@/domains/shared/e
 import {
   assertBranchAccess,
   assertPermission,
+  hasPermission,
   isSuperAdmin,
   type Actor,
 } from '@/domains/shared/scope';
@@ -250,8 +251,17 @@ export async function staffCompanyDocumentLink(
   companyId: string,
   documentId: string,
 ): Promise<DocumentLink> {
+  // Audit 2026-11-11 (L-24): explicit permission assert (defense-in-depth
+  // — the route already gates on company:read) and the same non-manager
+  // status rule as getCompanyDetail: a DRAFT company's documents, including
+  // authorised-person CNIC images, are not open to company:read holders.
+  const canManage = hasPermission(ctx.actor, 'company:manage');
+  if (!canManage) assertPermission(ctx.actor, 'company:read');
   const row = await loadCompany(db, companyId);
   assertBranchAccess(ctx.actor, row.branchId, { entityType: 'company', entityId: row.id });
+  if (!canManage && !(PUBLIC_COMPANY_STATUSES as readonly string[]).includes(row.status)) {
+    throw new ForbiddenError('This company is not yet verified');
+  }
   const doc = await ownDocument(db, row, documentId);
   const link = await viewDocumentLink(doc, PRESENT_STATUSES);
   await recordAudit(ctx, {

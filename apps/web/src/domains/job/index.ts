@@ -42,6 +42,7 @@ export {
   forceCloseJob,
   getCompanyJobDetail,
   getJobDetail,
+  isPureEmployer,
   JOB_SORTABLE,
   jobFilters,
   listJobs,

@@ -19,6 +19,7 @@ import {
   ValidationError,
 } from '@/domains/shared/errors';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
+import { likeContains } from '@/domains/shared/filters';
 import { enforceRateLimit } from '@/domains/shared/rate-limit';
 import { isSuperAdmin, type Actor } from '@/domains/shared/scope';
 import { db, type DbExecutor } from '@/lib/db';
@@ -29,6 +30,8 @@ type SignedIn = RequestContext & { actor: Actor };
 
 const u = schema.users;
 const ur = schema.userRoles;
+const ap = schema.applicants;
+const cm = schema.companyMembers;
 
 export const STAFF_SORTABLE = ['name', 'createdAt', 'lastLoginAt'] as const;
 export const staffFilters = {
@@ -173,7 +176,7 @@ export async function listStaff(
   const where = and(
     membership,
     status ? eq(u.status, status) : undefined,
-    query.q ? or(ilike(u.name, `%${query.q}%`), ilike(u.email, `%${query.q}%`)) : undefined,
+    query.q ? or(ilike(u.name, likeContains(query.q)), ilike(u.email, likeContains(query.q))) : undefined,
   );
 
   const sortColumn = { name: u.name, createdAt: u.createdAt, lastLoginAt: u.lastLoginAt }[
@@ -555,6 +558,30 @@ export async function deleteStaff(ctx: SignedIn, userId: string, reason: string)
     assertAllowed(canManageUser(ctx.actor, userId, assignments));
     if (assignments.some((a) => a.role === 'SUPER_ADMIN')) {
       await assertNotLastSuperAdmin(tx, userId);
+    }
+    // Audit 2026-11-11 (L-32): applicants.userId and companyMembers.userId
+    // are onDelete: 'restrict', so deleting a dual-role user hit a bare FK
+    // 23503 and surfaced as a generic "related record still in use" 409.
+    // Pre-check and say which link blocks the delete instead.
+    const [applicant] = await tx
+      .select({ id: ap.id })
+      .from(ap)
+      .where(eq(ap.userId, userId))
+      .limit(1);
+    if (applicant) {
+      throw new ConflictError(
+        'This user has an applicant profile — remove the applicant link first',
+      );
+    }
+    const [membership] = await tx
+      .select({ companyId: cm.companyId })
+      .from(cm)
+      .where(eq(cm.userId, userId))
+      .limit(1);
+    if (membership) {
+      throw new ConflictError(
+        'This user is a member of a company — remove the company membership first',
+      );
     }
     audit({
       action: 'user.delete',

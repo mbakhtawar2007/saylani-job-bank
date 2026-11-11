@@ -20,7 +20,7 @@ import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
 import { getCompanyDetail } from '@/domains/company';
 import { ForbiddenError, NotFoundError, ValidationError } from '@/domains/shared/errors';
-import { multiCode, multiEnum } from '@/domains/shared/filters';
+import { likeContains, multiCode, multiEnum } from '@/domains/shared/filters';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
 import {
   assertBranchAccess,
@@ -53,7 +53,7 @@ type SignedIn = RequestContext & { actor: Actor };
  * in the city. Only a pure-employer actor — EMPLOYER role and no internal
  * role — is forced to their own company here.
  */
-function isPureEmployer(actor: Actor): boolean {
+export function isPureEmployer(actor: Actor): boolean {
   return hasRole(actor, 'EMPLOYER') && !INTERNAL_ROLES.some((role) => actor.roles.includes(role));
 }
 
@@ -186,7 +186,7 @@ export async function listJobs(
     );
   }
   if (query.q) {
-    const like = `%${query.q}%`;
+    const like = likeContains(query.q);
     conditions.push(
       or(
         ilike(j.title, like),
@@ -307,8 +307,16 @@ export async function getJobDetail(actor: Actor, jobId: string): Promise<JobView
 }
 
 export async function getCompanyJobDetail(actor: Actor, companyId: string, jobId: string) {
-  const company = await getCompanyDetail(actor, companyId);
   assertPermission(actor, 'job:read');
+  // Audit 2026-11-11 (M-27): same C-F2 guards as listJobs/getJobDetail —
+  // a pure applicant must never reach this endpoint, and a pure employer
+  // sees only their own company's jobs, whatever branch assignment they hold.
+  if (hasRole(actor, 'APPLICANT') && !INTERNAL_ROLES.some((role) => actor.roles.includes(role)))
+    throw new ForbiddenError('Applicants can only view jobs referred to them');
+  if (actor.companyId && isPureEmployer(actor) && companyId !== actor.companyId) {
+    throw new NotFoundError('Job', jobId);
+  }
+  const company = await getCompanyDetail(actor, companyId);
   const row = await loadJob(db, jobId);
   assertBranchAccess(actor, row.branchId, { entityType: 'job', entityId: row.id });
   if (row.companyId !== companyId || row.branchId !== company.branch?.id) {
@@ -320,6 +328,13 @@ export async function getCompanyJobDetail(actor: Actor, companyId: string, jobId
 /** Lists only jobs belonging to an accessible company and branch. */
 export async function listCompanyJobs(actor: Actor, companyId: string): Promise<JobView[]> {
   assertPermission(actor, 'job:read');
+  // Audit 2026-11-11 (M-27): C-F2 guards — pure applicants are denied
+  // outright, pure employers are forced to their own company.
+  if (hasRole(actor, 'APPLICANT') && !INTERNAL_ROLES.some((role) => actor.roles.includes(role)))
+    throw new ForbiddenError('Applicants can only view jobs referred to them');
+  if (actor.companyId && isPureEmployer(actor) && companyId !== actor.companyId) {
+    throw new NotFoundError('Company', companyId);
+  }
   const [company] = await db
     .select({ branchId: schema.companies.branchId })
     .from(schema.companies)

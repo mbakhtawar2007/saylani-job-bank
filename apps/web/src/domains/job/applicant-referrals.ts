@@ -2,12 +2,14 @@ import 'server-only';
 import { schema } from '@jobbank/db';
 import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
 import { z } from 'zod';
+import { INTERNAL_ROLES } from '@jobbank/shared';
 import { createNotification } from '@/domains/notifications';
 import { runCommand } from '@/domains/shared/audit';
 import type { RequestContext } from '@/domains/shared/audit';
 import { ForbiddenError, isUniqueViolation, NotFoundError } from '@/domains/shared/errors';
 import { enforceRateLimit } from '@/domains/shared/rate-limit';
-import { assertCityAccess, assertPermission, cityScope, type Actor } from '@/domains/shared/scope';
+import { assertCityAccess, assertPermission, cityScope, hasRole, type Actor } from '@/domains/shared/scope';
+import { isPureEmployer } from './staff';
 import { db } from '@/lib/db';
 import { buildJobView, j, loadJob, type JobView } from './repository';
 
@@ -236,7 +238,16 @@ export async function listJobApplicantReferrals(
   jobId: string,
 ): Promise<JobApplicantReferralView[]> {
   assertPermission(actor, 'job:read');
+  // Audit 2026-11-11 (M-27): C-F2 guards — this endpoint was only closed by
+  // the accident that applicants/employers have no branchIds. A pure
+  // applicant is denied outright; a pure employer sees only their own
+  // company's referral lists, whatever branch assignment they hold.
+  if (hasRole(actor, 'APPLICANT') && !INTERNAL_ROLES.some((role) => actor.roles.includes(role)))
+    throw new ForbiddenError('Applicants can only view jobs referred to them');
   const job = await loadJob(db, jobId);
+  if (actor.companyId && isPureEmployer(actor) && job.companyId !== actor.companyId) {
+    throw new NotFoundError('Job', jobId);
+  }
   await assertCityAccess(actor, job.branchId, { entityType: 'job', entityId: job.id });
   const rows = await db
     .select()

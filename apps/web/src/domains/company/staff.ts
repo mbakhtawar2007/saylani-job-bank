@@ -42,6 +42,7 @@ import {
   ValidationError,
 } from '@/domains/shared/errors';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
+import { likeContains, likeStartsWith } from '@/domains/shared/filters';
 import {
   assertBranchAccess,
   assertPermission,
@@ -170,9 +171,9 @@ export async function listCompanies(
   if (query.q) {
     conditions.push(
       or(
-        ilike(c.legalName, `%${query.q}%`),
-        ilike(c.tradeName, `%${query.q}%`),
-        sql`${c.ntn} like ${`${query.q}%`}`,
+        ilike(c.legalName, likeContains(query.q)),
+        ilike(c.tradeName, likeContains(query.q)),
+        sql`${c.ntn} like ${likeStartsWith(query.q)}`,
       ),
     );
   }
@@ -502,6 +503,15 @@ export async function getCompanyOnboarding(
   assertPermission(actor, 'company:read');
   const row = await loadCompany(db, companyId);
   assertBranchAccess(actor, row.branchId, { entityType: 'company', entityId: row.id });
+  // Audit 2026-11-11 (L-24): same non-manager status rule as
+  // getCompanyDetail — outreach notes for a DRAFT company are not open to
+  // company:read holders. (Managers — SA/BA/verifier — are unaffected.)
+  if (
+    !hasPermission(actor, 'company:manage') &&
+    !(PUBLIC_COMPANY_STATUSES as readonly string[]).includes(row.status)
+  ) {
+    throw new ForbiddenError('This company is not yet verified');
+  }
   const [onboarding] = await db
     .select()
     .from(schema.companyOnboarding)

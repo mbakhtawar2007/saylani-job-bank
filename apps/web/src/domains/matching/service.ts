@@ -4,7 +4,7 @@ import type { JobStatus } from '@jobbank/shared';
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { runCommand, type RequestContext } from '@/domains/shared/audit';
 import type { Transaction } from '@/lib/db';
-import { isReferrableApplicant, jobMachine } from '@/domains/job';
+import { isPureEmployer, isReferrableApplicant, jobMachine } from '@/domains/job';
 import {
   ConflictError,
   ForbiddenError,
@@ -84,7 +84,10 @@ async function loadJobForActor(actor: Actor, jobId: string) {
     .limit(1);
   if (!job) throw new NotFoundError('Job', jobId);
 
-  if (actor.roles.includes('EMPLOYER')) {
+  // Audit 2026-11-11 (M-27/L-27): the pure-employer test, not the bare role
+  // check — a dual STAFF+EMPLOYER user keeps staff's city-wide match review
+  // instead of being forced to own-company-only.
+  if (isPureEmployer(actor)) {
     // Employers see only their own company's jobs — a job referred to
     // another company (or to no company) is a 404 for them.
     if (actor.companyId !== job.companyId) {
