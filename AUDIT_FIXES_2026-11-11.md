@@ -108,11 +108,16 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 
 ## Final verification
 
-(To be filled after all fixable items: typecheck, lint, unit counts, build exit. Integration/E2E not run — no live DB.)
+First run (head `62a5b67`, 76 fixed): typecheck 0 errors (3 workspaces), eslint 0 errors 0 warnings, unit web 359+110 all pass, db unit 15/15, matching pytest 37 pass, `next build` exit 0 with `SKIP_ENV_VALIDATION=1`. Integration/E2E not run — no live DB in the VM.
+
+Second run (head `3a116d7`, all 11 remaining items decided and fixed — 85/85 addressed): typecheck 0 errors (apps/web, packages/db, packages/shared), eslint 0 errors 0 warnings (all three workspaces), unit web 364 passed (44 files) + components 111 passed (30 files), db unit 15/15 (3 files), matching pytest 40 passed, `next build` exit 0 with `SKIP_ENV_VALIDATION=1` (no dev server running). M-20 additionally verified live via `next start` + curl (see M-20 row). Integration/E2E still not run — no live DB in the VM.
 
 ## Laptop steps remaining
 
-- M-32: migration renumber + `pnpm db:generate` (backed up, coordinated).
+- M-32: regenerate the 22 missing migration snapshots — `pnpm db:generate` on the laptop, backed up, with a live database and a TTY (the VM attempt stopped on interactive schema-conflict prompts); review the diff before committing. Do NOT hand-edit _journal.json. Do NOT renumber 0014/0015.
 - H-03: run `act-for-employer.integration.test.ts` on the laptop.
+- M-28: run `staff-management.integration.test.ts` (2FA-reset wrong-password → 401 + correct-password success, updated in 648e359) on the laptop.
+- L-05: confirm the deployment target, add the daily 19:05 UTC cron for POST /api/v1/admin/maintenance/expire-jobs with CRON_SECRET, and test it with a real call.
+- L-18: live-check POST /api/v1/auth/invitations/lookup with a real invite token.
 - Integration tests, API jest suite, E2E, matching pytest, `db:migrate` 0001–0045 on real Postgres.
 - Live browser checks: verifier cross-city error page, print-to-PDF, token slip, mobile rendering.
