@@ -153,8 +153,11 @@ async def load_candidate_pool(
 ) -> list[dict[str, Any]]:
     """ACTIVE applicants inside the max radius with distance + profile version.
 
-    Only identity/distance/version here: everything else lives in the Redis
-    profile cache (keyed by updated_at) or is fetched on a cache miss.
+    REJECTED-identity applicants are excluded here too (audit 2026-11-11,
+    M-12): they can never be referred, so the engine must not surface them
+    as shortlist candidates. Only identity/distance/version here: everything
+    else lives in the Redis profile cache (keyed by updated_at) or is fetched
+    on a cache miss.
     """
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
@@ -166,6 +169,7 @@ async def load_candidate_pool(
             JOIN applicant_addresses aa ON aa.applicant_id = a.id
             CROSS JOIN (SELECT location FROM job_locations WHERE job_id = %s LIMIT 1) jl
             WHERE a.status = 'ACTIVE'
+              AND a.identity_status <> 'REJECTED'
               AND ST_DWithin(aa.location, jl.location, %s)
             """,
             (job_id, max_radius_m),

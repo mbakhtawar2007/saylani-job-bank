@@ -1,10 +1,10 @@
 import 'server-only';
 import { schema } from '@jobbank/db';
 import type { JobStatus } from '@jobbank/shared';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { runCommand, type RequestContext } from '@/domains/shared/audit';
 import type { Transaction } from '@/lib/db';
-import { jobMachine } from '@/domains/job';
+import { isReferrableApplicant, jobMachine } from '@/domains/job';
 import {
   ConflictError,
   ForbiddenError,
@@ -14,7 +14,9 @@ import {
 import { enforceRateLimit } from '@/domains/shared/rate-limit';
 import {
   assertBranchAccess,
+  assertCityAccess,
   assertPermission,
+  cityScope,
   hasPermission,
   type Actor,
 } from '@/domains/shared/scope';
@@ -749,6 +751,83 @@ export async function listMatchedJobs(profile: { id: string }): Promise<MatchedJ
     });
   }
   return out;
+}
+
+export interface StaffMatchedJob extends MatchedJob {
+  companyName: string | null;
+  /** True when this job was already referred to this applicant. */
+  referred: boolean;
+}
+
+/**
+ * Staff view of one applicant's AI-ranked jobs, for referral.
+ *
+ * Reuses the applicant's own ranked list (latest COMPLETED match run, OPEN
+ * jobs only, best score first — no score is invented here) and then applies
+ * the same guards as referJobToApplicant: the applicant must be referrable,
+ * the job must be in the staff member's city scope, and the posting company
+ * must be VERIFIED. Already-referred jobs stay in the list, flagged, so
+ * staff can see what was already sent instead of re-sending it blindly.
+ * Returns [] when the applicant cannot be referred at all.
+ *
+ * Audit 2026-11-11 (M-14): ported from the fork clone's uncommitted
+ * matched-jobs work (mbakhtawar2007/saylani-job-bank, local clone only).
+ */
+export async function listMatchedJobsForStaff(
+  actor: Actor,
+  applicantId: string,
+): Promise<StaffMatchedJob[]> {
+  assertPermission(actor, 'job:refer');
+  const [applicant] = await db
+    .select({
+      id: ap.id,
+      status: ap.status,
+      identityStatus: ap.identityStatus,
+      branchId: ap.branchId,
+    })
+    .from(ap)
+    .where(eq(ap.id, applicantId));
+  if (!applicant) throw new NotFoundError('Applicant', applicantId);
+  await assertCityAccess(actor, applicant.branchId, {
+    entityType: 'applicant',
+    entityId: applicant.id,
+  });
+  if (!isReferrableApplicant(applicant)) return [];
+
+  const base = await listMatchedJobs({ id: applicantId });
+  if (base.length === 0) return [];
+  const jobIds = base.map((b) => b.jobId);
+
+  const scope = cityScope(actor, j.branchId);
+  const jobRows = await db
+    .select({
+      jobId: j.id,
+      companyName: schema.companies.legalName,
+    })
+    .from(j)
+    .innerJoin(schema.companies, eq(schema.companies.id, j.companyId))
+    .where(and(inArray(j.id, jobIds), eq(schema.companies.status, 'VERIFIED'), scope ?? undefined));
+  const byId = new Map(jobRows.map((r) => [r.jobId, r]));
+
+  const referredRows = await db
+    .select({ jobId: schema.jobApplicantReferrals.jobId })
+    .from(schema.jobApplicantReferrals)
+    .where(
+      and(
+        eq(schema.jobApplicantReferrals.applicantId, applicantId),
+        inArray(schema.jobApplicantReferrals.jobId, jobIds),
+      ),
+    );
+  const referred = new Set(referredRows.map((r) => r.jobId));
+
+  return base
+    .filter((b) => byId.has(b.jobId))
+    .slice(0, 10)
+    .map((b) => ({
+      ...b,
+      companyName: byId.get(b.jobId)?.companyName ?? null,
+      referred: referred.has(b.jobId),
+    }));
 }
 
 /** Reason dropdown options for the applicant's offer-response UI. */

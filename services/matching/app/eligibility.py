@@ -42,6 +42,14 @@ def check_eligibility(
 ) -> EligibilityResult:
     reasons: list[str] = []
 
+    # ── Identity (hard): a REJECTED identity can never be referred —
+    # isReferrableApplicant requires VERIFIED or UNVERIFIED — so the
+    # engine must not surface such candidates at all (audit 2026-11-11,
+    # M-12). The pool query excludes them too; this is the unit-testable
+    # layer of the same rule.
+    if applicant.identity_status == "REJECTED":
+        reasons.append("Identity verification rejected")
+
     # ── Location (hard): must be inside the job's max radius AND the applicant's
     # own willing radius. Distance comes from PostGIS; None = no home pin.
     if applicant.distance_m is None:

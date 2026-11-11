@@ -21,6 +21,7 @@ import {
   Pencil,
   Phone,
   Printer,
+  Send,
   UserCheck,
   UserX,
 } from 'lucide-react';
@@ -41,6 +42,7 @@ import {
 } from '@/components/molecules';
 import { DocumentList, MapPinPicker, Timeline } from '@/components/organisms';
 import type { ApplicantStaffView } from '@/domains/applicant';
+import type { StaffMatchedJob } from '@/domains/matching';
 import type { ApplicationView } from '@/domains/placement';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import { formatCnic } from '@/lib/format/cnic';
@@ -800,6 +802,150 @@ function ReferToEmployerDialog({
   );
 }
 
+// ─── AI-ranked jobs for referral ────────────────────────────────────────
+
+const MATCH_STRENGTH: Record<
+  StaffMatchedJob['strength'],
+  { label: string; tone: 'success' | 'primary' | 'neutral' }
+> = {
+  GREAT: { label: 'Great match', tone: 'success' },
+  GOOD: { label: 'Good match', tone: 'primary' },
+  POSSIBLE: { label: 'Possible match', tone: 'neutral' },
+};
+
+function formatSalary(min: number | null, max: number | null) {
+  if (min == null && max == null) return null;
+  if (min != null && max != null)
+    return `Rs ${min.toLocaleString('en-PK')} – ${max.toLocaleString('en-PK')}`;
+  if (min != null) return `Rs ${min.toLocaleString('en-PK')}+`;
+  return `Up to Rs ${max!.toLocaleString('en-PK')}`;
+}
+
+/**
+ * Staff picks this applicant, then picks from their AI-ranked jobs.
+ * Scores and reasons come straight from the matching engine's latest
+ * completed run (skills, qualifications, experience, profile, distance) —
+ * nothing is scored in the browser. Each row refers that one job to this
+ * applicant via the existing job-referral API, so the applicant then sees
+ * it on their Jobs page. Already-referred jobs stay visible, flagged,
+ * instead of being offered again.
+ *
+ * Audit 2026-11-11 (M-14): ported from the fork clone's uncommitted
+ * matched-jobs work.
+ */
+function MatchedJobsForReferralCard({
+  applicantId,
+  jobs,
+}: {
+  applicantId: string;
+  jobs: StaffMatchedJob[];
+}) {
+  const [referredIds, setReferredIds] = useState<Set<string>>(
+    () => new Set(jobs.filter((j) => j.referred).map((j) => j.jobId)),
+  );
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setReferredIds((prev) => {
+      const next = new Set(prev);
+      for (const j of jobs) if (j.referred) next.add(j.jobId);
+      return next;
+    });
+  }, [jobs]);
+
+  const refer = async (job: StaffMatchedJob) => {
+    setError(null);
+    setBusyId(job.jobId);
+    try {
+      await apiFetch(`/api/v1/jobs/${job.jobId}/applicant-referrals`, {
+        method: 'POST',
+        body: { applicantId },
+      });
+      setReferredIds((prev) => new Set(prev).add(job.jobId));
+      toast.success(`“${job.title}” referred to this applicant.`);
+    } catch (err) {
+      setError(
+        err instanceof ApiClientError ? err.message : 'Could not refer this job. Try again.',
+      );
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <Card title="Matched jobs — refer by AI ranking">
+      <p className="text-fg-muted text-sm">
+        Jobs ranked by the AI matching engine for this applicant — skills, qualifications,
+        experience and profile. Pick a job to refer it to them; they will see it on their Jobs page
+        and get a notification.
+      </p>
+      {error && (
+        <p role="alert" className="bg-danger-soft text-danger-soft-fg rounded-lg px-4 py-3 text-sm">
+          {error}
+        </p>
+      )}
+      {jobs.length === 0 ? (
+        <p className="text-fg-muted text-sm">
+          No AI-matched jobs yet. Matches appear after the matching engine runs for a job — when a
+          job is published or its matches are refreshed. If the list stays empty, the matching
+          worker may not be running.
+        </p>
+      ) : (
+        <ul className="grid gap-3">
+          {jobs.map((job, index) => {
+            const strength = MATCH_STRENGTH[job.strength];
+            const referred = referredIds.has(job.jobId);
+            const salary = formatSalary(job.salaryMin, job.salaryMax);
+            return (
+              <li key={job.jobId} className="border-border grid gap-2 rounded-xl border p-4">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="grid gap-0.5">
+                    <span className="text-fg font-medium">
+                      #{index + 1} · {job.title}
+                    </span>
+                    <span className="text-fg-muted text-sm">
+                      {job.companyName ?? 'Company'}
+                      {salary ? ` · ${salary}` : ''}
+                    </span>
+                    <span className="text-fg-muted text-xs">
+                      {JOB_TYPE_LABELS[job.jobType as keyof typeof JOB_TYPE_LABELS] ?? job.jobType}
+                      {' · '}
+                      {SHIFT_LABELS[job.shift as keyof typeof SHIFT_LABELS] ?? job.shift}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={strength.tone}>{strength.label}</Badge>
+                    <span className="numeric bg-primary-soft text-primary-soft-fg rounded-full px-3 py-1 text-sm font-bold">
+                      {job.score}
+                    </span>
+                  </div>
+                </div>
+                {job.matchReasons.length > 0 && (
+                  <p className="text-fg-muted text-sm">
+                    {job.matchReasons.slice(0, 3).join(' · ')}
+                  </p>
+                )}
+                <div>
+                  <Button
+                    variant="secondary"
+                    loading={busyId === job.jobId}
+                    disabled={referred || busyId !== null}
+                    onClick={() => void refer(job)}
+                  >
+                    <Send className="mr-1.5 size-4" />
+                    {referred ? 'Already referred' : 'Refer this job'}
+                  </Button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 // ─── Applications list ─────────────────────────────────────────────────
 
 const APPLICATION_STATUS_LABELS: Record<
@@ -934,6 +1080,8 @@ export function ApplicantDetailView({
   branches,
   openJobs,
   existingApplications,
+  matchedJobs,
+  canReferMatchedJobs,
   listPath,
 }: {
   applicant: ApplicantStaffView;
@@ -941,6 +1089,8 @@ export function ApplicantDetailView({
   branches: SelectOption[];
   openJobs?: SelectOption[];
   existingApplications?: ApplicationView[];
+  matchedJobs?: StaffMatchedJob[];
+  canReferMatchedJobs?: boolean;
   listPath: string;
 }) {
   const router = useRouter();
@@ -1241,6 +1391,10 @@ export function ApplicantDetailView({
           canScheduleInterview={!!applicant.can.scheduleInterview}
           canReferToEmployer={!!applicant.can.referToEmployer}
         />
+      )}
+
+      {canReferMatchedJobs && (
+        <MatchedJobsForReferralCard applicantId={applicant.id} jobs={matchedJobs ?? []} />
       )}
 
       {(applicant.can.manage || applicant.can.transfer) && (

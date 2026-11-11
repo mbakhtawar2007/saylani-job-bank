@@ -14,7 +14,7 @@ export const notifications = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    /** MATCH_SHORTLISTED | MATCH_HIRED | MATCH_REJECTED | OFFER_ACCEPTED | OFFER_DECLINED */
+    /** Free-form type; the authoritative list is KNOWN_NOTIFICATION_TYPES in apps/web/src/domains/notifications/service.ts. */
     type: text('type').notNull(),
     title: text('title').notNull(),
     body: text('body').notNull().default(''),

@@ -421,7 +421,14 @@ export async function updateInterviewStatus(
   }).then(buildView);
 
   // Notify the applicant of the interview status change (best-effort, post-commit).
-  void notifyApplicantOfInterviewUpdate(ctx, row.applicantId, view, input.status).catch((err) =>
+  // Audit 2026-11-11 (L-11): reaching here with INTERVIEW_SCHEDULED always
+  // means a reschedule — a first schedule goes through scheduleInterview —
+  // so the applicant hears "rescheduled", not "scheduled".
+  const notifStatus =
+    input.status === 'INTERVIEW_SCHEDULED' && row.interviewAt
+      ? 'INTERVIEW_RESCHEDULED'
+      : input.status;
+  void notifyApplicantOfInterviewUpdate(ctx, row.applicantId, view, notifStatus).catch((err) =>
     ctx.log.error('interview status notification failed', { applicationId, err }),
   );
 

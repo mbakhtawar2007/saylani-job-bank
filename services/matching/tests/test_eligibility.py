@@ -90,6 +90,15 @@ def test_willing_radius_smaller_than_distance_fails(frontend_job, perfect_applic
     assert any("willing" in r.lower() for r in result.reasons)
 
 
+def test_rejected_identity_fails(frontend_job, perfect_applicant):
+    # Audit 2026-11-11 (M-12): a REJECTED identity can never be referred,
+    # so the engine must not surface the candidate at all.
+    perfect_applicant.identity_status = "REJECTED"
+    result = check_eligibility(frontend_job, perfect_applicant)
+    assert not result.eligible
+    assert any("Identity" in r for r in result.reasons)
+
+
 def test_gender_preference_is_hard_and_explicit(frontend_job, perfect_applicant):
     frontend_job.gender_preference = "FEMALE"
     perfect_applicant.gender = "MALE"

@@ -13,6 +13,7 @@ export {
   getJobMatches,
   getMyPendingOffers,
   listMatchedJobs,
+  listMatchedJobsForStaff,
   listRejectionReasons,
   listRefusalReasons,
   requestJobMatchesRefresh,
@@ -28,4 +29,5 @@ export {
   type OfferResponse,
   type OfferResponseInput,
   type PendingOffer,
+  type StaffMatchedJob,
 } from './service';

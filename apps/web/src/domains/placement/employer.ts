@@ -603,22 +603,28 @@ export async function recordEmployerDecision(
 
   // Notify applicant
   const [applicantRow] = await db
-    .select({ userId: schema.applicants.userId })
+    .select({ userId: schema.applicants.userId, name: schema.users.name })
     .from(schema.applicants)
+    .leftJoin(schema.users, eq(schema.users.id, schema.applicants.userId))
     .where(eq(schema.applicants.id, row.applicantId))
     .limit(1);
 
   if (applicantRow) {
-    type NotifType = 'OFFER_ACCEPTED' | 'APPLICATION_ON_HOLD' | 'MATCH_REJECTED';
+    // Audit 2026-11-11 (M-16): the employer EXTENDING an offer is not the
+    // applicant ACCEPTING it — OFFER_EXTENDED for this direction, so an
+    // applicant's list never shows OFFER_ACCEPTED before they accepted.
+    // OFFER_ACCEPTED stays for the accept direction (acceptJobOffer,
+    // matching/service.ts).
+    type NotifType = 'OFFER_EXTENDED' | 'APPLICATION_ON_HOLD' | 'MATCH_REJECTED';
     const notifType: NotifType =
       input.decision === 'ACCEPTED'
-        ? 'OFFER_ACCEPTED'
+        ? 'OFFER_EXTENDED'
         : input.decision === 'REJECTED'
           ? 'MATCH_REJECTED'
           : 'APPLICATION_ON_HOLD';
 
     const copy: Record<NotifType, { title: string; body: string }> = {
-      OFFER_ACCEPTED: {
+      OFFER_EXTENDED: {
         title: `Job offer — ${jobTitle}`,
         body: `You have received a job offer from ${companyName} for ${jobTitle}. Please respond via your dashboard.`,
       },
@@ -638,6 +644,27 @@ export async function recordEmployerDecision(
       title: copy[notifType].title,
       body: copy[notifType].body,
       data: { applicationId, jobTitle, companyName },
+    }).catch(() => null);
+  }
+
+  // Audit 2026-11-11 (L-12): the staff member who referred the candidate
+  // hears the outcome too — otherwise they only learn it by re-opening the
+  // referral. Skipped when the decider IS the referrer (staff acting for
+  // the employer deciding their own referral).
+  if (row.createdBy && row.createdBy !== ctx.actor.userId) {
+    const applicantName = applicantRow?.name ?? 'a candidate you referred';
+    const outcome =
+      input.decision === 'ACCEPTED'
+        ? `extended an offer to ${applicantName}`
+        : input.decision === 'REJECTED'
+          ? `decided not to proceed with ${applicantName}`
+          : `placed ${applicantName} on hold`;
+    void createNotification(db, {
+      userId: row.createdBy,
+      type: 'REFERRAL_DECISION',
+      title: `Employer decision — ${jobTitle}`,
+      body: `${companyName} has ${outcome} for ${jobTitle}.`,
+      data: { applicationId, jobTitle, companyName, decision: input.decision },
     }).catch(() => null);
   }
 

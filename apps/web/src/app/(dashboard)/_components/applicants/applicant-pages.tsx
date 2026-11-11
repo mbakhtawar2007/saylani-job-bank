@@ -9,11 +9,13 @@ import {
 } from '@/domains/applicant';
 import { requireRole } from '@/domains/auth';
 import { listBranches, listBranchOptions } from '@/domains/branch';
+import { isReferrableApplicant } from '@/domains/job';
+import { listMatchedJobsForStaff } from '@/domains/matching';
 import { listApplicationsForApplicant } from '@/domains/placement';
 import { listMasterData } from '@/domains/settings';
 import { ValidationError } from '@/domains/shared/errors';
 import { parseListQuery } from '@/domains/shared/pagination';
-import { isSuperAdmin } from '@/domains/shared/scope';
+import { hasPermission, isSuperAdmin } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
 import { schema } from '@jobbank/db';
 import { and, eq, sql } from 'drizzle-orm';
@@ -128,7 +130,10 @@ export async function ApplicantDetailPage({
           .then((rows) => rows.map((r) => ({ value: r.id, label: r.title })))
       : Promise.resolve([]);
 
-  const [labels, branches, openJobs, existingApplications] = await Promise.all([
+  // AI-ranked jobs for referral: only when this staff member may refer jobs
+  // and this applicant may receive one. The domain function re-checks both.
+  const canReferMatchedJobs = hasPermission(actor, 'job:refer') && isReferrableApplicant(applicant);
+  const [labels, branches, openJobs, existingApplications, matchedJobs] = await Promise.all([
     profileLabels(),
     applicant.can.transfer
       ? listBranchOptions(applicant.address?.location ?? { lat: 30.3753, lng: 69.3451 })
@@ -137,6 +142,7 @@ export async function ApplicantDetailPage({
     applicant.can.shortlist
       ? listApplicationsForApplicant(actor, applicant.id)
       : Promise.resolve([]),
+    canReferMatchedJobs ? listMatchedJobsForStaff(actor, applicant.id) : Promise.resolve([]),
   ]);
 
   return (
@@ -159,6 +165,8 @@ export async function ApplicantDetailPage({
         branches={branches.map((b) => ({ value: b.id, label: b.name }))}
         openJobs={openJobs}
         existingApplications={existingApplications}
+        matchedJobs={matchedJobs}
+        canReferMatchedJobs={canReferMatchedJobs}
         listPath={basePath}
       />
     </DetailPageLayout>

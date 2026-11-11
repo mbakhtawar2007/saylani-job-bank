@@ -22,6 +22,13 @@ export const KNOWN_NOTIFICATION_TYPES = [
   'MATCH_REJECTED',
   'OFFER_ACCEPTED',
   'OFFER_DECLINED',
+  // Audit 2026-11-11 (M-16): OFFER_EXTENDED is the employer extending an
+  // offer; OFFER_ACCEPTED is only the applicant accepting it. Reusing one
+  // type for both showed applicants OFFER_ACCEPTED before they accepted.
+  'OFFER_EXTENDED',
+  // Audit 2026-11-11 (L-12): the employer decision on a candidate a staff
+  // member referred, notified to that referrer.
+  'REFERRAL_DECISION',
   'INTERVIEW_SCHEDULED',
   'INTERVIEW_POSTPONED',
   'INTERVIEW_CANCELLED',
