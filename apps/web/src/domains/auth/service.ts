@@ -21,6 +21,7 @@ import { normalizePkMobile } from '@/lib/format/phone';
 import { ACTIVE_BRANCH_COOKIE, loadActor, requiresTwoFactor, type SessionUser } from './actor';
 import { getAuth, isPlaceholderEmail, SESSION_TTL_SECONDS } from './auth';
 import { issueOtp, OTP_TTL_SECONDS } from './otp';
+import { createTwoFactorSetupToken } from './setup-token';
 
 export const RESEND_AFTER_SECONDS = 60;
 
@@ -57,6 +58,21 @@ export interface TwoFactorChallenge {
    * device must never buy a bypass. Enforced server-side too (verifySecondFactor).
    */
   trustDeviceAllowed: boolean;
+}
+
+/**
+ * Audit 2026-11-11 (H-02): the password was right, but the account's role
+ * requires 2FA and none is enrolled yet — so NO session is issued. The client
+ * gets a short-lived, non-session setup token instead, usable only to start
+ * enrolment (POST /api/v1/account/2fa/enroll with `setupToken`). It cannot
+ * call any other route, and it dies the moment enrolment completes.
+ */
+export interface TwoFactorSetupRequired {
+  kind: 'two_factor_setup_required';
+  setupToken: string;
+  expiresInSeconds: number;
+  /** Always empty for this kind — no session cookies are issued. */
+  cookies: string[];
 }
 
 /**
@@ -234,7 +250,7 @@ export async function loginWithPassword(
   rawEmail: string,
   password: string,
   requestHeaders: Headers,
-): Promise<SignInResult | TwoFactorChallenge> {
+): Promise<SignInResult | TwoFactorChallenge | TwoFactorSetupRequired> {
   const email = rawEmail.trim().toLowerCase();
   await enforceRateLimit(
     'login-email',
@@ -306,7 +322,46 @@ export async function loginWithPassword(
       trustDeviceAllowed,
     };
   }
-  return signedIn(ctx, response.user.id, 'password', result.headers.getSetCookie());
+  const actor = await loadActor(response.user.id);
+  if (actor.twoFactorPending) {
+    // Audit 2026-11-11 (H-02): this role requires 2FA but none is enrolled.
+    // Better Auth has already created a session for this sign-in — revoke it
+    // before anything leaves the server, so a password-only admin never holds
+    // a live session. The caller gets a short-lived, non-session setup token
+    // instead (usable only to start enrolment). Downstream twoFactorPending
+    // gates stay in place as defence-in-depth.
+    await revokeSessionFromSetCookies(result.headers.getSetCookie());
+    await recordAudit(ctx, {
+      action: 'auth.login_2fa_setup_required',
+      entityType: 'user',
+      entityId: user?.id ?? null,
+      metadata: { method: 'password' },
+    });
+    const { token, expiresInSeconds } = createTwoFactorSetupToken(response.user.id);
+    return { kind: 'two_factor_setup_required', setupToken: token, expiresInSeconds, cookies: [] };
+  }
+  return signedIn(ctx, response.user.id, 'password', result.headers.getSetCookie(), actor);
+}
+
+/**
+ * Deletes the session behind a set of Set-Cookie values (best effort: if the
+ * sign-out fails the session stays pending-gated and can never be used for
+ * API access, but the login still returns the setup challenge, not a session).
+ */
+async function revokeSessionFromSetCookies(setCookies: string[]): Promise<void> {
+  const cookieHeader = setCookies
+    .map((c) => c.split(';')[0]?.trim())
+    .filter((c): c is string => Boolean(c))
+    .join('; ');
+  if (!cookieHeader) return;
+  try {
+    await getAuth().api.signOut({
+      headers: new Headers({ cookie: cookieHeader }),
+      returnHeaders: true,
+    });
+  } catch {
+    // Best effort — see above.
+  }
 }
 
 /**

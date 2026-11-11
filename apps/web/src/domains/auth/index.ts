@@ -57,10 +57,12 @@ export {
   type MeView,
   type SignInResult,
   type TwoFactorChallenge,
+  type TwoFactorSetupRequired,
 } from './service';
 export {
   confirmTwoFactorEnrollment,
   disableTwoFactor,
   startTwoFactorEnrollment,
+  startTwoFactorEnrollmentWithSetupToken,
   type EnrollmentStart,
 } from './two-factor';

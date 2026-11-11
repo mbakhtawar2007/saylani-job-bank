@@ -1,11 +1,16 @@
 import 'server-only';
+import { createHash } from 'node:crypto';
+import { schema } from '@jobbank/db';
+import { eq } from 'drizzle-orm';
 import QRCode from 'qrcode';
 import { recordAudit, type RequestContext } from '@/domains/shared/audit';
 import { ForbiddenError, RateLimitedError, UnauthenticatedError } from '@/domains/shared/errors';
 import { enforceRateLimit } from '@/domains/shared/rate-limit';
 import type { Actor } from '@/domains/shared/scope';
-import { requiresTwoFactor } from './actor';
+import { db } from '@/lib/db';
+import { loadActor, requiresTwoFactor } from './actor';
 import { getAuth } from './auth';
+import { verifyTwoFactorSetupToken } from './setup-token';
 import { clearTrustedDevices, revokeAllSessions } from './service';
 
 type SignedIn = RequestContext & { actor: Actor };
@@ -47,6 +52,75 @@ export async function startTwoFactorEnrollment(
     entityId: ctx.actor.userId,
   });
   return { qrSvg, manualKey, backupCodes: result.backupCodes };
+}
+
+/**
+ * Setup-token path for POST /api/v1/account/2fa/enroll (audit 2026-11-11,
+ * H-02). The caller has no session — only the short-lived token login issued
+ * after a password check. The token is verified (and rate-limited per token),
+ * the password is checked again via a fresh Better Auth sign-in, and the
+ * pending session that sign-in creates is used for enableTwoFactor and
+ * returned as cookies, so the confirm step works exactly as in the
+ * session-based flow. That pending session exists only during active
+ * enrolment; it becomes a normal session only once enrolment is confirmed.
+ */
+export async function startTwoFactorEnrollmentWithSetupToken(
+  ctx: RequestContext,
+  setupToken: string,
+  password: string,
+  requestHeaders: Headers,
+): Promise<{ enrollment: EnrollmentStart; cookies: string[] }> {
+  const tokenHash = createHash('sha256').update(setupToken).digest('hex');
+  await enforceRateLimit(
+    '2fa-setup-token',
+    tokenHash,
+    { limit: 5, windowSeconds: 900 },
+    'Too many setup attempts. Sign in again to get a new setup link.',
+  );
+  const userId = await verifyTwoFactorSetupToken(setupToken);
+  if (!userId) {
+    throw new UnauthenticatedError(
+      'This setup link is invalid or has expired. Sign in again.',
+    );
+  }
+  const [row] = await db
+    .select({ email: schema.users.email })
+    .from(schema.users)
+    .where(eq(schema.users.id, userId));
+  if (!row) {
+    throw new UnauthenticatedError(
+      'This setup link is invalid or has expired. Sign in again.',
+    );
+  }
+  let signIn;
+  try {
+    signIn = await getAuth().api.signInEmail({
+      body: { email: row.email, password, rememberMe: true },
+      headers: requestHeaders,
+      returnHeaders: true,
+    });
+  } catch (error) {
+    if (authApiMessage(error)) throw new UnauthenticatedError('Incorrect password');
+    throw error;
+  }
+  if ('twoFactorRedirect' in (signIn.response as object)) {
+    // 2FA was enabled between token issue and this call — the token check
+    // above should have caught it; fail closed instead of enrolling twice.
+    throw new UnauthenticatedError('Two-factor authentication is already on. Sign in again.');
+  }
+  const cookies = signIn.headers.getSetCookie();
+  const sessionHeaders = new Headers({
+    cookie: cookies
+      .map((c) => c.split(';')[0]?.trim())
+      .filter((c): c is string => Boolean(c))
+      .join('; '),
+  });
+  const enrollment = await startTwoFactorEnrollment(
+    { ...ctx, actor: await loadActor(userId) },
+    password,
+    sessionHeaders,
+  );
+  return { enrollment, cookies };
 }
 
 /** Step 2: the first correct code from the app turns two-factor on. */

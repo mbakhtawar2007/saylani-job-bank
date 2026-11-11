@@ -1012,6 +1012,13 @@ export async function correctCompanyDetails(
   input: UpdateCompanyInput & { reason: string },
 ): Promise<CompanyView> {
   assertPermission(ctx.actor, 'company:manage');
+  // Audit 2026-11-11 (H-01): company:manage is also held by verifiers, so the
+  // permission alone does not prove Super/Branch Admin. Only Super Admin and
+  // Branch Admin may correct locked company details — a verifier must never
+  // rewrite legal fields (legalName, legalStructure, ntn, registrationNo) on
+  // a VERIFIED company. Mirrors transferCompany's role guard. Verifier
+  // callers are rejected here, so no contact-conflict check is needed.
+  assertRole(ctx.actor, 'SUPER_ADMIN', 'BRANCH_ADMIN');
   const { reason, ...requested } = input;
   if (Object.keys(requested).length === 0) {
     throw new ValidationError([{ path: 'root', message: 'Change at least one field' }]);

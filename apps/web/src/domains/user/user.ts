@@ -433,6 +433,12 @@ export async function revokeRole(
   if (userId === ctx.actor.userId) throw new ForbiddenError('You cannot change your own roles');
   await runCommand(ctx, async ({ tx, audit }) => {
     const { assignments } = await loadTarget(tx, ctx.actor, userId);
+    // Audit 2026-11-11 (H-06): seeing a user is not managing them — mirror
+    // grantRole. canGrantRole alone is per-assignment, so without this a
+    // Branch Admin could revoke the STAFF/VERIFIER assignment of a user who
+    // is also a Branch Admin (or holds roles in branches the BA does not
+    // administer).
+    assertAllowed(canManageUser(ctx.actor, userId, assignments));
     const assignment = assignments.find((a) => a.id === assignmentId);
     if (!assignment) throw new NotFoundError('Role assignment', assignmentId);
     assertAllowed(canGrantRole(ctx.actor, assignment.role, assignment.branchId));
