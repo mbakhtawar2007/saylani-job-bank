@@ -24,6 +24,9 @@ const testMigratorUrl =
 const testRuntimeUrl = withDatabase(process.env.DATABASE_URL ?? rootEnv.DATABASE_URL, testDb);
 // globalSetup runs in this (main) process, where `test.env` does not apply.
 process.env.TEST_DATABASE_MIGRATOR_URL ??= testMigratorUrl;
+// Same for the seed password: globalSetup seeds the test DB in this process,
+// so test.env (workers only) never reaches it. Mirrors the URL line above.
+process.env.SEED_DEV_PASSWORD ??= rootEnv.SEED_DEV_PASSWORD ?? '';
 
 export default defineConfig({
   test: {
