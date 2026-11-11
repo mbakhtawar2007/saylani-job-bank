@@ -112,7 +112,10 @@ describe('staff-assisted applicant registration', () => {
     });
   });
 
-  it('rejects Branch Admin registration in both assigned and other branches', async () => {
+  // Round 2: a Branch Admin holds applicant:create (permissions.test.ts:
+  // "Branch Admin is NOT read-only") — own-branch registration is 201,
+  // and only the cross-branch attempt is refused.
+  it('lets a Branch Admin register in their own branch, but not in another branch', async () => {
     const branchAdmin = await signInAdmin('branchadmin.khi@jobbank.local');
     const ownBranch = registration(khi);
     const allowed = await call(registerForStaff, '/api/v1/applicants/staff-register', {
@@ -121,7 +124,8 @@ describe('staff-assisted applicant registration', () => {
       jar: branchAdmin,
       headers: { 'idempotency-key': idempotencyKey() },
     });
-    expect(allowed.status, JSON.stringify(allowed.body)).toBe(403);
+    expect(allowed.status, JSON.stringify(allowed.body)).toBe(201);
+    expect(allowed.body.data.branch.code).toBe('KHI-GULSHAN');
 
     const crossBranch = registration(lhr);
     const rejected = await call(registerForStaff, '/api/v1/applicants/staff-register', {

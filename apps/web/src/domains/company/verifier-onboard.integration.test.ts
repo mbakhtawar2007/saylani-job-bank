@@ -7,7 +7,7 @@ import { POST as onboard } from '@/app/api/v1/companies/onboard/route';
 import { GET as listCompanies } from '@/app/api/v1/companies/route';
 import { resetMemoryRateLimits } from '@/domains/shared/rate-limit';
 import { db } from '@/lib/db';
-import { call, randomPhone, signIn, type Jar } from '@/test/api-client';
+import { call, randomPhone, signIn, signInAdmin, type Jar } from '@/test/api-client';
 
 const randomNtn = () =>
   `${String(Math.floor(1000000 + Math.random() * 9000000))}-${Math.floor(Math.random() * 10)}`;
@@ -30,7 +30,9 @@ let colleagueJar: Jar;
 beforeAll(async () => {
   khi = await branchId('KHI-GULSHAN');
   verifierJar = await signIn('verifier.khi@jobbank.local');
-  colleagueJar = await signIn('branchadmin.khi@jobbank.local');
+  // Round 2: plain signIn cannot pass the 2FA step — other files leave
+  // Branch Admin enrolled in the shared DB, so this file must enrol too.
+  colleagueJar = await signInAdmin('branchadmin.khi@jobbank.local');
 });
 beforeEach(() => resetMemoryRateLimits());
 
@@ -113,7 +115,7 @@ describe('verifier creates companies', () => {
 
   it('sees only the companies they onboarded in the company list', async () => {
     const mine = await onboardedCompany();
-    const otherJar = await signIn('branchadmin.khi@jobbank.local');
+    const otherJar = await signInAdmin('branchadmin.khi@jobbank.local');
     const otherRes = await call(onboard, '/api/v1/companies/onboard', {
       method: 'POST',
       body: onboardBody({ legalName: 'Branch Admin Onboard Test Foods' }),

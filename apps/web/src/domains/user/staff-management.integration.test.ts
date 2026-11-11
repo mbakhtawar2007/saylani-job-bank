@@ -30,6 +30,7 @@ import {
   call,
   enrollTwoFactor,
   Jar,
+  owner,
   resetTwoFactor,
   signIn,
   signInAdmin,
@@ -418,14 +419,19 @@ describe('staff invitations', () => {
       headers: { 'idempotency-key': crypto.randomUUID() },
       body: { name: 'Re Send', email, role: 'VERIFIER', branchId: LHR },
     });
+    expect(invited.status, JSON.stringify(invited.body)).toBe(201);
     const firstToken = tokenFrom(lastMailTo(email).text);
     const id = invited.body.data.user.id;
+    // Round 2: L-29 refuses a resend within 5 minutes of the invite — age
+    // the pending invite past the cooldown, as a real resend would be.
+    await owner`UPDATE account_tokens SET created_at = now() - interval '10 minutes' WHERE user_id = ${id} AND purpose = 'INVITE' AND used_at IS NULL`;
     expect(
       (
         await call(resendInvite, `/api/v1/users/${id}/invitation`, {
           method: 'POST',
           jar: sa,
           params: { id },
+          headers: { 'idempotency-key': crypto.randomUUID() },
         })
       ).status,
     ).toBe(200);

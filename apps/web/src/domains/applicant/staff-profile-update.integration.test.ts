@@ -416,6 +416,8 @@ describe('staff applicant profile update', () => {
     const ownApplicant = await createApplicant(khi);
     expect(ownApplicant.status, JSON.stringify(ownApplicant.body)).toBe(201);
     const ownApplicantId = ownApplicant.body.data.id as string;
+    // Round 2: a Branch Admin holds applicant:manage (permissions.test.ts:
+    // "Branch Admin is NOT read-only"), so their own-branch update is 200.
     const allowedBranchAdmin = await call(
       updateProfile,
       `/api/v1/applicants/${ownApplicantId}/profile`,
@@ -429,7 +431,7 @@ describe('staff applicant profile update', () => {
         params: { id: ownApplicantId },
       },
     );
-    expect(allowedBranchAdmin.status, JSON.stringify(allowedBranchAdmin.body)).toBe(403);
+    expect(allowedBranchAdmin.status, JSON.stringify(allowedBranchAdmin.body)).toBe(200);
 
     const superAdmin = await signInAdmin('superadmin@jobbank.local');
     const allowed = await call(updateProfile, `/api/v1/applicants/${applicantId}/profile`, {

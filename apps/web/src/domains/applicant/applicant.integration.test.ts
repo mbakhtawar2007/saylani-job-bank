@@ -745,12 +745,16 @@ describe('staff access', () => {
       jar,
     });
     expect(lockedImage.status).toBe(403);
+    // Round 2: the email must be unique per run — the test DB persists, so
+    // the hardcoded address from the first proof run is already taken (409).
+    const freshEmail = `ayesha.${crypto.randomUUID().slice(0, 8)}@example.com`;
     const stillEditable = await call(patchMe, '/api/v1/applicants/me', {
       method: 'PATCH',
-      body: { email: 'ayesha@example.com' },
+      body: { email: freshEmail },
       jar,
     });
-    expect(stillEditable.body.data.personal.email).toBe('ayesha@example.com');
+    expect(stillEditable.status, JSON.stringify(stillEditable.body)).toBe(200);
+    expect(stillEditable.body.data.personal.email).toBe(freshEmail);
 
     // History is evidence: the database refuses to change it.
     await expect(
@@ -802,7 +806,7 @@ describe('staff access', () => {
     expect(me.body.data.id).toBe(profile.id);
   });
 
-  it('deactivates with a reason, and lets a Branch Admin transfer to another branch', async () => {
+  it('deactivates with a reason, and lets a Super Admin transfer to another branch', async () => {
     const { profile } = await activeApplicant();
     const staff = await signIn('staff.khi@jobbank.local');
     const noReason = await call(staffStatus, `/api/v1/applicants/${profile.id}/status`, {
@@ -823,7 +827,9 @@ describe('staff access', () => {
       statusReason: 'Unreachable for 3 weeks',
     });
 
-    // Staff cannot transfer; a Branch Admin can transfer from their own branch.
+    // Staff cannot transfer; a Branch Admin cannot move an applicant to a
+    // branch outside their own branches (M13, staff.ts) — cross-city moves
+    // are a Super Admin's job.
     expect(
       (
         await call(transfer, `/api/v1/applicants/${profile.id}/transfer`, {
@@ -835,10 +841,18 @@ describe('staff access', () => {
       ).status,
     ).toBe(403);
     const branchAdmin = await signInAdmin('branchadmin.khi@jobbank.local');
-    const moved = await call(transfer, `/api/v1/applicants/${profile.id}/transfer`, {
+    const crossCity = await call(transfer, `/api/v1/applicants/${profile.id}/transfer`, {
       method: 'POST',
       body: { branchId: lhr, expectedBranchId: khi, reason: 'Moved to Lahore' },
       jar: branchAdmin,
+      params: { id: profile.id },
+    });
+    expect(crossCity.status, JSON.stringify(crossCity.body)).toBe(403);
+    const superAdmin = await signInAdmin('superadmin@jobbank.local');
+    const moved = await call(transfer, `/api/v1/applicants/${profile.id}/transfer`, {
+      method: 'POST',
+      body: { branchId: lhr, expectedBranchId: khi, reason: 'Moved to Lahore' },
+      jar: superAdmin,
       params: { id: profile.id },
     });
     expect(moved.status, JSON.stringify(moved.body)).toBe(200);

@@ -44,12 +44,17 @@ async function lookup(path: string, jar = staffJar) {
 }
 
 describe('first-counter applicant tokens', () => {
-  it('issues token 1 for a fresh CNIC, then 2 for the next person', async () => {
+  // Round 2: numbers are per branch per day in the shared test DB, so
+  // parallel files may already hold today's early numbers — assert the
+  // sequence is consecutive, not that it starts at 1.
+  it('issues consecutive token numbers for fresh CNICs', async () => {
     const first = await issue(khi, randomCnic());
     expect(first.status, JSON.stringify(first.body)).toBe(201);
+    const firstNumber = first.body.data.tokenNumber as number;
+    expect(firstNumber).toBeGreaterThan(0);
     expect(first.body.data).toMatchObject({
-      tokenNumber: 1,
-      tokenCode: 'KHI-GULSHAN-001',
+      tokenNumber: firstNumber,
+      tokenCode: `KHI-GULSHAN-${String(firstNumber).padStart(3, '0')}`,
       branchId: khi,
       status: 'ISSUED',
       applicantId: null,
@@ -59,8 +64,10 @@ describe('first-counter applicant tokens', () => {
 
     const second = await issue(khi, randomCnic());
     expect(second.status, JSON.stringify(second.body)).toBe(201);
-    expect(second.body.data.tokenNumber).toBe(2);
-    expect(second.body.data.tokenCode).toBe('KHI-GULSHAN-002');
+    expect(second.body.data.tokenNumber).toBe(firstNumber + 1);
+    expect(second.body.data.tokenCode).toBe(
+      `KHI-GULSHAN-${String(firstNumber + 1).padStart(3, '0')}`,
+    );
     // N11: every token carries its end-of-day expiry.
     expect(second.body.data.expiresAt).toEqual(expect.any(String));
     expect(second.body.data.expired).toBe(false);
@@ -273,10 +280,24 @@ describe('first-counter applicant tokens', () => {
     expect(again.body.data.status).toBe('ISSUED');
     expect(again.body.data.expired).toBe(false);
 
-    const found = await lookup(`?tokenCode=${issued.body.data.tokenCode}`);
-    expect(found.body.data).toHaveLength(2);
-    expect(found.body.data[0]).toMatchObject({ id: again.body.data.id, status: 'ISSUED' });
-    expect(found.body.data[1]).toMatchObject({ id: issued.body.data.id, status: 'CANCELLED' });
+    // Round 2: the fresh token takes the NEXT number, so it has a different
+    // code — the old code finds only the cancelled token, the new code only
+    // the fresh one. (Same number on an earlier day can also match, so
+    // assert membership, not an exact length.)
+    const byOldCode = await lookup(`?tokenCode=${issued.body.data.tokenCode}`);
+    expect(byOldCode.body.data).toContainEqual(
+      expect.objectContaining({ id: issued.body.data.id, status: 'CANCELLED' }),
+    );
+    expect(byOldCode.body.data).not.toContainEqual(
+      expect.objectContaining({ id: again.body.data.id }),
+    );
+    const byNewCode = await lookup(`?tokenCode=${again.body.data.tokenCode}`);
+    expect(byNewCode.body.data).toContainEqual(
+      expect.objectContaining({ id: again.body.data.id, status: 'ISSUED' }),
+    );
+    expect(byNewCode.body.data).not.toContainEqual(
+      expect.objectContaining({ id: issued.body.data.id }),
+    );
   });
 
   // Audit 2026-11-11 (M-07): a token code is reused every day — the lookup
