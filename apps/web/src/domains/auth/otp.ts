@@ -27,7 +27,7 @@ export async function issueOtp(phoneNumber: string, ipAddress: string | null): P
   const code = generateOtpCode();
   // Never log the code itself: server logs are not a safe channel for a live login code.
   // Only the masked phone is logged, so log access can never sign in as the applicant.
-  console.log(`Issuing OTP for ${maskPhoneForLog(phoneNumber)} (expires in ${OTP_TTL_SECONDS}s)`);
+  console.info(`Issuing OTP for ${maskPhoneForLog(phoneNumber)} (expires in ${OTP_TTL_SECONDS}s)`);
   await db.transaction(async (tx) => {
     await tx
       .update(t)

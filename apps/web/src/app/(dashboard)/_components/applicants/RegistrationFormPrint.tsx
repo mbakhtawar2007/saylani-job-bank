@@ -1,6 +1,7 @@
 'use client';
 
 import { GENDER_LABELS, JOB_TYPE_LABELS, SHIFT_LABELS, SKILL_LEVEL_LABELS } from '@jobbank/shared';
+import Image from 'next/image';
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import type { ApplicantProfile } from '@/domains/applicant';
@@ -107,7 +108,9 @@ export function RegistrationFormPrint({
         <header className="grid grid-cols-[1fr_auto] items-center gap-4 border-b-2 border-gray-800 pb-2">
           <div className="grid gap-1">
             <div className="flex items-center gap-3">
-              <img
+              {/* Audit 2026-11-11 (L-37): next/image, unoptimized — a print
+                  form must render the exact asset, not an optimizer round-trip. */}
+              <Image
                 src="/logo.png"
                 alt="Saylani Job Bank — Connecting Talent with Opportunity"
                 width={120}
@@ -115,6 +118,7 @@ export function RegistrationFormPrint({
                 className="h-10 w-[120px] shrink-0 object-contain"
                 onLoad={() => setLogoSettled(true)}
                 onError={() => setLogoSettled(true)}
+                unoptimized
               />
               <p className="text-xs font-semibold tracking-widest uppercase">Saylani Job Bank</p>
             </div>

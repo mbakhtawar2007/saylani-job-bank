@@ -311,11 +311,7 @@ function DetailsStep({
           placeholder="Choose a size"
         />
       </FormField>
-      <FormField
-        label="Website"
-        id={fieldControlId('website')}
-        error={errors.website}
-      >
+      <FormField label="Website" id={fieldControlId('website')} error={errors.website}>
         <Input
           type="url"
           placeholder="https://example.com"
@@ -897,12 +893,7 @@ function LocationStep({
       </FormField>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <FormField
-          label="City"
-          required
-          id={fieldControlId('cityCode')}
-          error={errors.cityCode}
-        >
+        <FormField label="City" required id={fieldControlId('cityCode')} error={errors.cityCode}>
           <Input
             placeholder="e.g. Karachi"
             value={city}
@@ -914,11 +905,7 @@ function LocationStep({
             }}
           />
         </FormField>
-        <FormField
-          label="Area"
-          id={fieldControlId('areaCode')}
-          error={errors.areaCode}
-        >
+        <FormField label="Area" id={fieldControlId('areaCode')} error={errors.areaCode}>
           <Input
             placeholder="e.g. DHA Phase 5"
             value={area}
@@ -1075,6 +1062,11 @@ function DocumentsStep({
               </p>
             )}
             {previews[code] && (
+              // Audit 2026-11-11 (L-37): kept as <img> — this is a data: URL
+              // of bytes the user just uploaded (FileReader), with unknown
+              // dimensions; there is nothing for next/image to optimise and
+              // no width/height to give it.
+              // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={previews[code]}
                 alt={`Preview of ${code.replace(/_/g, ' ')}`}

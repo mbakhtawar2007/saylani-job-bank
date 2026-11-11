@@ -1,6 +1,7 @@
 'use client';
 
 import type { ApplicantTokenView } from '@jobbank/shared';
+import Image from 'next/image';
 import { formatPkMobileDisplay } from '@/lib/format/phone';
 
 /**
@@ -39,22 +40,26 @@ export function ApplicantTokenSlip({ token }: { token: ApplicantTokenView }) {
 
   return (
     <article className="token-slip">
-      <img
+      {/* Audit 2026-11-11 (L-37): next/image, unoptimized — a print slip must
+          render the exact asset, not an optimizer round-trip. */}
+      <Image
         className="token-slip__watermark"
         src="/logo.png"
         alt=""
         aria-hidden="true"
         width={2172}
         height={724}
+        unoptimized
       />
       <div className="token-slip__content">
         <header className="token-slip__header">
-          <img
+          <Image
             className="token-slip__logo"
             src="/saylani-logo.png"
             alt="Saylani"
             width={563}
             height={146}
+            unoptimized
           />
           <span className="token-slip__badge">TOKEN SLIP</span>
         </header>

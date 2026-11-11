@@ -86,7 +86,7 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | L-16 | fixed | 851fb27 — per-email login bucket now counts only FAILED attempts (consumed in failed()); per-IP bucket still gates before verification; successes never spend the budget |
 | L-17 | decision-needed | Documented deliberate fail-open behaviour; accept, do not change |
 | L-18 | decision-needed | Standard practice; do not change |
-| L-19 | pending | |
+| L-19 | fixed | COMMIT — documented in README 'Build-time environment': never set SKIP_ENV_VALIDATION in production; the deploy checklist must assert it is unset (it bypasses validation including the secret-length rule). secret.ts still throws at startup unless the auth secret exists and is >=32 chars |
 | L-20 | fixed | 851fb27 — per-user rate limits on placement writes: shortlist 30/hr, refer-to-employer 30/hr (both paths share one bucket), refer-job-applicant 30/hr, employer-decision 30/hr, application-message 60/hr per sender+application, offer-response 10/hr per applicant |
 | L-21 | fixed | 851fb27 — shortlistApplicant catches the unique violation and throws the specific 'already shortlisted' message; counter-register maps a concurrent phone collision (users_phoneNumber_unique / users_email_unique) to the specific PHONE_TAKEN message |
 | L-22 | decision-needed | Document-vs-fix decision: identity verification STAFF-only |
@@ -103,8 +103,8 @@ Status: `fixed` (with commit) / `remaining` / `decision-needed` / `laptop-step`.
 | L-33 | fixed (partial) | 7aff2ad — dead staffRegisterCompanySchema + StaffRegisterCompanyInput deleted (zero references). The two unused dialogs (RegisterApplicantDialog, ApplicantTokenLookupDialog) are KEPT, not deleted: the user's standing rule is 'delete only if user says so' — they exist for the future step-2 entry point |
 | L-34 | fixed | 2547821 — nested it() in CompanyWizard.test.tsx moved out to describe level (now 11 tests, all passing); test fixture branch id changed to a real UUID so the new Location-step client validation passes |
 | L-35 | fixed | 7aff2ad — empty apps/web/src/domains/decision/ and apps/web/src/domains/interview/ placeholder dirs removed (only .gitkeep, zero imports) |
-| L-36 | pending | Documentation only: build-time env / SKIP_ENV_VALIDATION=1 in README/CI docs |
-| L-37 | pending | |
+| L-36 | fixed | COMMIT — README 'Build-time environment' section: lists the build-time env (DATABASE_URL, S3 keys, S3_BUCKET, NEXT_PUBLIC_APP_URL, BETTER_AUTH_SECRET >=32 chars), points at .env.example + CI, and documents SKIP_ENV_VALIDATION=1 for compile-only checks on a fresh checkout |
+| L-37 | fixed | COMMIT — full eslint run is now 0 errors, 0 warnings (was 13): 3x console.log -> console.info (rule-allowed); 4x print/static logos -> next/image unoptimized (token slip x2, registration + company print forms, matching the existing QR/print precedent); 5x landing-page Unsplash photos -> next/image (fill for the absolute cover images, width/height for the flow ones) with images.remotePatterns for images.unsplash.com in next.config.ts; the CompanyWizard data-URL preview stays <img> with an eslint-disable + comment (client-side bytes, unknown dimensions, nothing to optimise). The 'Next.js plugin not detected' build warning is Next's legacy detection: @next/eslint-plugin-next IS configured in apps/web/eslint.config.js (recommended + core-web-vitals) — no change needed |
 
 ## Final verification
 

@@ -40,6 +40,24 @@ pnpm dev                  # http://localhost:3000
 
 > Migrating a database that already has applicant tokens (it ran 0028–0030 before 0031)? Run the 0031 duplicate pre-check first — `scripts/ci/precheck-0031-duplicates.sql`. It must return 0 rows before 0031 is applied; the file carries the resolution steps if it does not.
 
+### Build-time environment
+
+`pnpm build` (`next build`) validates environment variables at build time
+(`apps/web/src/lib/env.ts`): `DATABASE_URL`, `S3_ACCESS_KEY_ID`,
+`S3_SECRET_ACCESS_KEY`, `S3_BUCKET`, `NEXT_PUBLIC_APP_URL`, and
+`BETTER_AUTH_SECRET` (≥ 32 chars). With `.env` copied from `.env.example`
+and filled in, the build passes; CI sets these explicitly (see
+`.github/workflows/ci.yml`). On a fresh checkout without any env, the build
+fails at "Collect page data" with `Error: Invalid environment variables` —
+use `SKIP_ENV_VALIDATION=1 pnpm build` for a compile-only check instead.
+
+Never set `SKIP_ENV_VALIDATION` in production (audit 2026-11-11, L-19): it
+bypasses validation including the secret-length rule, so a missing
+`DATABASE_URL` or S3 key becomes a confusing runtime failure instead of a
+fast boot error. The deploy checklist must assert it is unset. `secret.ts`
+still throws at startup unless the auth secret exists and is ≥ 32 chars,
+with no fallback secret anywhere.
+
 ### Local services
 
 | Service | Address |

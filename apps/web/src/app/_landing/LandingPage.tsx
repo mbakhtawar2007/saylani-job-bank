@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useEffect, useState } from 'react';
 import {
   ArrowRight,
@@ -1353,14 +1354,13 @@ export default function LandingPage({
                     overflow: 'hidden',
                   }}
                 >
-                  <img
+                  {/* Audit 2026-11-11 (L-37): next/image. */}
+                  <Image
                     src={cand.img}
                     alt={cand.name}
+                    fill
+                    sizes="(max-width: 768px) 50vw, 27vw"
                     style={{
-                      position: 'absolute',
-                      inset: 0,
-                      width: '100%',
-                      height: '100%',
                       objectFit: 'cover',
                       objectPosition: 'top center',
                     }}
@@ -1638,15 +1638,13 @@ export default function LandingPage({
               }}
             >
               {/* Background image */}
-              <img
+              <Image
                 src={IMG_JOB_BG}
                 alt=""
                 aria-hidden
+                fill
+                sizes="(max-width: 768px) 100vw, 50vw"
                 style={{
-                  position: 'absolute',
-                  inset: 0,
-                  width: '100%',
-                  height: '100%',
                   objectFit: 'cover',
                   objectPosition: 'center',
                 }}
@@ -1756,15 +1754,13 @@ export default function LandingPage({
               }}
             >
               {/* Background image */}
-              <img
+              <Image
                 src={IMG_HIRE_BG}
                 alt=""
                 aria-hidden
+                fill
+                sizes="(max-width: 768px) 100vw, 50vw"
                 style={{
-                  position: 'absolute',
-                  inset: 0,
-                  width: '100%',
-                  height: '100%',
                   objectFit: 'cover',
                   objectPosition: 'center',
                 }}
@@ -2525,9 +2521,11 @@ export default function LandingPage({
                 boxShadow: '0 28px 72px rgba(0,0,0,0.12)',
               }}
             >
-              <img
+              <Image
                 src={IMG_ABOUT}
                 alt="Professional at work"
+                width={600}
+                height={720}
                 style={{
                   width: '100%',
                   height: '100%',
@@ -2672,9 +2670,11 @@ export default function LandingPage({
                 boxShadow: '0 16px 44px rgba(0,0,0,0.10)',
               }}
             >
-              <img
+              <Image
                 src={IMG_TEAM}
                 alt="Saylani team"
+                width={520}
+                height={340}
                 style={{ width: '100%', height: 240, objectFit: 'cover', display: 'block' }}
               />
               <div

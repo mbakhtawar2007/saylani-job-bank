@@ -52,7 +52,7 @@ async function clearRateLimits(): Promise<void> {
         cleared += keys.length;
       }
     } while (cursor !== '0');
-    console.log(`[global-setup] cleared ${cleared} rate-limit counter(s)`);
+    console.info(`[global-setup] cleared ${cleared} rate-limit counter(s)`);
   } catch (error) {
     // Never fail the run because cleanup could not talk to Redis.
     console.warn(`[global-setup] could not clear rate limits: ${String(error)}`);
@@ -124,5 +124,5 @@ async function warmRoutes(): Promise<void> {
 
   for (const route of PROTECTED_ROUTES) await get(route, cookie);
 
-  console.log(`[global-setup] warmed ${warmed.size} route(s)`);
+  console.info(`[global-setup] warmed ${warmed.size} route(s)`);
 }

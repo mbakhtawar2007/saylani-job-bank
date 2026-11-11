@@ -57,6 +57,11 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Audit 2026-11-11 (L-37): the landing page's photos are Unsplash URLs
+  // rendered with next/image; only this host is allowlisted.
+  images: {
+    remotePatterns: [{ protocol: 'https', hostname: 'images.unsplash.com' }],
+  },
   // Lets a production build run alongside `next dev` without clobbering its .next folder.
   distDir: process.env.NEXT_DIST_DIR ?? '.next',
   poweredByHeader: false,
