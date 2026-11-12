@@ -43,11 +43,16 @@ const ROLE_ACTIONS: Record<
   {
     action1: { label: string; href: string };
     action2: { label: string; href: string };
+    /** Optional third shortcut — only roles that need one define it. */
+    action3?: { label: string; href: string };
   }
 > = {
   SUPER_ADMIN: {
     action1: { label: 'Browse Applicants', href: '/super-admin/applicants' },
     action2: { label: 'Manage Staff', href: '/super-admin/staff' },
+    // The dashboard had no way to reach the add-branch page: the only
+    // entry point was sidebar Branches → list → New branch.
+    action3: { label: 'Add Branch', href: '/super-admin/branches/new' },
   },
   BRANCH_ADMIN: {
     action1: { label: 'View Applicants', href: '/branch-admin/applicants' },
@@ -911,6 +916,15 @@ export async function WelcomePanel({ role }: { role: Role }) {
               >
                 {actions.action2.label}
               </NextLink>
+              {actions.action3 && (
+                <NextLink
+                  href={actions.action3.href}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border py-2.5 text-sm font-semibold"
+                  style={{ borderColor: '#e8eeed', color: 'var(--fg)' }}
+                >
+                  {actions.action3.label}
+                </NextLink>
+              )}
             </div>
 
             <div className="mb-3 flex items-center justify-between">
