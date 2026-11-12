@@ -64,31 +64,21 @@ unattended scheduler sends as the `x-cron-secret` header to
 `openssl rand -base64 32`. Leave it unset and only a signed-in Super Admin
 may expire jobs — no cron bypass exists.
 
-### Job expiry (daily cron)
+### Job expiry (daily, automatic)
 
-OPEN/PAUSED jobs whose `closesAt` has passed are closed by
-`POST /api/v1/admin/maintenance/expire-jobs`. Nothing in the app fires
-this on its own, so it needs a daily scheduler — just after midnight PKT,
-i.e. **19:05 UTC** (`5 19 * * *`).
+OPEN/PAUSED jobs whose `closesAt` has passed are closed automatically by an
+in-process scheduler: `apps/web/src/instrumentation.ts` fires
+`expirePastCloseJobs` daily at **19:05 UTC** (`5 19 * * *`, just after
+midnight PKT), production only. It needs no external cron, URL or secret —
+the timer runs inside the web server and the sweep is audited with
+actorRole `SYSTEM`. A failed sweep is logged and retried at the next run.
 
-> **Not wired yet — deployment target unconfirmed.** The repo has no
-> `vercel.json`, no `netlify.toml`, and no recorded deployment target, so
-> no cron config was added (audit 2026-11-11, L-05). The route and the
-> `CRON_SECRET` gate are ready; add the schedule on whichever platform
-> hosts the app, e.g. a Vercel Cron entry (the plan mentions Vercel Cron
-> as an option, it is not the confirmed target):
->
-> ```json
-> { "crons": [{ "path": "/api/v1/admin/maintenance/expire-jobs", "schedule": "5 19 * * *" }] }
-> ```
->
-> A Vercel Cron call sends no custom header, so if the host cannot send
-> `x-cron-secret`, set `CRON_SECRET` as the cron job's authorization
-> instead (Vercel Cron sends `Authorization: Bearer <CRON_SECRET>` by
-> default) — the route accepts either header. Until a schedule exists,
-> expire jobs by hand: a Super Admin POSTs to the route with a session
-> cookie. Cron calls are audited with actorRole `SYSTEM`.
-
+> The Super Admin manual path still works: `POST
+/api/v1/admin/maintenance/expire-jobs` (session cookie, or the
+> `x-cron-secret` / `Authorization: Bearer <CRON_SECRET>` header for an
+> external caller — the `CRON_SECRET` gate above). A future external
+> scheduler can call the same route; the in-process timer and the route
+> share the same sweep, which is idempotent under concurrency.
 
 ### Local services
 
@@ -180,17 +170,18 @@ build cannot know.
   of the app (audit 2026-11-11, M-18). Count the proxies in the actual chain
   — do not guess:
 
-  | Deployment | Value |
-  | --- | --- |
-  | Local dev / laptop (no proxy) | `1` (default) |
-  | One reverse proxy (e.g. a single nginx) | `1` |
-  | Cloudflare + nginx | `2` |
-  | Vercel (its edge is the single proxy) | `1` |
+  | Deployment                              | Value         |
+  | --------------------------------------- | ------------- |
+  | Local dev / laptop (no proxy)           | `1` (default) |
+  | One reverse proxy (e.g. a single nginx) | `1`           |
+  | Cloudflare + nginx                      | `2`           |
+  | Vercel (its edge is the single proxy)   | `1`           |
 
   Set it wrong and the failure is silent but safe: too high, and every IP
   reads as null, so all users share one strict `untrusted` rate-limit bucket
   (plus a loud production log naming `TRUSTED_PROXY_HOPS`); too low, and the
   app may trust a client-written `X-Forwarded-For` entry.
+
 - `CRON_SECRET` is set (see "Job expiry") if a scheduler expires jobs;
   unset means only a signed-in Super Admin can.
 

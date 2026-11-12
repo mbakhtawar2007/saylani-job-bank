@@ -30,11 +30,7 @@ import {
   assertDesignationSalaryRange,
   assertJobUpdateReferencesValid,
   assertMergedJobUpdateValid,
-  employerMayEditJobSubResource,
-  employerRestrictedRequirementsFields,
-  employerRestrictedUpdateFields,
   jobEditability,
-  mayBypassEmployerJobRestrictions,
   mergedMedicalCoverage,
 } from './rules';
 
@@ -179,24 +175,11 @@ export async function updateJob(
     throw new ForbiddenError('Job can only be edited while in DRAFT, OPEN, or PAUSED status');
   }
 
-  // Referral workflow §3: once the job is OPEN (or PAUSED after having
-  // been published) the employer may edit only the description and the
-  // non-pay benefits — title, category, salary, vacancies, location and
-  // the rest are staff-only. Bypass-role holders (STAFF, BRANCH_ADMIN,
-  // SUPER_ADMIN — N20) keep full-field access. The company itself is
-  // never changeable here: updateJobSchema carries
-  // no companyId and the update below never writes it.
-  const restricted = employerRestrictedUpdateFields(ctx.actor.roles, row.status, input);
-  if (restricted.length > 0) {
-    throw new ValidationError(
-      restricted.map((field) => ({
-        path: field,
-        message: 'Only staff can change this field once the job is published',
-      })),
-      'Some fields can only be changed by staff once the job is published',
-    );
-  }
-
+  // 2026-11-12: the company may fully edit its own job in any editable
+  // status — the old referral-workflow §3 field restrictions on OPEN /
+  // PAUSED jobs were lifted by user decision. The company itself is still
+  // never changeable here: updateJobSchema carries no companyId and the
+  // update below never writes it.
   // M16 / audit 2026-11-11 (M-25): the salary refine must run against the
   // MERGED (stored + incoming) values — updateJobSchema is a bare .partial(),
   // so a PATCH that only sets salaryMin above the stored salaryMax would
@@ -395,12 +378,8 @@ export async function setJobLocation(
       'Job location can only be changed while in DRAFT, OPEN, or PAUSED status',
     );
   }
-  // Referral workflow §3: location (address / city) is restricted once the
-  // job is published — it drives city scope. Bypass-role holders keep full access.
-  if (!employerMayEditJobSubResource(ctx.actor.roles, row.status)) {
-    throw new ForbiddenError('Only staff can change the job location once the job is published');
-  }
-
+  // 2026-11-12: the company may change the location of its own job in any
+  // editable status — the old §3 staff-only location rule was lifted.
   return runCommand(ctx, async ({ tx, audit }) => {
     // C5: resolve the location to SAVE before deleting anything. A body
     // that carries no location data must never delete the job's only
@@ -476,39 +455,10 @@ export async function saveJobRequirements(
       'Job requirements can only be changed while in DRAFT, OPEN, or PAUSED status',
     );
   }
-  // Referral workflow §3: once the job is published the employer may edit
-  // only the other-requirements text — education level, minimum experience
-  // and languages drive matching, so they are staff-only. Bypass-role
-  // holders keep full access. The check runs before the upsert: a rejected
-  // field must never partially apply.
-  const restrictedRequirements = employerRestrictedRequirementsFields(
-    ctx.actor.roles,
-    row.status,
-    input,
-  );
-  if (restrictedRequirements.length > 0) {
-    throw new ValidationError(
-      restrictedRequirements.map((field) => ({
-        path: field,
-        message: 'Only staff can change this field once the job is published',
-      })),
-      'Some fields can only be changed by staff once the job is published',
-    );
-  }
-  // On a published job the PUT carries only otherRequirements, but the
-  // upsert below would null the untouched restricted fields — so load the
-  // stored row and carry its values forward instead. (We already threw
-  // above if the body carried a restricted field, so reaching here with a
-  // published job means only otherRequirements may change.)
-  // Published-job PUT: keep the stored restricted fields; DRAFT PUT (or a
-  // bypass-role holder) replaces the row from the body, as before.
-  const preserveStoredRequirements =
-    (row.status === 'OPEN' || row.status === 'PAUSED') &&
-    !mayBypassEmployerJobRestrictions(ctx.actor.roles);
-  const storedRequirements = preserveStoredRequirements
-    ? await db.select().from(jr).where(eq(jr.jobId, jobId)).limit(1)
-    : [];
-
+  // 2026-11-12: the company may edit all requirements of its own job in
+  // any editable status — the old §3 staff-only rule for education,
+  // experience and languages was lifted. The PUT replaces the row from
+  // the body, as it already did for DRAFT jobs.
   return runCommand(ctx, async ({ tx, audit }) => {
     // H13: education level and language codes must be real, active
     // master-data codes.
@@ -528,9 +478,6 @@ export async function saveJobRequirements(
         (index) => `languageCodes[${index}]`,
       );
     }
-    // Published-job PUT: keep the stored restricted fields; DRAFT PUT (or
-    // staff) replaces the row from the body, as before.
-    const stored = storedRequirements[0];
     // The experience band is the source of truth: its minimum years are
     // derived so the matching engine (which reads years) keeps working,
     // and its minimum months make the 3–6 month band representable.
@@ -540,26 +487,16 @@ export async function saveJobRequirements(
         : (input.minExperienceYears ?? null);
     const values = {
       jobId,
-      educationLevelCode:
-        stored !== undefined
-          ? (stored.educationLevelCode ?? null)
-          : (input.educationLevelCode ?? null),
-      minExperienceYears: stored !== undefined ? (stored.minExperienceYears ?? null) : derivedYears,
-      experienceLevel:
-        stored !== undefined ? (stored.experienceLevel ?? null) : (input.experienceLevel ?? null),
+      educationLevelCode: input.educationLevelCode ?? null,
+      minExperienceYears: derivedYears,
+      experienceLevel: input.experienceLevel ?? null,
       minExperienceMonths:
-        stored !== undefined
-          ? (stored.minExperienceMonths ?? null)
-          : (input.minExperienceMonths ??
-            (input.experienceLevel !== undefined
-              ? EXPERIENCE_LEVEL_MIN_MONTHS[input.experienceLevel]
-              : null)),
-      languageCodes:
-        stored !== undefined ? (stored.languageCodes ?? null) : (input.languageCodes ?? null),
-      otherRequirements:
-        stored !== undefined
-          ? (input.otherRequirements ?? stored.otherRequirements ?? null)
-          : (input.otherRequirements ?? null),
+        input.minExperienceMonths ??
+        (input.experienceLevel !== undefined
+          ? EXPERIENCE_LEVEL_MIN_MONTHS[input.experienceLevel]
+          : null),
+      languageCodes: input.languageCodes ?? null,
+      otherRequirements: input.otherRequirements ?? null,
     };
     await tx
       .insert(jr)
@@ -600,12 +537,8 @@ export async function saveJobSkills(
       'Job skills can only be changed while in DRAFT, OPEN, or PAUSED status',
     );
   }
-  // Referral workflow §3: skills and skill level are restricted once the
-  // job is published — they drive matching. Bypass-role holders keep full access.
-  if (!employerMayEditJobSubResource(ctx.actor.roles, row.status)) {
-    throw new ForbiddenError('Only staff can change job skills once the job is published');
-  }
-
+  // 2026-11-12: the company may change the skills of its own job in any
+  // editable status — the old §3 staff-only skills rule was lifted.
   return runCommand(ctx, async ({ tx, audit }) => {
     // H13: skill codes must be real, active master-data codes. No
     // auto-upsert — round 1 removed it for applicants, stay consistent.

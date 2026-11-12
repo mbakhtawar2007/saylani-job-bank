@@ -22,11 +22,10 @@ import { env } from '@/lib/env';
  *   never to an open door. Leave CRON_SECRET unset and no cron bypass
  *   exists at all.
  *
- * SCHEDULING: the repo has no scheduler config (no vercel.json, no
- * netlify.toml) and the deployment target is not recorded anywhere, so the
- * schedule itself is NOT wired here — see the README "Job expiry" section
- * for the exact cron to add once the target is confirmed. Daily, just after
- * midnight PKT (19:05 UTC).
+ * SCHEDULING: fired daily at 19:05 UTC by the in-process scheduler
+ * (apps/web/src/instrumentation.ts, production only) — no external cron
+ * needed. This route stays as the manual path (Super Admin, by hand) and
+ * as the entry point for any future external scheduler.
  */
 export const POST = apiHandler({
   auth: 'public',

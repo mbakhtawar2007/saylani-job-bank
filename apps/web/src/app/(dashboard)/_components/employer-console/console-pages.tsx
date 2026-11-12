@@ -197,11 +197,10 @@ export function ConsoleJobPage(props: { role: ConsoleRole; basePath: string; par
 export function ConsoleEditJobPage(props: { role: ConsoleRole; basePath: string; params: Params }) {
   return shell(props.role, props.basePath, props.params, async ({ actor }, consoleHref, id) => {
     const job = await getMyJob(actor, id!);
-    // Same restriction as the employer's own edit screen: an OPEN / PAUSED job shows the
-    // restricted fields disabled — only staff (acting as themselves) may change them.
-    return (
-      <JobWizard initialJob={job} restricted={job.status !== 'DRAFT'} basePath={consoleHref} />
-    );
+    // 2026-11-12: the company may fully edit its own job in any editable
+    // status — the old published-job field restrictions were lifted, so the
+    // console edit screen no longer disables fields either.
+    return <JobWizard initialJob={job} basePath={consoleHref} />;
   });
 }
 

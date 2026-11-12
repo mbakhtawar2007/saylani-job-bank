@@ -24,7 +24,6 @@ import {
   SKILL_LEVELS,
   SKILL_LEVEL_LABELS,
   STANDARD_LEAVE_DAYS,
-  updateJobSchema,
   type BonusBasis,
   type BonusFrequency,
   type BonusTier,
@@ -105,24 +104,13 @@ interface SkillEntry {
 
 interface Props {
   initialJob?: JobView | null;
-  /**
-   * True when an employer edits a published (OPEN / PAUSED) job: the
-   * restricted fields (title, salary, location, skills, …) are visible but
-   * disabled — only staff can change them (referral workflow §3). DRAFT
-   * editing and creation stay fully editable.
-   */
-  restricted?: boolean;
   /** Where the employer screens live: staff consoles use their own path. */
   basePath?: string;
 }
 
 // ─── Component ──────────────────────────────────────────────────────────
 
-export function JobWizard({
-  initialJob = null,
-  restricted = false,
-  basePath = '/employer',
-}: Props) {
+export function JobWizard({ initialJob = null, basePath = '/employer' }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -320,64 +308,48 @@ export function JobWizard({
     startTransition(async () => {
       setError(null);
       try {
-        // A restricted (published-job) edit may only send the fields the
-        // employer is allowed to change — sending a restricted field would
-        // make the server reject the whole PATCH.
-        const basicBody = restricted
-          ? {
-              description: description.trim(),
-              fuelAllowance,
-              flexibleHours,
-              annualLeaveDays: annualLeaveDays ? parseInt(annualLeaveDays, 10) : undefined,
-              sickLeaveDays: sickLeaveDays ? parseInt(sickLeaveDays, 10) : undefined,
-              casualLeaveDays: casualLeaveDays ? parseInt(casualLeaveDays, 10) : undefined,
-              workFromHome,
-              providentFund,
-              transportAllowance,
-              eobi,
-              lifeInsurance,
-            }
-          : {
-              title: title.trim(),
-              categoryCode: categoryCode.trim(),
-              description: description.trim(),
-              jobType,
-              shift,
-              shiftHours:
-                jobType === 'ROTATING' && shiftHours ? parseInt(shiftHours, 10) : undefined,
-              designationCode: designationCode.trim() || undefined,
-              genderPreference,
-              vacancies: parseInt(vacancies, 10),
-              salaryMin: salaryMin ? parseInt(salaryMin, 10) : undefined,
-              salaryMax: salaryMax ? parseInt(salaryMax, 10) : undefined,
-              fuelAllowance,
-              flexibleHours,
-              annualLeaveDays: annualLeaveDays ? parseInt(annualLeaveDays, 10) : undefined,
-              sickLeaveDays: sickLeaveDays ? parseInt(sickLeaveDays, 10) : undefined,
-              casualLeaveDays: casualLeaveDays ? parseInt(casualLeaveDays, 10) : undefined,
-              opdLimit: opdLimit ? parseInt(opdLimit, 10) : undefined,
-              ipdLimit: ipdLimit ? parseInt(ipdLimit, 10) : undefined,
-              medicalCoverageScope:
-                (opdLimit || ipdLimit) && medicalCoverageScope ? medicalCoverageScope : undefined,
-              bonusTier,
-              bonusBasis: bonusTier !== 'NONE' && bonusBasis ? bonusBasis : undefined,
-              bonusAmountPkr:
-                bonusTier !== 'NONE' && bonusAmountPkr ? parseInt(bonusAmountPkr, 10) : undefined,
-              bonusFrequency: bonusTier !== 'NONE' && bonusFrequency ? bonusFrequency : undefined,
-              workFromHome,
-              providentFund,
-              transportAllowance,
-              eobi,
-              lifeInsurance,
-            };
+        // 2026-11-12: the company may fully edit its own job in any
+        // editable status, so an edit sends the full body like a create —
+        // the old restricted (published-job) subset is gone.
+        const basicBody = {
+          title: title.trim(),
+          categoryCode: categoryCode.trim(),
+          description: description.trim(),
+          jobType,
+          shift,
+          shiftHours: jobType === 'ROTATING' && shiftHours ? parseInt(shiftHours, 10) : undefined,
+          designationCode: designationCode.trim() || undefined,
+          genderPreference,
+          vacancies: parseInt(vacancies, 10),
+          salaryMin: salaryMin ? parseInt(salaryMin, 10) : undefined,
+          salaryMax: salaryMax ? parseInt(salaryMax, 10) : undefined,
+          fuelAllowance,
+          flexibleHours,
+          annualLeaveDays: annualLeaveDays ? parseInt(annualLeaveDays, 10) : undefined,
+          sickLeaveDays: sickLeaveDays ? parseInt(sickLeaveDays, 10) : undefined,
+          casualLeaveDays: casualLeaveDays ? parseInt(casualLeaveDays, 10) : undefined,
+          opdLimit: opdLimit ? parseInt(opdLimit, 10) : undefined,
+          ipdLimit: ipdLimit ? parseInt(ipdLimit, 10) : undefined,
+          medicalCoverageScope:
+            (opdLimit || ipdLimit) && medicalCoverageScope ? medicalCoverageScope : undefined,
+          bonusTier,
+          bonusBasis: bonusTier !== 'NONE' && bonusBasis ? bonusBasis : undefined,
+          bonusAmountPkr:
+            bonusTier !== 'NONE' && bonusAmountPkr ? parseInt(bonusAmountPkr, 10) : undefined,
+          bonusFrequency: bonusTier !== 'NONE' && bonusFrequency ? bonusFrequency : undefined,
+          workFromHome,
+          providentFund,
+          transportAllowance,
+          eobi,
+          lifeInsurance,
+        };
 
         // Audit 2026-11-11 (H-07): validate client-side with the same
         // schema the server enforces, so a bad salary, missing shift hours
         // or missing bonus basis is flagged on its field instead of a round
         // trip that fails with a one-line error at the bottom of the page.
-        // A restricted edit sends only the editable subset, so it validates
-        // against the PATCH schema; create / full edit against create.
-        const parsed = (restricted ? updateJobSchema : createJobSchema).safeParse(basicBody);
+        // An edit sends the full body, so it validates against create.
+        const parsed = createJobSchema.safeParse(basicBody);
         if (!parsed.success) {
           setErrors(zodFieldErrors(parsed.error));
           requestErrorFocus();
@@ -404,9 +376,8 @@ export function JobWizard({
           jobId = updated.id;
         }
 
-        // Location is staff-only once the job is published, so a restricted
-        // edit never sends a location update either.
-        if (!restricted && pin && addressLine.trim().length >= 3 && cityCode) {
+        // Location is sent on every save.
+        if (pin && addressLine.trim().length >= 3 && cityCode) {
           await apiFetch<JobView>(`/api/v1/jobs/me/${jobId}/location`, {
             method: 'PUT',
             body: {
@@ -423,33 +394,26 @@ export function JobWizard({
         // silently discarded them (and skill-based matching never saw them).
         // The subroutes already existed and were only reachable directly.
         // Requirements first (no master-data codes in what this form
-        // collects), then skills. On a restricted (published) edit only the
-        // other-requirements text may change — the server preserves the
-        // stored restricted fields and rejects anything else — and skills
-        // are staff-only, so they are not sent at all.
+        // collects), then skills.
         await apiFetch<JobView>(`/api/v1/jobs/me/${jobId}/requirements`, {
           method: 'PUT',
-          body: restricted
-            ? { otherRequirements: otherRequirements.trim() || undefined }
-            : {
-                experienceLevel,
-                minExperienceMonths: EXPERIENCE_LEVEL_MIN_MONTHS[experienceLevel],
-                languageCodes: languageCodes.length > 0 ? languageCodes : undefined,
-                otherRequirements: otherRequirements.trim() || undefined,
-              },
+          body: {
+            experienceLevel,
+            minExperienceMonths: EXPERIENCE_LEVEL_MIN_MONTHS[experienceLevel],
+            languageCodes: languageCodes.length > 0 ? languageCodes : undefined,
+            otherRequirements: otherRequirements.trim() || undefined,
+          },
         });
-        if (!restricted) {
-          await apiFetch<JobView>(`/api/v1/jobs/me/${jobId}/skills`, {
-            method: 'PUT',
-            body: {
-              skills: skills.map((s) => ({
-                skillCode: s.skillCode,
-                minLevel: s.minLevel,
-                required: s.required ?? false,
-              })),
-            },
-          });
-        }
+        await apiFetch<JobView>(`/api/v1/jobs/me/${jobId}/skills`, {
+          method: 'PUT',
+          body: {
+            skills: skills.map((s) => ({
+              skillCode: s.skillCode,
+              minLevel: s.minLevel,
+              required: s.required ?? false,
+            })),
+          },
+        });
 
         if (isNew) router.push(`${basePath}/jobs/${jobId}`);
         else router.refresh();
@@ -485,13 +449,6 @@ export function JobWizard({
           Fill in the details below. All sections except job title, category and description are
           optional.
         </p>
-        {restricted && (
-          <p className="text-fg border-border bg-surface-muted mt-3 rounded-lg border px-3 py-2 text-sm">
-            This job is already published, so the title, salary, location, skills and other core
-            details can only be changed by staff — ask them if something needs updating. You can
-            still edit the description, other requirements and benefits below.
-          </p>
-        )}
       </header>
 
       <div className="grid gap-6">
@@ -502,7 +459,6 @@ export function JobWizard({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. Senior Accountant"
-              disabled={restricted}
             />
           </FormField>
 
@@ -518,14 +474,12 @@ export function JobWizard({
                 onChange={(e) => setCategoryCode(e.target.value)}
                 options={categories}
                 placeholder="Select a job category"
-                disabled={restricted}
               />
             ) : (
               <Input
                 value={categoryCode}
                 onChange={(e) => setCategoryCode(e.target.value)}
                 placeholder="e.g. ACCOUNTING"
-                disabled={restricted}
               />
             )}
           </FormField>
@@ -542,14 +496,12 @@ export function JobWizard({
                 onChange={(e) => setDesignationCode(e.target.value)}
                 options={designations}
                 placeholder="Select a designation"
-                disabled={restricted}
               />
             ) : (
               <Input
                 value={designationCode}
                 onChange={(e) => setDesignationCode(e.target.value)}
                 placeholder="e.g. ACCOUNTANT"
-                disabled={restricted}
               />
             )}
           </FormField>
@@ -578,7 +530,6 @@ export function JobWizard({
               options={JOB_TYPE_OPTIONS}
               value={jobType}
               onChange={(e) => setJobType(e.target.value as JobType)}
-              disabled={restricted}
             />
           </FormField>
 
@@ -599,7 +550,6 @@ export function JobWizard({
                   onChange={(e) => setShiftHours(e.target.value)}
                   placeholder="e.g. 8"
                   className="w-28"
-                  disabled={restricted}
                 />
                 <span className="text-fg-muted text-sm">hours</span>
               </div>
@@ -616,7 +566,6 @@ export function JobWizard({
                 options={GENDER_OPTIONS}
                 value={genderPreference}
                 onChange={(e) => setGenderPreference(e.target.value as GenderPreference)}
-                disabled={restricted}
               />
             </FormField>
             <FormField
@@ -630,7 +579,6 @@ export function JobWizard({
                 min={1}
                 value={vacancies}
                 onChange={(e) => setVacancies(e.target.value)}
-                disabled={restricted}
               />
             </FormField>
           </div>
@@ -648,7 +596,6 @@ export function JobWizard({
                 value={salaryMin}
                 onChange={(e) => setSalaryMin(e.target.value)}
                 placeholder="e.g. 41700"
-                disabled={restricted}
               />
             </FormField>
             <FormField
@@ -662,7 +609,6 @@ export function JobWizard({
                 value={salaryMax}
                 onChange={(e) => setSalaryMax(e.target.value)}
                 placeholder="Optional"
-                disabled={restricted}
               />
             </FormField>
           </div>
@@ -675,7 +621,6 @@ export function JobWizard({
               options={EXPERIENCE_OPTIONS}
               value={experienceLevel}
               onChange={(e) => setExperienceLevel(e.target.value as ExperienceLevel)}
-              disabled={restricted}
             />
           </FormField>
 
@@ -692,7 +637,6 @@ export function JobWizard({
                         e.target.checked ? [...prev, code] : prev.filter((c) => c !== code),
                       )
                     }
-                    disabled={restricted}
                   />
                   <span className="text-fg text-sm">{LANGUAGE_LABELS[code]}</span>
                 </label>
@@ -726,7 +670,6 @@ export function JobWizard({
                 onChange={(e) => setPickLabel(e.target.value)}
                 onKeyDown={handleSkillKeyDown}
                 placeholder="e.g. MS Excel, AutoCAD, React…"
-                disabled={restricted}
               />
             </FormField>
 
@@ -735,7 +678,6 @@ export function JobWizard({
                 value={pickLevel}
                 onChange={(e) => setPickLevel(e.target.value as SkillLevel)}
                 options={LEVEL_OPTIONS}
-                disabled={restricted}
               />
             </FormField>
 
@@ -743,7 +685,7 @@ export function JobWizard({
               type="button"
               variant="secondary"
               onClick={addSkill}
-              disabled={!pickLabel.trim() || restricted}
+              disabled={!pickLabel.trim()}
               leftIcon={<Plus className="size-4" />}
             >
               Add skill
@@ -763,7 +705,6 @@ export function JobWizard({
                   <select
                     value={s.minLevel}
                     onChange={(e) => updateSkillLevel(s.skillCode, e.target.value as SkillLevel)}
-                    disabled={restricted}
                     className="text-fg-muted bg-transparent text-xs focus:outline-none disabled:cursor-not-allowed"
                   >
                     {SKILL_LEVELS.map((l) => (
@@ -775,7 +716,6 @@ export function JobWizard({
                   <button
                     type="button"
                     onClick={() => removeSkill(s.skillCode)}
-                    disabled={restricted}
                     className="text-fg-subtle hover:text-danger ml-1 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                     aria-label={`Remove ${s.label}`}
                   >
@@ -802,7 +742,6 @@ export function JobWizard({
                 value={opdLimit}
                 onChange={(e) => setOpdLimit(e.target.value)}
                 placeholder="Optional"
-                disabled={restricted}
               />
             </FormField>
             <FormField
@@ -817,7 +756,6 @@ export function JobWizard({
                 value={ipdLimit}
                 onChange={(e) => setIpdLimit(e.target.value)}
                 placeholder="Optional"
-                disabled={restricted}
               />
             </FormField>
           </div>
@@ -833,7 +771,6 @@ export function JobWizard({
                 value={medicalCoverageScope}
                 onChange={(e) => setMedicalCoverageScope(e.target.value as MedicalCoverageScope)}
                 placeholder="Individual or family?"
-                disabled={restricted}
               />
             </FormField>
           )}
@@ -892,7 +829,6 @@ export function JobWizard({
               options={BONUS_OPTIONS}
               value={bonusTier}
               onChange={(e) => setBonusTier(e.target.value as BonusTier)}
-              disabled={restricted}
             />
           </FormField>
 
@@ -910,7 +846,6 @@ export function JobWizard({
                     value={bonusBasis}
                     onChange={(e) => setBonusBasis(e.target.value as BonusBasis)}
                     placeholder="Gross or basic salary?"
-                    disabled={restricted}
                   />
                 </FormField>
                 <FormField
@@ -923,7 +858,6 @@ export function JobWizard({
                     value={bonusFrequency}
                     onChange={(e) => setBonusFrequency(e.target.value as BonusFrequency)}
                     placeholder="How often?"
-                    disabled={restricted}
                   />
                 </FormField>
               </div>
@@ -939,7 +873,6 @@ export function JobWizard({
                   value={bonusAmountPkr}
                   onChange={(e) => setBonusAmountPkr(e.target.value)}
                   placeholder="Optional"
-                  disabled={restricted}
                 />
               </FormField>
             </>
@@ -979,7 +912,7 @@ export function JobWizard({
             </p>
           </div>
 
-          <LatLngFields value={pin} onChange={setPin} disabled={restricted} />
+          <LatLngFields value={pin} onChange={setPin} />
 
           <div className="grid gap-4 sm:grid-cols-2">
             <FormField
@@ -1004,7 +937,6 @@ export function JobWizard({
                   autoFilled.current = false;
                 }}
                 placeholder="House, street and block"
-                disabled={restricted}
               />
             </FormField>
 
@@ -1017,7 +949,6 @@ export function JobWizard({
                 value={cityCode}
                 onChange={(e) => setCityCode(e.target.value)}
                 options={cities}
-                disabled={restricted}
               />
             </FormField>
           </div>

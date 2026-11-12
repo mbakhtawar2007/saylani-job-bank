@@ -1,6 +1,6 @@
 /** Jobs domain (M8): posting, status transitions, staff board. */
 
-export { expirePastCloseJobs } from './expiry';
+export { expirePastCloseJobs, msUntilNextExpiryRun } from './expiry';
 export { jobMachine, allowedTransitions, type JobStatusTransition } from './machine';
 export {
   assertJobLive,
@@ -22,20 +22,7 @@ export {
   updateJob,
 } from './profile';
 export type { JobLocationView, JobRequirementsView, JobSkillView, JobView } from './repository';
-export {
-  EMPLOYER_OPEN_JOB_FIELDS,
-  EMPLOYER_OPEN_REQUIREMENTS_FIELDS,
-  EMPLOYER_RESTRICTED_JOB_FIELDS,
-  EMPLOYER_RESTRICTED_REQUIREMENTS_FIELDS,
-  employerMayEditJobSubResource,
-  employerRestrictedRequirementsFields,
-  employerRestrictedUpdateFields,
-  isEmployerRestrictedJobStatus,
-  jobEditability,
-  mayBypassEmployerJobRestrictions,
-  STAFF_JOB_BYPASS_ROLES,
-  type JobEditability,
-} from './rules';
+export { jobEditability, type JobEditability } from './rules';
 export {
   forceCloseJob,
   getCompanyJobDetail,
