@@ -57,11 +57,28 @@ beforeAll(async () => {
 });
 beforeEach(() => resetMemoryRateLimits());
 
+/** Branches/categories created by these tests — removed again so later runs
+ * (and other files sharing the test DB) never see a second active Karachi
+ * branch. A leftover "Radius test branch" used to hijack applicant branch
+ * assignment in applicant.integration.test.ts. */
+const createdBranchIds: string[] = [];
+const createdCategoryIds: string[] = [];
+
 /** Global state touched by these tests goes back to the seeded defaults. */
 async function restoreGlobals() {
   await owner`UPDATE match_radius_policies SET preferred_m = 8000, max_m = 10000 WHERE scope = 'GLOBAL'`;
   await owner`DELETE FROM match_radius_policies WHERE branch_id IN (${KHI}, ${LHR})`;
   await owner`DELETE FROM system_settings WHERE branch_id IS NULL`;
+  for (const id of createdBranchIds) {
+    await owner`DELETE FROM match_radius_policies WHERE branch_id = ${id}`;
+    await owner`DELETE FROM branches WHERE id = ${id}`;
+  }
+  createdBranchIds.length = 0;
+  for (const id of createdCategoryIds) {
+    await owner`DELETE FROM match_radius_policies WHERE category_id = ${id}`;
+    await owner`DELETE FROM master_data_items WHERE id = ${id}`;
+  }
+  createdCategoryIds.length = 0;
 }
 afterAll(restoreGlobals);
 
@@ -355,6 +372,7 @@ describe('matching radius policies', () => {
       },
     });
     const bId = branch.body.data.id;
+    createdBranchIds.push(bId);
     expect(branch.body.data.matchRadius).toMatchObject({ maxM: 10_000, source: 'GLOBAL' });
 
     const category = await call(createItem, '/api/v1/master-data', {
@@ -364,6 +382,7 @@ describe('matching radius policies', () => {
       body: { type: 'JOB_CATEGORY', code: code('RADIUS'), label: 'Radius test category' },
     });
     const cId = category.body.data.id;
+    createdCategoryIds.push(cId);
 
     expect(await resolveMatchRadius({ branchId: bId, categoryId: cId })).toMatchObject({
       preferredM: 8000,

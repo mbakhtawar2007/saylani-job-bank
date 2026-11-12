@@ -203,7 +203,7 @@ describe('two-factor authentication', () => {
 // ─── Branches ─────────────────────────────────────────────────────────
 
 describe('branch management', () => {
-  it('Super Admin creates (idempotently) and edits branches; codes are unique and permanent', async () => {
+  it('Super Admin creates (idempotently) and edits branches; codes are unique and Super Admin-editable', async () => {
     const jar = await signInAdmin('superadmin@jobbank.local');
     const code = `T-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
     const key = crypto.randomUUID();
@@ -242,18 +242,42 @@ describe('branch management', () => {
     expect(dup.status).toBe(409);
 
     const id = first.body.data.id;
+    // Branch codes are editable by Super Admin only (Step 2, 2026-11-12):
+    // a new unique code is accepted and returned. Changing a code breaks
+    // already-issued token slips, so this throwaway branch is the right place.
+    const newCode = `T-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
     const renamed = await call(patchBranch, `/api/v1/branches/${id}`, {
       method: 'PATCH',
       jar,
       params: { id },
-      body: { name: 'Test Branch Renamed', code: 'HACKED' },
+      body: { name: 'Test Branch Renamed', code: newCode },
     });
+    expect(renamed.status, JSON.stringify(renamed.body)).toBe(200);
     // A partial update must not reset unrelated fields (regression: radius default leaked into PATCH).
     expect(renamed.body.data).toMatchObject({
       name: 'Test Branch Renamed',
-      code,
+      code: newCode,
       matchRadius: { maxM: 8000, source: 'BRANCH' },
     });
+
+    // A code that already belongs to another branch is refused.
+    const duplicate = await call(patchBranch, `/api/v1/branches/${id}`, {
+      method: 'PATCH',
+      jar,
+      params: { id },
+      body: { code: 'KHI-GULSHAN' },
+    });
+    expect(duplicate.status).toBe(409);
+
+    // A Branch Admin cannot edit a branch code at all (branch:manage is Super Admin only).
+    const ba = await signInAdmin('branchadmin.khi@jobbank.local');
+    const denied = await call(patchBranch, `/api/v1/branches/${id}`, {
+      method: 'PATCH',
+      jar: ba,
+      params: { id },
+      body: { code: `T-${crypto.randomUUID().slice(0, 6).toUpperCase()}` },
+    });
+    expect(denied.status).toBe(403);
 
     // Re-saving identical values (the form sends every field) writes no audit row.
     const auditCount = async () =>

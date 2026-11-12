@@ -2,6 +2,11 @@
  * shiftHours (rotation-only postings); direct applicant inserts carry this repo's
  * registration columns; the 'keeps candidates hidden' test is flipped — this repo's
  * 2026-11-10 rule shows referred candidates in full to the employer (no masking).
+ * Employer decisions were REMOVED 2026-11-12 (Step 2): the employer-decision
+ * endpoint hard-403s every actor acting as an employer — including staff acting
+ * on an employer's behalf, which resolves to the EMPLOYER role — so the
+ * decision tests below assert the refusal, not a recorded decision. Staff
+ * match-review is a separate path (matching service) and is unaffected.
  * REJECTED still needs evidence (note >= 5 chars, M19), and match-shortlist
  * decisions are NOT recorded in employer_decisions here (matching change left out). */
 import { schema } from '@jobbank/db';
@@ -119,18 +124,20 @@ const newJob = {
 };
 
 describe('staff acting for an employer', () => {
-  it('records a decision for the company, under the staff member', async () => {
+  it('refuses a decision for the company — employer decisions were removed', async () => {
     const app = await application('EMPLOYER_INTERVIEW_SCHEDULED');
     const res = await send(app.id, staffKhi, { decision: 'HOLD' });
-    expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect(res.body.data.status).toBe('ON_HOLD');
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error.message).toBe(
+      'Employers can no longer record decisions on referred candidates',
+    );
 
+    // Nothing is recorded: no decision row and no decision audit entry.
     const [record] = await db
       .select()
       .from(schema.employerDecisions)
       .where(eq(schema.employerDecisions.applicationId, app.id));
-    expect(record!.decidedBy).toBe(staffKhiId);
-
+    expect(record).toBeUndefined();
     const [log] = await db
       .select()
       .from(schema.auditLogs)
@@ -140,17 +147,13 @@ describe('staff acting for an employer', () => {
           eq(schema.auditLogs.action, 'application.employer_decision'),
         ),
       );
-    expect(log!.actorUserId).toBe(staffKhiId);
-    expect(log!.actorRole).toBe('STAFF');
-    expect(log!.metadata).toMatchObject({ onBehalfOfCompanyId: companyId });
+    expect(log).toBeUndefined();
   });
 
-  it('still needs evidence to reject, and decisions stay final', async () => {
+  it('refuses every decision — REJECTED, ACCEPTED and HOLD all 403', async () => {
     const app = await application('EMPLOYER_INTERVIEW_SCHEDULED');
-    expect((await send(app.id, staffKhi, { decision: 'REJECTED' })).status).toBe(422);
-    expect((await send(app.id, staffKhi, { decision: 'ACCEPTED' })).status).toBe(201);
-    // 403 here, not Najam's 409: this repo's H17 rule refuses decisions on a
-    // decided application with ForbiddenError.
+    expect((await send(app.id, staffKhi, { decision: 'REJECTED' })).status).toBe(403);
+    expect((await send(app.id, staffKhi, { decision: 'ACCEPTED' })).status).toBe(403);
     expect((await send(app.id, staffKhi, { decision: 'HOLD' })).status).toBe(403);
   });
 
@@ -252,8 +255,9 @@ describe('staff acting for an employer', () => {
 
   it('lets the employer keep working normally', async () => {
     const app = await application('EMPLOYER_INTERVIEW_SCHEDULED');
+    // Decisions are refused, but the employer's read access still works.
     const res = await send(app.id, employer, { decision: 'HOLD' }, {});
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(403);
     const read = await call(messages, `/api/v1/applications/${app.id}/messages`, {
       jar: employer,
       params: { id: app.id },

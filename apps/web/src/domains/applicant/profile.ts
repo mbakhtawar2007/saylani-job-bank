@@ -11,8 +11,9 @@ import type {
   SkillsInput,
   UpdatePersonalInput,
 } from '@jobbank/shared';
-import { and, eq, ilike, ne } from 'drizzle-orm';
+import { and, eq, ilike, ne, sql } from 'drizzle-orm';
 import { getBranchContact, listBranchOptions, type BranchOption } from '@/domains/branch';
+import { toGeography } from '@/lib/geospatial';
 import { assertActiveMasterData } from '@/domains/settings';
 import { recordAudit, runCommand, type CommandScope } from '@/domains/shared/audit';
 import {
@@ -272,13 +273,21 @@ export async function setMyLocation(
         ]);
       }
     }
-    // Auto-assign: find any active branch whose city matches the chosen cityCode.
-    // The applicant never picks a branch; the system assigns one so the DB constraint holds.
+    // Auto-assign: the active branch in the chosen city NEAREST to the
+    // applicant's pin. The applicant never picks a branch; the system assigns
+    // one so the DB constraint holds. Nearest-first, not an arbitrary row:
+    // once a second active branch exists in the city, an unordered pick
+    // silently assigns the wrong branch (and the CNIC-taken message, the
+    // branch list and staff transfers all point at it instead).
     const cityLabel = city.label; // e.g. "Karachi"
+    const distance = sql<
+      number | null
+    >`ST_Distance(${schema.branches.location}, ${toGeography(input.location)})`;
     const cityBranches = await tx
       .select({ id: schema.branches.id })
       .from(schema.branches)
       .where(and(ilike(schema.branches.city, cityLabel), eq(schema.branches.isActive, true)))
+      .orderBy(sql`${distance} asc nulls last`)
       .limit(1);
     // Staff entering an address for a counter candidate (ctx.enteredBy set) do not need a
     // branch in the chosen city: the candidate stays with the branch that registered them.

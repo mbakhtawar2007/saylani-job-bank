@@ -135,8 +135,12 @@ describe('first-counter applicant tokens', () => {
 
     const byCode = await lookup(`?tokenCode=${code}`);
     expect(byCode.status).toBe(200);
-    expect(byCode.body.data).toHaveLength(1);
-    expect(byCode.body.data[0]).toMatchObject({ tokenCode: code, status: 'ISSUED' });
+    // A token code is reused every day, and the shared test DB is never
+    // wiped — tokens from earlier runs can share this code. Assert
+    // membership, not an exact length.
+    expect(byCode.body.data).toContainEqual(
+      expect.objectContaining({ id: issued.body.data.id, tokenCode: code, status: 'ISSUED' }),
+    );
 
     const byCnic = await lookup(`?cnic=${cnic}&branchId=${khi}`);
     expect(byCnic.status).toBe(200);
@@ -306,6 +310,10 @@ describe('first-counter applicant tokens', () => {
     const cnic = randomCnic();
     const issued = await issue(khi, cnic);
     expect(issued.status).toBe(201);
+    // A leftover token from an earlier run can already hold this number on
+    // yesterday — the UPDATE would then hit the (branch, day, number) unique
+    // index. Clear any conflicting row first (never the issued one).
+    await owner`DELETE FROM branch_applicant_tokens WHERE branch_id = ${khi} AND registration_day = CURRENT_DATE - 1 AND token_number = ${issued.body.data.tokenNumber} AND id != ${issued.body.data.id}`;
     await owner`UPDATE branch_applicant_tokens SET registration_day = CURRENT_DATE - 1, expires_at = now() - interval '1 day', issued_at = now() - interval '2 days' WHERE id = ${issued.body.data.id}`;
 
     // The moved token no longer counts for today, so the next issue takes

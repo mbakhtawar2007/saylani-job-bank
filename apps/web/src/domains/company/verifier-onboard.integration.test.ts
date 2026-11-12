@@ -1,13 +1,19 @@
 import { schema } from '@jobbank/db';
+import { getSeedDevPassword } from '@jobbank/db/seed/dev-data';
 import { eq } from 'drizzle-orm';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { POST as acceptInvite } from '@/app/api/v1/auth/invitations/accept/route';
 import { POST as claim } from '@/app/api/v1/companies/[id]/claim/route';
+import { POST as confirmCompanyDoc } from '@/app/api/v1/companies/[id]/documents/[docId]/confirm/route';
+import { POST as presignCompanyDoc } from '@/app/api/v1/companies/[id]/documents/route';
 import { POST as markVerifiedSigned } from '@/app/api/v1/companies/[id]/registration-form/verified-signed/route';
 import { POST as onboard } from '@/app/api/v1/companies/onboard/route';
 import { GET as listCompanies } from '@/app/api/v1/companies/route';
+import { POST as inviteRoute } from '@/app/api/v1/users/route';
 import { resetMemoryRateLimits } from '@/domains/shared/rate-limit';
 import { db } from '@/lib/db';
-import { call, randomPhone, signIn, signInAdmin, type Jar } from '@/test/api-client';
+import { mailOutbox } from '@/lib/mail/mailer';
+import { call, Jar, randomPhone, signIn, signInAdmin, uniqueEmail } from '@/test/api-client';
 
 const randomNtn = () =>
   `${String(Math.floor(1000000 + Math.random() * 9000000))}-${Math.floor(Math.random() * 10)}`;
@@ -26,6 +32,40 @@ let khi: string;
 let verifierJar: Jar;
 /** A second in-branch actor: M9 forbids the onboarder marking their own form. */
 let colleagueJar: Jar;
+/** A second KHI verifier: Branch Admin can no longer onboard companies
+ * (Step 2, 2026-11-12), so the "other" company in the list test needs a
+ * second verifier, not a Branch Admin. */
+let secondVerifierJar: Jar;
+
+const tokenFrom = (text: string) => text.match(/token=([A-Za-z0-9_-]+)/)?.[1] ?? '';
+
+/** Invites + activates a verifier through the real flow; returns their session. */
+async function inviteAndActivateVerifier(adminJar: Jar) {
+  const email = uniqueEmail('verifier');
+  const invited = await call(inviteRoute, '/api/v1/users', {
+    method: 'POST',
+    jar: adminJar,
+    headers: { 'idempotency-key': crypto.randomUUID() },
+    body: {
+      name: 'Second Verifier',
+      email,
+      title: 'Verification Officer',
+      role: 'VERIFIER',
+      branchId: khi,
+    },
+  });
+  expect(invited.status, JSON.stringify(invited.body)).toBe(201);
+  const mail = [...mailOutbox].reverse().find((m) => m.to.toLowerCase() === email.toLowerCase());
+  if (!mail) throw new Error(`no email captured for ${email}`);
+  const jar = new Jar();
+  const accepted = await call(acceptInvite, '/api/v1/auth/invitations/accept', {
+    method: 'POST',
+    body: { token: tokenFrom(mail.text), password: getSeedDevPassword() },
+    jar,
+  });
+  expect(accepted.status, JSON.stringify(accepted.body)).toBe(200);
+  return { id: invited.body.data.user.id as string, email, jar };
+}
 
 beforeAll(async () => {
   khi = await branchId('KHI-GULSHAN');
@@ -33,8 +73,36 @@ beforeAll(async () => {
   // Round 2: plain signIn cannot pass the 2FA step — other files leave
   // Branch Admin enrolled in the shared DB, so this file must enrol too.
   colleagueJar = await signInAdmin('branchadmin.khi@jobbank.local');
+  const superAdmin = await signInAdmin('superadmin@jobbank.local');
+  secondVerifierJar = (await inviteAndActivateVerifier(superAdmin)).jar;
 });
 beforeEach(() => resetMemoryRateLimits());
+
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+
+/** Presign → PUT → confirm, mirroring the applicant document upload helper. */
+async function uploadCompanyDocument(companyId: string, jar: Jar) {
+  const presigned = await call(presignCompanyDoc, `/api/v1/companies/${companyId}/documents`, {
+    method: 'POST',
+    body: {
+      typeCode: 'AUTHORISED_PERSON_CNIC_FRONT',
+      fileName: 'AUTHORISED_PERSON_CNIC_FRONT.png',
+      contentType: 'image/png',
+      sizeBytes: PNG.byteLength,
+    },
+    jar,
+  });
+  expect(presigned.status, JSON.stringify(presigned.body)).toBe(201);
+  const { documentId, upload: put } = presigned.body.data;
+  const stored = await fetch(put.url, { method: 'PUT', headers: put.headers, body: PNG });
+  expect(stored.status).toBe(200);
+  const confirmed = await call(
+    confirmCompanyDoc,
+    `/api/v1/companies/${companyId}/documents/${documentId}/confirm`,
+    { method: 'POST', jar, params: { id: companyId, docId: documentId } },
+  );
+  expect(confirmed.status, JSON.stringify(confirmed.body)).toBe(200);
+}
 
 /** Full field-visit form: company details, contact person, outreach, notes. */
 const onboardBody = (overrides: Record<string, unknown> = {}) => ({
@@ -62,7 +130,12 @@ async function onboardedCompany(overrides: Record<string, unknown> = {}) {
     jar: verifierJar,
   });
   expect(res.status, JSON.stringify(res.body)).toBe(201);
-  return res.body.data as { id: string; status: string };
+  const company = res.body.data as { id: string; status: string };
+  // N15: marking the form verified & signed requires at least one required
+  // document. Upload the authorised person's CNIC front first; the rule
+  // itself is unchanged.
+  await uploadCompanyDocument(company.id, verifierJar);
+  return company;
 }
 
 describe('verifier creates companies', () => {
@@ -115,11 +188,12 @@ describe('verifier creates companies', () => {
 
   it('sees only the companies they onboarded in the company list', async () => {
     const mine = await onboardedCompany();
-    const otherJar = await signInAdmin('branchadmin.khi@jobbank.local');
+    // Branch Admin can no longer onboard companies (Step 2), so the other
+    // company is onboarded by the second KHI verifier instead.
     const otherRes = await call(onboard, '/api/v1/companies/onboard', {
       method: 'POST',
-      body: onboardBody({ legalName: 'Branch Admin Onboard Test Foods' }),
-      jar: otherJar,
+      body: onboardBody({ legalName: 'Second Verifier Onboard Test Foods' }),
+      jar: secondVerifierJar,
     });
     expect(otherRes.status, JSON.stringify(otherRes.body)).toBe(201);
     const res = await call(listCompanies, '/api/v1/companies', {

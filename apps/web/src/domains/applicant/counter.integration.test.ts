@@ -10,7 +10,7 @@ import { PUT as putLocation } from '@/app/api/v1/applicants/me/location/route';
 import { POST as registerCounter } from '@/app/api/v1/applicants/counter/route';
 import { POST as accept } from '@/app/api/v1/applications/[id]/accept/route';
 import { POST as called } from '@/app/api/v1/applications/[id]/called/route';
-import { POST as decide } from '@/app/api/v1/applications/[id]/employer-decision/route';
+import { PATCH as updateInterview } from '@/app/api/v1/applications/[id]/employer-interview/route';
 import { POST as login } from '@/app/api/v1/auth/login/route';
 import { POST as forgot } from '@/app/api/v1/auth/password/forgot/route';
 import { listCandidateCalls } from '@/domains/placement';
@@ -319,13 +319,22 @@ describe('call list and recording offers', () => {
       false,
     );
 
-    const held = await call(decide, `/api/v1/applications/${applicationId}/employer-decision`, {
-      method: 'POST',
-      jar: employer,
-      params: { id: applicationId },
-      body: { decision: 'HOLD' },
-    });
-    expect(held.status).toBe(201);
+    // Employer decisions were removed 2026-11-12 (Step 2): the employer-decision
+    // endpoint now hard-403s employers. Postponing the employer interview is
+    // the still-live employer action that moves the application to another
+    // call-list status (EMPLOYER_INTERVIEW_POSTPONED) and clears
+    // lastCallStatus, so the item reappears in the call list.
+    const postponed = await call(
+      updateInterview,
+      `/api/v1/applications/${applicationId}/employer-interview`,
+      {
+        method: 'PATCH',
+        jar: employer,
+        params: { id: applicationId },
+        body: { status: 'EMPLOYER_INTERVIEW_POSTPONED' },
+      },
+    );
+    expect(postponed.status, JSON.stringify(postponed.body)).toBe(200);
     expect((await listCandidateCalls(actor)).some((c) => c.applicationId === applicationId)).toBe(
       true,
     );
