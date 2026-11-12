@@ -17,7 +17,7 @@ import { MatchesShortlist } from '../../employer/jobs/_components/MatchesShortli
 import { ReferralDetail } from '../../employer/referrals/_components/ReferralDetail';
 import { ActingForEmployer } from './ActingForEmployer';
 
-export type ConsoleRole = 'STAFF' | 'BRANCH_ADMIN';
+export type ConsoleRole = 'BRANCH_ADMIN';
 type Params = Promise<{ companyId: string; id?: string }>;
 
 const REFERRAL_LABELS: Record<string, string> = {

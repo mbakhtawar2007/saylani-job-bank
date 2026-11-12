@@ -93,7 +93,6 @@ export function navigationFor(
           items: [
             overview,
             { href: '/staff/applicants', label: 'Applicants', icon: Contact },
-            { href: '/staff/employers', label: 'Employers', icon: Building2 },
             { href: '/staff/jobs', label: 'Jobs', icon: Briefcase },
           ],
         },
