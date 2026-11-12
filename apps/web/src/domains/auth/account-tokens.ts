@@ -13,7 +13,6 @@ import { env } from '@/lib/env';
 import { sendMail } from '@/lib/mail/mailer';
 import { invitationEmail, passwordResetEmail } from '@/lib/mail/templates';
 import { loginWithPassword, clearTrustedDevices, type SignInResult } from './service';
-import { assertPasswordNotBreached } from './breached-password';
 
 export const INVITE_TTL_DAYS = 7;
 export const RESET_TTL_MINUTES = 60;
@@ -169,11 +168,6 @@ export async function acceptInvitation(
     { limit: 10, windowSeconds: 900 },
   );
 
-  // Breach check runs BEFORE the transaction: a slow HIBP response must not
-  // hold a database transaction open. Fails open on HIBP errors (see
-  // breached-password.ts), so an outage cannot block accepting an invite.
-  await assertPasswordNotBreached(password);
-
   const email = await runCommand(ctx, async ({ tx, audit }) => {
     const found = await findValidToken(tx, token, 'INVITE');
     if (!found) throw new InvalidLinkError();
@@ -269,8 +263,6 @@ export async function resetPassword(
     createHash('sha256').update(token).digest('hex'),
     { limit: 10, windowSeconds: 900 },
   );
-  // Breach check runs BEFORE the transaction (see acceptInvitation above).
-  await assertPasswordNotBreached(password);
   // clearTrustedDevices uses the global db handle, so it runs after the
   // transaction below (sessions are revoked inside it).
   let userId: string | undefined;

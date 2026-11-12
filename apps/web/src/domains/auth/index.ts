@@ -1,5 +1,4 @@
 /** Public API of the auth domain (route handlers and server components import from here). */
-export { assertPasswordNotBreached, isPasswordBreached } from './breached-password';
 export {
   acceptInvitation,
   hashAccountToken,

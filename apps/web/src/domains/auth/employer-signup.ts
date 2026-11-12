@@ -12,7 +12,6 @@ import { env } from '@/lib/env';
 import { sendMail } from '@/lib/mail/mailer';
 import { signupCodeEmail, signupExistingAccountEmail } from '@/lib/mail/templates';
 import { setCredentialPassword } from './account-tokens';
-import { assertPasswordNotBreached } from './breached-password';
 import { generateOtpCode } from './otp';
 import { getAuthSecret } from './secret';
 import { loginWithPassword, RESEND_AFTER_SECONDS, type SignInResult } from './service';
@@ -169,11 +168,6 @@ export async function signUpEmployer(
     });
     throw new ValidationError([{ path: 'code', message: CODE_MESSAGES[check] }]);
   }
-
-  // Breach check runs BEFORE the transaction: a slow HIBP response must not
-  // hold a database transaction open. Fails open on HIBP errors (see
-  // breached-password.ts), so an outage cannot block signing up.
-  await assertPasswordNotBreached(input.password);
 
   try {
     await runCommand(ctx, async ({ tx, audit }) => {
