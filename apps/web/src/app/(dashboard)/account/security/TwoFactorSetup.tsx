@@ -20,7 +20,18 @@ const steps = [
   { id: 'verify', label: 'Enter code' },
 ];
 
-export function TwoFactorSetup({ required }: { required: boolean }) {
+export function TwoFactorSetup({
+  required,
+  setupToken,
+}: {
+  required: boolean;
+  /**
+   * Audit H-02: when the caller has no session (2FA-required role, never
+   * enrolled), login issued this short-lived token instead. It is sent with
+   * the password so enrolment can buy exactly the pending session it needs.
+   */
+  setupToken?: string;
+}) {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [password, setPassword] = useState('');
@@ -38,7 +49,7 @@ export function TwoFactorSetup({ required }: { required: boolean }) {
     try {
       const { data } = await apiFetch<Enrollment>('/api/v1/account/2fa/enroll', {
         method: 'POST',
-        body: { password },
+        body: setupToken ? { password, setupToken } : { password },
       });
       setEnrollment(data);
       setPassword('');

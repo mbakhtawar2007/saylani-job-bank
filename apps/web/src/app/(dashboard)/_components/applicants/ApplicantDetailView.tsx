@@ -24,6 +24,7 @@ import {
   UserCheck,
   UserX,
 } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -317,8 +318,32 @@ function ChangePhoneDialog({ applicant }: { applicant: ApplicantStaffView }) {
   const [open, setOpen] = useState(false);
   const [phone, setPhone] = useState('');
   const [reason, setReason] = useState('');
+  const [code, setCode] = useState('');
+  const [maskedPhone, setMaskedPhone] = useState<string | null>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [saving, setSaving] = useState(false);
+
+  // Audit 2026-11-11 (M-21): two steps. The new number must prove itself
+  // with a 6-digit code texted to it before the profile moves — staff
+  // say-so alone no longer marks the number verified.
+  const sendCode = async (event: FormEvent) => {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      const { data } = await apiFetch<{ maskedPhone: string }>(
+        `/api/v1/applicants/${applicant.id}/phone/code`,
+        { method: 'POST', body: { phone } },
+      );
+      setMaskedPhone(data.maskedPhone);
+      setErrors({});
+      toast.success(`Verification code sent to ${data.maskedPhone}. It expires in 5 minutes.`);
+    } catch (err) {
+      if (err instanceof ApiClientError && err.issues.length) setErrors(toFieldErrors(err.issues));
+      else toast.error(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -326,10 +351,12 @@ function ChangePhoneDialog({ applicant }: { applicant: ApplicantStaffView }) {
     try {
       await apiFetch(`/api/v1/applicants/${applicant.id}/phone`, {
         method: 'PUT',
-        body: { phone, reason },
+        body: { phone, reason, code },
       });
       toast.success('Mobile number changed. The applicant must sign in again.');
       setOpen(false);
+      setCode('');
+      setMaskedPhone(null);
       router.refresh();
     } catch (err) {
       if (err instanceof ApiClientError && err.issues.length) setErrors(toFieldErrors(err.issues));
@@ -344,29 +371,90 @@ function ChangePhoneDialog({ applicant }: { applicant: ApplicantStaffView }) {
       title="Change mobile number"
       description="For account recovery (lost SIM, or a CNIC registered from another number). Check the original CNIC in person first. The old number is signed out."
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) {
+          setCode('');
+          setMaskedPhone(null);
+        }
+      }}
       trigger={
         <Button variant="secondary" leftIcon={<Phone />}>
           Change mobile
         </Button>
       }
     >
-      <form className="grid gap-4" onSubmit={submit} noValidate>
-        <FormField label="New mobile number" required error={errors.phone}>
-          <PhoneInput value={phone} onChange={(value) => setPhone(value.e164 ?? value.national)} />
-        </FormField>
-        <FormField label="Reason" required error={errors.reason} hint="Recorded in the audit log.">
-          <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
-        </FormField>
-        <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>
-            Cancel
-          </Button>
-          <Button type="submit" loading={saving}>
-            Change number
-          </Button>
-        </div>
-      </form>
+      {maskedPhone === null ? (
+        <form className="grid gap-4" onSubmit={sendCode} noValidate>
+          <FormField label="New mobile number" required error={errors.phone}>
+            <PhoneInput
+              value={phone}
+              onChange={(value) => setPhone(value.e164 ?? value.national)}
+            />
+          </FormField>
+          <FormField
+            label="Reason"
+            required
+            error={errors.reason}
+            hint="Recorded in the audit log."
+          >
+            <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+          </FormField>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={saving}>
+              Send verification code
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <form className="grid gap-4" onSubmit={submit} noValidate>
+          <p className="text-fg-muted text-sm">
+            A 6-digit code was sent to {maskedPhone}. Enter it below to move this profile to the new
+            number.
+          </p>
+          <FormField label="Verification code" required error={errors.code}>
+            <Input
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="6-digit code"
+            />
+          </FormField>
+          <FormField
+            label="Reason"
+            required
+            error={errors.reason}
+            hint="Recorded in the audit log."
+          >
+            <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+          </FormField>
+          <div className="flex items-center justify-between gap-2">
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => {
+                setMaskedPhone(null);
+                setCode('');
+              }}
+              disabled={saving}
+            >
+              Edit number
+            </Button>
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>
+                Cancel
+              </Button>
+              <Button type="submit" loading={saving}>
+                Change number
+              </Button>
+            </div>
+          </div>
+        </form>
+      )}
     </Modal>
   );
 }
@@ -393,7 +481,7 @@ function TransferDialog({
     try {
       const { data } = await apiFetch<{ branch: { name: string } }>(
         `/api/v1/applicants/${applicant.id}/transfer`,
-        { method: 'POST', body: { branchId, reason } },
+        { method: 'POST', body: { branchId, expectedBranchId: applicant.branch?.id, reason } },
       );
       toast.success(`Moved to ${data.branch.name}`);
       setOpen(false);
@@ -502,8 +590,13 @@ function ShortlistDialog({
             />
           )}
         </FormField>
-        <FormField label="Note" hint="Optional note for staff reference.">
-          <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
+        <FormField label="Note" hint="Optional note for staff reference." error={errors.note}>
+          <Textarea
+            rows={2}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={500}
+          />
         </FormField>
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>
@@ -534,6 +627,7 @@ function ReferToEmployerDialog({
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [noteError, setNoteError] = useState<string | undefined>(undefined);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -547,8 +641,14 @@ function ReferToEmployerDialog({
       setOpen(false);
       router.refresh();
     } catch (err) {
-      setError(errorMessage(err));
-      toast.error(errorMessage(err));
+      // Audit 2026-11-11 (M-05): a too-long note failed with only a
+      // generic alert; surface the field issue on the note itself.
+      if (err instanceof ApiClientError && err.issueFor('note')) {
+        setNoteError(err.issueFor('note'));
+      } else {
+        setError(errorMessage(err));
+        toast.error(errorMessage(err));
+      }
     } finally {
       setSaving(false);
     }
@@ -575,13 +675,15 @@ function ReferToEmployerDialog({
             <strong className="text-fg">{jobTitle}</strong>. They will be notified immediately.
           </p>
         </div>
-        <FormField label="Note (optional)">
+        <FormField label="Note (optional)" error={noteError}>
           <Textarea
             rows={2}
             placeholder="Any context for the employer or internal record…"
             value={note}
+            maxLength={500}
             onChange={(e) => {
               setNote(e.target.value);
+              setNoteError(undefined);
               setError(null);
             }}
           />
@@ -631,6 +733,9 @@ function formatSalary(min: number | null, max: number | null) {
  * applicant via the existing job-referral API, so the applicant then sees
  * it on their Jobs page. Already-referred jobs stay visible, flagged,
  * instead of being offered again.
+ *
+ * Audit 2026-11-11 (M-14): ported from the fork clone's uncommitted
+ * matched-jobs work.
  */
 function MatchedJobsForReferralCard({
   applicantId,
@@ -910,6 +1015,20 @@ export function ApplicantDetailView({
 
   return (
     <div className="grid gap-6">
+      <div className="flex flex-wrap justify-end gap-2">
+        {applicant.can.manage && (
+          <Button asChild variant="primary" leftIcon={<Pencil />}>
+            <Link href={`${listPath}/${applicant.id}/edit`}>Edit Profile</Link>
+          </Button>
+        )}
+        {applicant.can.manage && (
+          <Button asChild variant="secondary" leftIcon={<Printer />}>
+            <Link href={`/print/applicants/${applicant.id}/registration`}>
+              Print Registration Form
+            </Link>
+          </Button>
+        )}
+      </div>
       {applicant.status === 'INACTIVE' && applicant.statusReason && (
         <p className="bg-surface-muted text-fg-muted rounded-lg px-4 py-3 text-sm">
           Deactivated by staff: {applicant.statusReason}

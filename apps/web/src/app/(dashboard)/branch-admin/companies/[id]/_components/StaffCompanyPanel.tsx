@@ -29,7 +29,9 @@ import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import { formatDate } from '@/lib/format/date';
 import { putWithProgress } from '@/lib/upload/put-with-progress';
 import type { CompanyOnboarding, CompanyView } from '@/domains/company';
+import type { JobView } from '@/domains/job';
 import { CompanyRegistrationFormPrint } from '@/app/(dashboard)/_components/companies/CompanyRegistrationFormPrint';
+import { JobManagementPanel } from '@/app/(dashboard)/_components/jobs/JobManagementPanel';
 
 interface MasterDataOption {
   id: string;
@@ -49,7 +51,10 @@ interface GeocodeResult {
 
 const STATUS_PILL: Record<
   CompanyStatus,
-  { label: string; variant: 'success' | 'danger' | 'warning' | 'neutral' | 'info' }
+  {
+    label: string;
+    variant: 'success' | 'danger' | 'warning' | 'neutral' | 'info';
+  }
 > = {
   DRAFT: { label: 'Draft', variant: 'neutral' },
   SUBMITTED: { label: 'Submitted', variant: 'info' },
@@ -67,12 +72,18 @@ export function StaffCompanyPanel({
   canSuspend,
   canManage,
   canOnboard = false,
+  jobs,
+  canManageJobs,
+  categories,
 }: {
   company: CompanyView;
   onboarding?: CompanyOnboarding | null;
   canSuspend: boolean;
   canManage: boolean;
   canOnboard?: boolean;
+  jobs: JobView[];
+  canManageJobs: boolean;
+  categories: { code: string; label: string }[];
 }) {
   const pathname = usePathname();
   const backHref = pathname.includes('super-admin')
@@ -809,9 +820,18 @@ export function StaffCompanyPanel({
           columns={2}
           items={[
             { label: 'NTN', value: company_.details.ntn },
-            { label: 'Reg. no.', value: company_.details.registrationNo ?? '—' },
-            { label: 'Structure', value: LEGAL_STRUCTURE_LABELS[company_.details.legalStructure] },
-            { label: 'Size', value: COMPANY_SIZE_LABELS[company_.details.sizeBand] },
+            {
+              label: 'Reg. no.',
+              value: company_.details.registrationNo ?? '—',
+            },
+            {
+              label: 'Structure',
+              value: LEGAL_STRUCTURE_LABELS[company_.details.legalStructure],
+            },
+            {
+              label: 'Size',
+              value: COMPANY_SIZE_LABELS[company_.details.sizeBand],
+            },
             { label: 'Branch', value: company_.branch?.name ?? '—' },
           ]}
         />
@@ -1027,6 +1047,24 @@ export function StaffCompanyPanel({
             document.body,
           )
         : null}
+      <JobManagementPanel
+        companyId={company_.id}
+        jobs={jobs}
+        categories={categories}
+        canManage={canManageJobs}
+        canCreate={company_.status === 'VERIFIED'}
+        jobLinkBasePath={
+          pathname.startsWith('/branch-admin/')
+            ? `/branch-admin/companies/${company_.id}`
+            : pathname.includes('/staff/')
+              ? '/staff/jobs'
+              : pathname.includes('/verifier/')
+                ? '/verifier/jobs'
+                : pathname.includes('super-admin')
+                  ? '/super-admin/jobs'
+                  : undefined
+        }
+      />
     </div>
   );
 }
