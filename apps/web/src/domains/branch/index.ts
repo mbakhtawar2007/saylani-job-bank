@@ -2,6 +2,8 @@ export {
   countBranches,
   createBranch,
   createBranchSchema,
+  deleteBranch,
+  deleteBranchSchema,
   getBranch,
   getBranchContact,
   listBranchOptions,

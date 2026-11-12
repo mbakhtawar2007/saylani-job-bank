@@ -1,6 +1,12 @@
 import { z } from 'zod';
-import { getBranch, updateBranch, updateBranchSchema } from '@/domains/branch';
-import { apiHandler, ok } from '@/domains/shared/http';
+import {
+  deleteBranch,
+  deleteBranchSchema,
+  getBranch,
+  updateBranch,
+  updateBranchSchema,
+} from '@/domains/branch';
+import { apiHandler, noContent, ok } from '@/domains/shared/http';
 
 const params = z.object({ id: z.uuid() });
 
@@ -18,4 +24,15 @@ export const PATCH = apiHandler({
   body: updateBranchSchema,
   handler: async ({ ctx, actor, params: p, body }) =>
     ok(await updateBranch({ ...ctx, actor: actor! }, p.id, body)),
+});
+
+/** DELETE /api/v1/branches/{id} — Super Admin deletes an already-deactivated branch. */
+export const DELETE = apiHandler({
+  permission: 'branch:manage',
+  params,
+  body: deleteBranchSchema,
+  handler: async ({ ctx, actor, params: p, body }) => {
+    await deleteBranch({ ...ctx, actor: actor! }, p.id, body.reason);
+    return noContent();
+  },
 });

@@ -9,7 +9,7 @@ import {
 import { asc, count, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand, type RequestContext } from '@/domains/shared/audit';
-import { ConflictError, NotFoundError } from '@/domains/shared/errors';
+import { ConflictError, ForbiddenError, NotFoundError } from '@/domains/shared/errors';
 import {
   assertBranchAccess,
   assertPermission,
@@ -65,6 +65,11 @@ export const createBranchSchema = branchFields.extend({
 /** Code is permanent (it appears in candidate codes like JB-KHI-00412). */
 export const updateBranchSchema = branchFields.partial().extend({
   isActive: z.boolean().optional(),
+});
+
+/** Deleting a branch is permanent, so a short reason is recorded in the audit log. */
+export const deleteBranchSchema = z.object({
+  reason: z.string().trim().min(5, 'Give a short reason (at least 5 characters)').max(500),
 });
 
 export type CreateBranchInput = z.infer<typeof createBranchSchema>;
@@ -278,6 +283,77 @@ export async function updateBranch(
     { audited: false },
   );
   return getBranch(ctx.actor, branchId);
+}
+
+/**
+ * Permanently delete a branch. Super Admin only (`branch:manage`), and only
+ * after the branch has been deactivated — an active branch cannot be deleted.
+ * Refuses while anything still points at the branch: staff assignments,
+ * applicants, companies, jobs and applications would otherwise be orphaned
+ * (jobs / applications carry a plain branch id) or trip the restrict FKs.
+ * The branch's own radius policy and settings rows cascade away with it.
+ */
+export async function deleteBranch(ctx: SignedIn, branchId: string, reason: string): Promise<void> {
+  assertPermission(ctx.actor, 'branch:manage');
+  await runCommand(ctx, async ({ tx, audit }) => {
+    const [branch] = await tx.select(columns).from(b).where(eq(b.id, branchId));
+    if (!branch) throw new NotFoundError('Branch', branchId);
+    if (branch.isActive) throw new ForbiddenError('Deactivate the branch before deleting it');
+    const [staffRows] = await tx
+      .select({ n: count() })
+      .from(schema.userRoles)
+      .where(eq(schema.userRoles.branchId, branchId));
+    const [applicantRows] = await tx
+      .select({ n: count() })
+      .from(schema.applicants)
+      .where(eq(schema.applicants.branchId, branchId));
+    const [companyRows] = await tx
+      .select({ n: count() })
+      .from(schema.companies)
+      .where(eq(schema.companies.branchId, branchId));
+    const [jobRows] = await tx
+      .select({ n: count() })
+      .from(schema.jobs)
+      .where(eq(schema.jobs.branchId, branchId));
+    const [applicationRows] = await tx
+      .select({ n: count() })
+      .from(schema.applications)
+      .where(eq(schema.applications.branchId, branchId));
+    const [tokenRows] = await tx
+      .select({ n: count() })
+      .from(schema.branchApplicantTokens)
+      .where(eq(schema.branchApplicantTokens.branchId, branchId));
+    const [verificationRows] = await tx
+      .select({ n: count() })
+      .from(schema.companyVerifications)
+      .where(eq(schema.companyVerifications.branchId, branchId));
+    const attached = [
+      { label: 'staff accounts', n: staffRows?.n ?? 0 },
+      { label: 'applicants', n: applicantRows?.n ?? 0 },
+      { label: 'companies', n: companyRows?.n ?? 0 },
+      { label: 'jobs', n: jobRows?.n ?? 0 },
+      { label: 'applications', n: applicationRows?.n ?? 0 },
+      { label: 'applicant tokens', n: tokenRows?.n ?? 0 },
+      { label: 'company verifications', n: verificationRows?.n ?? 0 },
+    ].filter((entry) => entry.n > 0);
+    if (attached.length > 0) {
+      throw new ConflictError(
+        `Cannot delete this branch: ${attached
+          .map((entry) => `${entry.n} ${entry.label}`)
+          .join(', ')} still assigned to it. Move or remove them first.`,
+      );
+    }
+    audit({
+      action: 'branch.delete',
+      entityType: 'branch',
+      entityId: branchId,
+      branchId,
+      before: { code: branch.code, name: branch.name, city: branch.city },
+      after: null,
+      reason,
+    });
+    await tx.delete(b).where(eq(b.id, branchId));
+  });
 }
 
 /** How many active branches exist (used by the Super Admin overview). */

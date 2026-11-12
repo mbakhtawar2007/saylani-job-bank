@@ -7,6 +7,7 @@ import { requireRole } from '@/domains/auth';
 import { getBranch } from '@/domains/branch';
 import { getGlobalRadius } from '@/domains/settings';
 import { formatDistance } from '@/lib/format/distance';
+import { BranchDeleteButton } from '../../../_components/branches/BranchDeleteButton';
 import { BranchForm } from '../../../_components/branches/BranchForm';
 import { BranchStatusButton } from '../../../_components/branches/BranchStatusButton';
 import { loadForPage } from '../../../_lib/page-context';
@@ -40,6 +41,7 @@ export default async function BranchDetailPage({ params }: { params: Promise<{ i
             </NextLink>
           </Button>
           <BranchStatusButton branchId={branch.id} isActive={branch.isActive} name={branch.name} />
+          {!branch.isActive && <BranchDeleteButton branchId={branch.id} name={branch.name} />}
         </>
       }
       aside={
