@@ -17,7 +17,6 @@ import {
   ArrowRightLeft,
   BadgeCheck,
   Briefcase,
-  Calendar,
   Pencil,
   Phone,
   Printer,
@@ -25,7 +24,6 @@ import {
   UserCheck,
   UserX,
 } from 'lucide-react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -40,7 +38,7 @@ import {
   PhoneInput,
   toast,
 } from '@/components/molecules';
-import { DocumentList, MapPinPicker, Timeline } from '@/components/organisms';
+import { DocumentList, Timeline } from '@/components/organisms';
 import type { ApplicantStaffView } from '@/domains/applicant';
 import type { StaffMatchedJob } from '@/domains/matching';
 import type { ApplicationView } from '@/domains/placement';
@@ -53,6 +51,7 @@ import { DOCUMENT_STATUS_PILL, IDENTITY_PILL } from './labels';
 import { openDocument } from './open-document';
 import { RegistrationFormPrint } from './RegistrationFormPrint';
 import type { ProfileLabels } from './lists';
+import { ScheduleInterviewDialog, UpdateInterviewDialog } from './InterviewDialogs';
 
 function Card({
   title,
@@ -318,32 +317,8 @@ function ChangePhoneDialog({ applicant }: { applicant: ApplicantStaffView }) {
   const [open, setOpen] = useState(false);
   const [phone, setPhone] = useState('');
   const [reason, setReason] = useState('');
-  const [code, setCode] = useState('');
-  const [maskedPhone, setMaskedPhone] = useState<string | null>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [saving, setSaving] = useState(false);
-
-  // Audit 2026-11-11 (M-21): two steps. The new number must prove itself
-  // with a 6-digit code texted to it before the profile moves — staff
-  // say-so alone no longer marks the number verified.
-  const sendCode = async (event: FormEvent) => {
-    event.preventDefault();
-    setSaving(true);
-    try {
-      const { data } = await apiFetch<{ maskedPhone: string }>(
-        `/api/v1/applicants/${applicant.id}/phone/code`,
-        { method: 'POST', body: { phone } },
-      );
-      setMaskedPhone(data.maskedPhone);
-      setErrors({});
-      toast.success(`Verification code sent to ${data.maskedPhone}. It expires in 5 minutes.`);
-    } catch (err) {
-      if (err instanceof ApiClientError && err.issues.length) setErrors(toFieldErrors(err.issues));
-      else toast.error(errorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -351,12 +326,10 @@ function ChangePhoneDialog({ applicant }: { applicant: ApplicantStaffView }) {
     try {
       await apiFetch(`/api/v1/applicants/${applicant.id}/phone`, {
         method: 'PUT',
-        body: { phone, reason, code },
+        body: { phone, reason },
       });
       toast.success('Mobile number changed. The applicant must sign in again.');
       setOpen(false);
-      setCode('');
-      setMaskedPhone(null);
       router.refresh();
     } catch (err) {
       if (err instanceof ApiClientError && err.issues.length) setErrors(toFieldErrors(err.issues));
@@ -371,90 +344,29 @@ function ChangePhoneDialog({ applicant }: { applicant: ApplicantStaffView }) {
       title="Change mobile number"
       description="For account recovery (lost SIM, or a CNIC registered from another number). Check the original CNIC in person first. The old number is signed out."
       open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) {
-          setCode('');
-          setMaskedPhone(null);
-        }
-      }}
+      onOpenChange={setOpen}
       trigger={
         <Button variant="secondary" leftIcon={<Phone />}>
           Change mobile
         </Button>
       }
     >
-      {maskedPhone === null ? (
-        <form className="grid gap-4" onSubmit={sendCode} noValidate>
-          <FormField label="New mobile number" required error={errors.phone}>
-            <PhoneInput
-              value={phone}
-              onChange={(value) => setPhone(value.e164 ?? value.national)}
-            />
-          </FormField>
-          <FormField
-            label="Reason"
-            required
-            error={errors.reason}
-            hint="Recorded in the audit log."
-          >
-            <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
-          </FormField>
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>
-              Cancel
-            </Button>
-            <Button type="submit" loading={saving}>
-              Send verification code
-            </Button>
-          </div>
-        </form>
-      ) : (
-        <form className="grid gap-4" onSubmit={submit} noValidate>
-          <p className="text-fg-muted text-sm">
-            A 6-digit code was sent to {maskedPhone}. Enter it below to move this profile to the new
-            number.
-          </p>
-          <FormField label="Verification code" required error={errors.code}>
-            <Input
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              placeholder="6-digit code"
-            />
-          </FormField>
-          <FormField
-            label="Reason"
-            required
-            error={errors.reason}
-            hint="Recorded in the audit log."
-          >
-            <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
-          </FormField>
-          <div className="flex items-center justify-between gap-2">
-            <Button
-              variant="secondary"
-              type="button"
-              onClick={() => {
-                setMaskedPhone(null);
-                setCode('');
-              }}
-              disabled={saving}
-            >
-              Edit number
-            </Button>
-            <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>
-                Cancel
-              </Button>
-              <Button type="submit" loading={saving}>
-                Change number
-              </Button>
-            </div>
-          </div>
-        </form>
-      )}
+      <form className="grid gap-4" onSubmit={submit} noValidate>
+        <FormField label="New mobile number" required error={errors.phone}>
+          <PhoneInput value={phone} onChange={(value) => setPhone(value.e164 ?? value.national)} />
+        </FormField>
+        <FormField label="Reason" required error={errors.reason} hint="Recorded in the audit log.">
+          <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+        </FormField>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button type="submit" loading={saving}>
+            Change number
+          </Button>
+        </div>
+      </form>
     </Modal>
   );
 }
@@ -481,7 +393,7 @@ function TransferDialog({
     try {
       const { data } = await apiFetch<{ branch: { name: string } }>(
         `/api/v1/applicants/${applicant.id}/transfer`,
-        { method: 'POST', body: { branchId, expectedBranchId: applicant.branch?.id, reason } },
+        { method: 'POST', body: { branchId, reason } },
       );
       toast.success(`Moved to ${data.branch.name}`);
       setOpen(false);
@@ -590,13 +502,8 @@ function ShortlistDialog({
             />
           )}
         </FormField>
-        <FormField label="Note" hint="Optional note for staff reference." error={errors.note}>
-          <Textarea
-            rows={2}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            maxLength={500}
-          />
+        <FormField label="Note" hint="Optional note for staff reference.">
+          <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
         </FormField>
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>
@@ -604,185 +511,6 @@ function ShortlistDialog({
           </Button>
           <Button type="submit" loading={saving} disabled={!jobId}>
             Shortlist
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-// ─── Schedule interview dialog ─────────────────────────────────────────
-
-function ScheduleInterviewDialog({ applicationId }: { applicationId: string }) {
-  const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [interviewAt, setInterviewAt] = useState('');
-  const [location, setLocation] = useState('');
-  const [interviewNote, setInterviewNote] = useState('');
-  const [errors, setErrors] = useState<FieldErrors>({});
-  const [saving, setSaving] = useState(false);
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setSaving(true);
-    try {
-      await apiFetch(`/api/v1/applications/${applicationId}/interview`, {
-        method: 'POST',
-        body: {
-          interviewAt: new Date(interviewAt).toISOString(),
-          interviewLocation: location || undefined,
-          interviewNote: interviewNote || undefined,
-        },
-      });
-      toast.success('Interview scheduled');
-      setOpen(false);
-      router.refresh();
-    } catch (err) {
-      if (err instanceof ApiClientError && err.issues.length) setErrors(toFieldErrors(err.issues));
-      else toast.error(errorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal
-      title="Schedule interview"
-      open={open}
-      onOpenChange={setOpen}
-      trigger={
-        <Button size="sm" variant="secondary" leftIcon={<Calendar />}>
-          Schedule interview
-        </Button>
-      }
-    >
-      <form className="grid gap-4" onSubmit={submit} noValidate>
-        <FormField label="Date & time" required error={errors.interviewAt}>
-          <Input
-            type="datetime-local"
-            value={interviewAt}
-            onChange={(e) => setInterviewAt(e.target.value)}
-            min={new Date(Date.now() - 5 * 60_000).toISOString().slice(0, 16)}
-          />
-        </FormField>
-        <FormField label="Location" error={errors.interviewLocation}>
-          <Input
-            placeholder="Branch office, room number, etc."
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-          />
-        </FormField>
-        <FormField label="Note for applicant" error={errors.interviewNote}>
-          <Textarea
-            rows={2}
-            value={interviewNote}
-            onChange={(e) => setInterviewNote(e.target.value)}
-          />
-        </FormField>
-        <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>
-            Cancel
-          </Button>
-          <Button type="submit" loading={saving} disabled={!interviewAt}>
-            Confirm interview
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-// ─── Update interview status dialog ───────────────────────────────────────
-
-function UpdateInterviewDialog({ applicationId }: { applicationId: string }) {
-  const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [status, setStatus] = useState('INTERVIEW_POSTPONED');
-  const [interviewAt, setInterviewAt] = useState('');
-  const [location, setLocation] = useState('');
-  const [note, setNote] = useState('');
-  const [errors, setErrors] = useState<FieldErrors>({});
-  const [saving, setSaving] = useState(false);
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setSaving(true);
-    try {
-      await apiFetch(`/api/v1/applications/${applicationId}/interview`, {
-        method: 'PATCH',
-        body: {
-          status,
-          ...(status === 'INTERVIEW_SCHEDULED' && interviewAt
-            ? { interviewAt: new Date(interviewAt).toISOString() }
-            : {}),
-          ...(location ? { interviewLocation: location } : {}),
-          ...(note ? { note } : {}),
-        },
-      });
-      toast.success('Interview status updated');
-      setOpen(false);
-      router.refresh();
-    } catch (err) {
-      if (err instanceof ApiClientError && err.issues.length) setErrors(toFieldErrors(err.issues));
-      else toast.error(errorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal
-      title="Update interview"
-      open={open}
-      onOpenChange={setOpen}
-      trigger={
-        <Button size="sm" variant="secondary" leftIcon={<Calendar />}>
-          Update interview
-        </Button>
-      }
-    >
-      <form className="grid gap-4" onSubmit={submit} noValidate>
-        <FormField label="New status" required error={errors.status}>
-          <Select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            options={[
-              { value: 'INTERVIEW_SCHEDULED', label: 'Reschedule (new time)' },
-              { value: 'INTERVIEW_POSTPONED', label: 'Postpone' },
-              { value: 'INTERVIEW_CANCELLED', label: 'Cancel interview' },
-            ]}
-          />
-        </FormField>
-        {status === 'INTERVIEW_SCHEDULED' && (
-          <FormField label="New date & time" required error={errors.interviewAt}>
-            <Input
-              type="datetime-local"
-              value={interviewAt}
-              onChange={(e) => setInterviewAt(e.target.value)}
-              min={new Date(Date.now() - 5 * 60_000).toISOString().slice(0, 16)}
-            />
-          </FormField>
-        )}
-        <FormField label="Location" error={errors.interviewLocation}>
-          <Input
-            placeholder="Leave blank to keep existing location"
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-          />
-        </FormField>
-        <FormField label="Note for applicant" error={errors.note}>
-          <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
-        </FormField>
-        <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            loading={saving}
-            disabled={status === 'INTERVIEW_SCHEDULED' && !interviewAt}
-          >
-            Save
           </Button>
         </div>
       </form>
@@ -806,7 +534,6 @@ function ReferToEmployerDialog({
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [noteError, setNoteError] = useState<string | undefined>(undefined);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -820,14 +547,8 @@ function ReferToEmployerDialog({
       setOpen(false);
       router.refresh();
     } catch (err) {
-      // Audit 2026-11-11 (M-05): a too-long note failed with only a
-      // generic alert; surface the field issue on the note itself.
-      if (err instanceof ApiClientError && err.issueFor('note')) {
-        setNoteError(err.issueFor('note'));
-      } else {
-        setError(errorMessage(err));
-        toast.error(errorMessage(err));
-      }
+      setError(errorMessage(err));
+      toast.error(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -854,15 +575,13 @@ function ReferToEmployerDialog({
             <strong className="text-fg">{jobTitle}</strong>. They will be notified immediately.
           </p>
         </div>
-        <FormField label="Note (optional)" error={noteError}>
+        <FormField label="Note (optional)">
           <Textarea
             rows={2}
             placeholder="Any context for the employer or internal record…"
             value={note}
-            maxLength={500}
             onChange={(e) => {
               setNote(e.target.value);
-              setNoteError(undefined);
               setError(null);
             }}
           />
@@ -912,9 +631,6 @@ function formatSalary(min: number | null, max: number | null) {
  * applicant via the existing job-referral API, so the applicant then sees
  * it on their Jobs page. Already-referred jobs stay visible, flagged,
  * instead of being offered again.
- *
- * Audit 2026-11-11 (M-14): ported from the fork clone's uncommitted
- * matched-jobs work.
  */
 function MatchedJobsForReferralCard({
   applicantId,
@@ -1194,20 +910,6 @@ export function ApplicantDetailView({
 
   return (
     <div className="grid gap-6">
-      <div className="flex flex-wrap justify-end gap-2">
-        {applicant.can.manage && (
-          <Button asChild variant="primary" leftIcon={<Pencil />}>
-            <Link href={`${listPath}/${applicant.id}/edit`}>Edit Profile</Link>
-          </Button>
-        )}
-        {applicant.can.manage && (
-          <Button asChild variant="secondary" leftIcon={<Printer />}>
-            <Link href={`/print/applicants/${applicant.id}/registration`}>
-              Print Registration Form
-            </Link>
-          </Button>
-        )}
-      </div>
       {applicant.status === 'INACTIVE' && applicant.statusReason && (
         <p className="bg-surface-muted text-fg-muted rounded-lg px-4 py-3 text-sm">
           Deactivated by staff: {applicant.statusReason}
@@ -1316,30 +1018,30 @@ export function ApplicantDetailView({
 
       <Card title="Home & branch">
         {applicant.address ? (
-          <div className="grid gap-4 lg:grid-cols-[2fr_3fr]">
-            <KeyValue
-              columns={1}
-              items={[
-                { label: 'Address', value: applicant.address.addressLine },
-                {
-                  label: 'Area',
-                  value: [
-                    label('AREA', applicant.address.areaCode),
-                    label('CITY', applicant.address.cityCode),
+          <KeyValue
+            columns={1}
+            items={[
+              { label: 'Address', value: applicant.address.addressLine },
+              {
+                label: 'Area',
+                value: [
+                  label('AREA', applicant.address.areaCode),
+                  label('CITY', applicant.address.cityCode),
+                ]
+                  .filter(Boolean)
+                  .join(', '),
+              },
+              { label: 'Branch', value: applicant.branch?.name },
+              ...(applicant.address.location
+                ? [
+                    {
+                      label: 'Coordinates',
+                      value: `${applicant.address.location.lat.toFixed(4)}, ${applicant.address.location.lng.toFixed(4)}`,
+                    },
                   ]
-                    .filter(Boolean)
-                    .join(', '),
-                },
-                { label: 'Branch', value: applicant.branch?.name },
-              ]}
-            />
-            <MapPinPicker
-              value={applicant.address.location}
-              readOnly
-              height="14rem"
-              label="Applicant's home"
-            />
-          </div>
+                : []),
+            ]}
+          />
         ) : (
           <p className="text-fg-muted text-sm">No home location yet.</p>
         )}

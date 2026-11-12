@@ -5,7 +5,6 @@ import { and, count, desc, eq, inArray, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
-import { enforceRateLimit } from '@/domains/shared/rate-limit';
 import {
   ConflictError,
   ForbiddenError,
@@ -13,16 +12,16 @@ import {
   NotFoundError,
   ValidationError,
 } from '@/domains/shared/errors';
-import { assertCityAccess, assertPermission, assertRole, type Actor } from '@/domains/shared/scope';
+import {
+  assertCityAccess,
+  assertPermission,
+  assertRole,
+  branchScope,
+  type Actor,
+} from '@/domains/shared/scope';
 import { db } from '@/lib/db';
 import { createNotification, notifyCompanyEmployers } from '@/domains/notifications';
-import {
-  assertJobLive,
-  assertJobOpen,
-  isReferrableApplicant,
-  loadJob,
-  loadJobForUpdate,
-} from '@/domains/job';
+import { isReferrableApplicant } from '@/domains/job';
 import type { RequestContext } from '@/domains/shared/audit';
 import { lockAndTransitionApplication } from './machine';
 import { assertFutureInterviewAt, futureInterviewAtSchema } from './interview-date';
@@ -188,14 +187,6 @@ export async function shortlistApplicant(
   input: ShortlistInput,
 ): Promise<ApplicationView> {
   assertPermission(ctx.actor, 'match_case:manage');
-  // Audit 2026-11-11 (L-20): shortlists fire notifications — 30 per
-  // staff member per hour is plenty for real work, and stops spam.
-  await enforceRateLimit(
-    'shortlist',
-    ctx.actor.userId,
-    { limit: 30, windowSeconds: 3600 },
-    'Too many shortlists. Try again in an hour.',
-  );
 
   // Verify applicant exists and actor has city access
   const [applicantRow] = await db
@@ -253,36 +244,27 @@ export async function shortlistApplicant(
     .where(and(eq(ap.applicantId, input.applicantId), eq(ap.jobId, input.jobId)));
   if (existing) throw new ConflictError('This applicant is already shortlisted for this job');
 
-  let view: ApplicationView;
-  try {
-    view = await runCommand(ctx, async ({ tx, audit }) => {
-      const [row] = await tx
-        .insert(ap)
-        .values({
-          applicantId: input.applicantId,
-          jobId: input.jobId,
-          branchId: jobRow.branchId,
-          createdBy: ctx.actor.userId,
-          note: input.note ?? null,
-          status: 'SHORTLISTED',
-        })
-        .returning();
-
-      audit({
-        action: 'application.shortlist',
-        entityType: 'application',
-        entityId: row!.id,
+  const view = await runCommand(ctx, async ({ tx, audit }) => {
+    const [row] = await tx
+      .insert(ap)
+      .values({
+        applicantId: input.applicantId,
+        jobId: input.jobId,
         branchId: jobRow.branchId,
-      });
-      return row!;
-    }).then(buildView);
-  } catch (error) {
-    // Audit 2026-11-11 (L-21): two concurrent shortlists race the
-    // duplicate pre-check above — the unique index catches it. Map it to
-    // the same specific message as the pre-check instead of a generic 409.
-    if (!isUniqueViolation(error, 'applications_applicant_job_uq')) throw error;
-    throw new ConflictError('This applicant is already shortlisted for this job');
-  }
+        createdBy: ctx.actor.userId,
+        note: input.note ?? null,
+        status: 'SHORTLISTED',
+      })
+      .returning();
+
+    audit({
+      action: 'application.shortlist',
+      entityType: 'application',
+      entityId: row!.id,
+      branchId: jobRow.branchId,
+    });
+    return row!;
+  }).then(buildView);
 
   // M25 — the applicant must hear they were shortlisted: until now only the
   // referral was notified, so a shortlisted applicant heard nothing.
@@ -299,7 +281,7 @@ export async function shortlistApplicant(
   return view;
 }
 
-/** Staff / Branch Admin: schedule a Job Bank interview for an application. */
+/** Branch Admin only: schedule a Job Bank interview for an application. */
 export async function scheduleInterview(
   ctx: SignedIn,
   applicationId: string,
@@ -313,11 +295,6 @@ export async function scheduleInterview(
   if (row.status === 'REJECTED' || row.status === 'HIRED')
     throw new ForbiddenError('Cannot schedule an interview for a closed application');
 
-  // Audit 2026-11-11 (M-09): interviews are in-flight pipeline steps — the
-  // job must still be live (OPEN or PAUSED), never closed/expired/filled.
-  // Re-checked under the job lock inside the transaction.
-  assertJobLive(await loadJob(db, row.jobId), 'schedule an interview for this application');
-
   // H11 — service-level backstop: the schema already rejects past dates, but
   // direct callers bypass it.
   assertFutureInterviewAt(input.interviewAt);
@@ -328,7 +305,6 @@ export async function scheduleInterview(
   });
 
   const view = await runCommand(ctx, async ({ tx, audit }) => {
-    assertJobLive(await loadJobForUpdate(tx, row.jobId), 'schedule an interview for this application');
     const { to } = await lockAndTransitionApplication(tx, applicationId, 'SCHEDULE_INTERVIEW');
     const [updated] = await tx
       .update(ap)
@@ -338,9 +314,6 @@ export async function scheduleInterview(
         interviewLocation: input.interviewLocation ?? null,
         interviewNote: input.interviewNote ?? null,
         scheduledBy: ctx.actor.userId,
-        // Ported from Najam: reset so the newly scheduled interview
-        // re-appears in the call list (see listPendingCalls).
-        lastCallStatus: null,
         updatedAt: new Date(),
       })
       .where(eq(ap.id, applicationId))
@@ -388,9 +361,6 @@ export async function updateInterviewStatus(
   if (!interviewStatuses.includes(row.status))
     throw new ForbiddenError('Can only update status for applications with a scheduled interview');
 
-  // Audit 2026-11-11 (M-09): same live-job rule as scheduleInterview.
-  assertJobLive(await loadJob(db, row.jobId), 'update the interview for this application');
-
   // H11 — a supplied new date must be in the future.
   if (input.status === 'INTERVIEW_SCHEDULED' && input.interviewAt) {
     assertFutureInterviewAt(input.interviewAt);
@@ -404,7 +374,6 @@ export async function updateInterviewStatus(
   }
 
   const view = await runCommand(ctx, async ({ tx, audit }) => {
-    assertJobLive(await loadJobForUpdate(tx, row.jobId), 'update the interview for this application');
     const event =
       input.status === 'INTERVIEW_SCHEDULED'
         ? 'RESCHEDULE_INTERVIEW'
@@ -415,10 +384,6 @@ export async function updateInterviewStatus(
     const patch: Partial<typeof ap.$inferInsert> = {
       status: to,
       note: input.note ?? row.note,
-      // Ported from Najam: reset so a (re)scheduled interview re-appears
-      // in the call list (listPendingCalls hides rows whose lastCallStatus
-      // equals their current status).
-      lastCallStatus: null,
       updatedAt: new Date(),
     };
     if (input.status === 'INTERVIEW_SCHEDULED') {
@@ -439,14 +404,7 @@ export async function updateInterviewStatus(
   }).then(buildView);
 
   // Notify the applicant of the interview status change (best-effort, post-commit).
-  // Audit 2026-11-11 (L-11): reaching here with INTERVIEW_SCHEDULED always
-  // means a reschedule — a first schedule goes through scheduleInterview —
-  // so the applicant hears "rescheduled", not "scheduled".
-  const notifStatus =
-    input.status === 'INTERVIEW_SCHEDULED' && row.interviewAt
-      ? 'INTERVIEW_RESCHEDULED'
-      : input.status;
-  void notifyApplicantOfInterviewUpdate(ctx, row.applicantId, view, notifStatus).catch((err) =>
+  void notifyApplicantOfInterviewUpdate(ctx, row.applicantId, view, input.status).catch((err) =>
     ctx.log.error('interview status notification failed', { applicationId, err }),
   );
 
@@ -527,14 +485,6 @@ export async function referApplicantToEmployer(
   input: ReferApplicantInput,
 ): Promise<ApplicationView> {
   assertPermission(ctx.actor, 'match_case:refer');
-  // Audit 2026-11-11 (L-20): referrals fire notifications — 30 per staff
-  // member per hour (shared with the direct-refer path below).
-  await enforceRateLimit(
-    'refer-to-employer',
-    ctx.actor.userId,
-    { limit: 30, windowSeconds: 3600 },
-    'Too many referrals. Try again in an hour.',
-  );
 
   const [row] = await db.select().from(ap).where(eq(ap.id, applicationId));
   if (!row) throw new NotFoundError('Application', applicationId);
@@ -562,13 +512,6 @@ export async function referApplicantToEmployer(
   if (companyRow?.status !== 'VERIFIED')
     throw new ForbiddenError('Only verified companies can receive referred candidates');
 
-  // Audit 2026-11-11 (H-10): new referrals require an OPEN job — a candidate
-  // shortlisted while the job was OPEN must not be forwarded after it was
-  // closed, expired or filled. Re-checked under the job lock inside the
-  // transaction, so a close landing between the check and the write cannot
-  // slip through.
-  assertJobOpen(await loadJob(db, row.jobId), 'refer this candidate');
-
   // Audit 2026-11-10 (D-F1): re-check eligibility at forward time — the
   // applicant may have become RESTRICTED (or identity REJECTED) after
   // being shortlisted. Same interim rule as shortlist/direct-refer.
@@ -580,7 +523,6 @@ export async function referApplicantToEmployer(
     throw new ForbiddenError('Candidates cannot be referred from restricted or rejected profiles');
 
   const view = await runCommand(ctx, async ({ tx, audit }) => {
-    assertJobOpen(await loadJobForUpdate(tx, row.jobId), 'refer this candidate');
     const { to } = await lockAndTransitionApplication(tx, applicationId, 'REFER');
     const [updated] = await tx
       .update(ap)
@@ -670,7 +612,10 @@ export const isDirectReferrableApplicant = isReferrableApplicant;
  * (same machine transition, same notifications). Otherwise it creates the
  * application and forwards it in one transaction, audited as both a
  * shortlist and a referral, so the history reads the same as the two-step
- * flow. The employer then sees the candidate on /employer/referrals.
+ * flow. The employer no longer sees the candidate on /employer/referrals
+ * (sidebar entry removed 2026-11-12) and can no longer record a decision
+ * on the referral — the application is still forwarded to the employer's
+ * company, and staff match-review is unaffected.
  */
 export async function referApplicantToEmployerForJob(
   ctx: SignedIn,
@@ -679,14 +624,6 @@ export async function referApplicantToEmployerForJob(
 ): Promise<ApplicationView> {
   assertPermission(ctx.actor, 'match_case:manage');
   assertPermission(ctx.actor, 'match_case:refer');
-  // Audit 2026-11-11 (L-20): same 'refer-to-employer' bucket as the
-  // two-step refer path above — one action, one budget.
-  await enforceRateLimit(
-    'refer-to-employer',
-    ctx.actor.userId,
-    { limit: 30, windowSeconds: 3600 },
-    'Too many referrals. Try again in an hour.',
-  );
 
   const [jobRow] = await db
     .select({
@@ -881,7 +818,10 @@ export async function listApplicationsForApplicant(
   // M15 — defense-in-depth: staff roles only, city-scoped on the
   // applicant's branch. Sole caller today is the staff applicant-detail
   // page after a city check; a future caller must not inherit the hole.
-  assertRole(actor, 'STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN');
+  // INTERVIEWER_SCHEDULER reads it too: the interviewer needs the
+  // applications list to reach the schedule/update dialogs on the
+  // applicant detail page.
+  assertRole(actor, 'STAFF', 'BRANCH_ADMIN', 'SUPER_ADMIN', 'INTERVIEWER_SCHEDULER');
   const [applicantRow] = await db
     .select({ branchId: schema.applicants.branchId })
     .from(schema.applicants)
@@ -901,6 +841,82 @@ export async function listApplicationsForApplicant(
   const items = await Promise.all(rows.map(buildView));
   if (!query) return items;
   return { items, pagination: paginationMeta(query, totalRow?.total ?? 0) };
+}
+
+/**
+ * Interviews (and candidates awaiting scheduling) in the actor's branch(es)
+ * — the Interviewer and Scheduler role's list. SHORTLISTED rows are the
+ * "to schedule" queue; INTERVIEW_* rows are the scheduled, postponed and
+ * cancelled interviews. Branch-scoped like Staff; Super Admin holds no
+ * interview permission, so they never reach this list.
+ */
+export interface InterviewListItem {
+  applicationId: string;
+  applicantId: string;
+  applicantName: string;
+  jobId: string;
+  jobTitle: string;
+  companyName: string;
+  branchId: string;
+  status: ApplicationStatus;
+  interviewAt: string | null;
+  interviewLocation: string | null;
+  interviewNote: string | null;
+  updatedAt: string;
+}
+
+const INTERVIEW_PIPELINE_STATUSES: ApplicationStatus[] = [
+  'SHORTLISTED',
+  'INTERVIEW_SCHEDULED',
+  'INTERVIEW_POSTPONED',
+  'INTERVIEW_CANCELLED',
+];
+
+export async function listInterviews(actor: Actor): Promise<InterviewListItem[]> {
+  assertPermission(actor, 'interview:schedule_jobbank');
+  // Same staff-only, branch-scoped guard as listApplicationsForApplicant.
+  assertRole(actor, 'STAFF', 'BRANCH_ADMIN', 'INTERVIEWER_SCHEDULER');
+  const rows = await db
+    .select()
+    .from(ap)
+    .where(
+      and(
+        or(...INTERVIEW_PIPELINE_STATUSES.map((s) => eq(ap.status, s))),
+        branchScope(actor, ap.branchId),
+      ),
+    )
+    .orderBy(desc(ap.updatedAt));
+  if (rows.length === 0) return [];
+  const [views, applicants] = await Promise.all([
+    Promise.all(rows.map(buildView)),
+    db
+      .select({ id: schema.applicants.id, fullName: schema.applicants.fullName })
+      .from(schema.applicants)
+      .where(
+        inArray(
+          schema.applicants.id,
+          rows.map((r) => r.applicantId),
+        ),
+      ),
+  ]);
+  const byId = new Map(applicants.map((a) => [a.id, a]));
+  return rows.map((row, i) => {
+    const view = views[i]!;
+    return {
+      applicationId: row.id,
+      applicantId: row.applicantId,
+      applicantName: byId.get(row.applicantId)?.fullName ?? 'Unknown applicant',
+      jobId: row.jobId,
+      jobTitle: view.jobTitle,
+      companyName: view.companyName,
+      branchId: row.branchId,
+      status: row.status as ApplicationStatus,
+      interviewAt: row.interviewAt?.toISOString() ?? null,
+      interviewLocation: row.interviewLocation,
+      interviewNote: row.interviewNote,
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  });
 }
 
 /**
@@ -976,6 +992,5 @@ export async function listMyApplications(
 
 export { buildView };
 
-export * from './calls';
 export * from './employer';
 export { applicationMachine, lockAndTransitionApplication, type ApplicationEvent } from './machine';

@@ -6,13 +6,13 @@ import {
   PUBLIC_COMPANY_STATUSES,
   ROLE_LABELS,
   ROLE_PRIORITY,
-  VERIFICATION_STATES,
   isResubmitNoteSufficient,
   type CompanyStatus,
   type OnboardedCompanyHeadOfficeInput,
   type Role,
   type StaffOnboardCompanyInput,
   type UpdateCompanyInput,
+  type VerificationState,
 } from '@jobbank/shared';
 import {
   and,
@@ -42,15 +42,13 @@ import {
   ValidationError,
 } from '@/domains/shared/errors';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
-import { likeContains, likeStartsWith } from '@/domains/shared/filters';
 import {
   assertBranchAccess,
-  assertCityAccess,
   assertPermission,
   assertRole,
-  cityScope,
-  hasRole,
+  branchScope,
   hasPermission,
+  hasRole,
   isSuperAdmin,
   type Actor,
 } from '@/domains/shared/scope';
@@ -132,7 +130,7 @@ export interface CompanyListItem {
 }
 
 /**
- * Branch Admin: all companies in their branch(es).
+ * Branch Admin: VERIFIED + SUSPENDED in their branch(es).
  * Super Admin: all companies, any status.
  * Verifiers have their own queue (listQueue) and do not use this endpoint.
  */
@@ -163,11 +161,7 @@ export async function listCompanies(
   if (visibleStatuses.length === 0) return { items: [], pagination: paginationMeta(query, 0) };
 
   const conditions: (SQL | undefined)[] = [
-    // Audit 2026-11-11 (L-25): city scope — the newer rule — like the
-    // verifier queue, the job list and the applicant list. Reads are
-    // city-scoped; branch-bound writes (suspend, correct, onboard, …)
-    // stay exact-branch below.
-    cityScope(actor, c.branchId),
+    branchScope(actor, c.branchId),
     inArray(c.status, visibleStatuses),
     f.branchId ? eq(c.branchId, f.branchId) : undefined,
     // Staff see the companies they onboarded; Branch Admin / Super Admin see the branch.
@@ -176,9 +170,9 @@ export async function listCompanies(
   if (query.q) {
     conditions.push(
       or(
-        ilike(c.legalName, likeContains(query.q)),
-        ilike(c.tradeName, likeContains(query.q)),
-        sql`${c.ntn} like ${likeStartsWith(query.q)}`,
+        ilike(c.legalName, `%${query.q}%`),
+        ilike(c.tradeName, `%${query.q}%`),
+        sql`${c.ntn} like ${`${query.q}%`}`,
       ),
     );
   }
@@ -243,7 +237,7 @@ export async function getCompanyDetail(actor: Actor, companyId: string): Promise
   const canManage = hasPermission(actor, 'company:manage');
   if (!canManage) assertPermission(actor, 'company:read');
   const row = await loadCompany(db, companyId);
-  await assertCityAccess(actor, row.branchId, { entityType: 'company', entityId: row.id });
+  assertBranchAccess(actor, row.branchId, { entityType: 'company', entityId: row.id });
   // H4: the list endpoint deliberately restricts non-managers to
   // VERIFIED/SUSPENDED; the detail endpoint must match — a DRAFT company's
   // contacts, NTN and notes are not public to company:read holders.
@@ -354,11 +348,9 @@ export async function assignVerifier(
     const round = await openVerification(tx, row.id, { forUpdate: true });
     if (!round) throw new NotFoundError('Open verification for company', companyId);
     const prevVerifier = round.assignedVerifierId;
-    const verificationState = VERIFICATION_STATES.find((state) => state === to);
-    if (!verificationState) throw new Error(`Invalid verification state for assignment: ${to}`);
     await tx
       .update(ver)
-      .set({ state: verificationState, assignedVerifierId: input.verifierId })
+      .set({ state: to as VerificationState, assignedVerifierId: input.verifierId })
       .where(eq(ver.id, round.id));
     if (row.status !== to) {
       await tx.update(c).set({ status: to }).where(eq(c.id, row.id));
@@ -507,16 +499,7 @@ export async function getCompanyOnboarding(
 ): Promise<CompanyOnboarding | null> {
   assertPermission(actor, 'company:read');
   const row = await loadCompany(db, companyId);
-  await assertCityAccess(actor, row.branchId, { entityType: 'company', entityId: row.id });
-  // Audit 2026-11-11 (L-24): same non-manager status rule as
-  // getCompanyDetail — outreach notes for a DRAFT company are not open to
-  // company:read holders. (Managers — SA/BA/verifier — are unaffected.)
-  if (
-    !hasPermission(actor, 'company:manage') &&
-    !(PUBLIC_COMPANY_STATUSES as readonly string[]).includes(row.status)
-  ) {
-    throw new ForbiddenError('This company is not yet verified');
-  }
+  assertBranchAccess(actor, row.branchId, { entityType: 'company', entityId: row.id });
   const [onboarding] = await db
     .select()
     .from(schema.companyOnboarding)
@@ -573,6 +556,13 @@ export async function staffOnboardCompany(
   input: StaffOnboardCompanyInput,
 ): Promise<CompanyView & { onboarding: CompanyOnboarding }> {
   assertPermission(ctx.actor, 'company:onboard');
+  // 2026-11-12: Super Admin and Branch Admin no longer register companies
+  // (field-visit onboard) — Verifier only. `company:onboard` stays on the
+  // permission table: Verifier still needs it, and the follow-up onboard
+  // steps (documents, resubmit) are unchanged.
+  if (hasRole(ctx.actor, 'SUPER_ADMIN', 'BRANCH_ADMIN')) {
+    throw new ForbiddenError('Only Verifier can register companies');
+  }
   if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, input.branchId);
 
   const {
@@ -904,16 +894,6 @@ export async function resubmitOnboardedCompany(
       { reason: 'NOT_ONBOARDED' },
     );
   }
-  // Audit 2026-11-11 (L-08): separation of duties — the staff member who
-  // onboarded the company must not single-handedly bounce it back to the
-  // verifier. A colleague (or Branch/Super Admin, who hold company:onboard)
-  // sends it back instead.
-  if (company.createdBy === ctx.actor.userId) {
-    throw new ConflictError(
-      'You cannot send back a company you onboarded yourself. Ask another staff member in your branch.',
-      { reason: 'SELF_ATTESTATION' },
-    );
-  }
   const now = new Date();
   const dueOn = await verificationDueOn(now);
   await runCommand(ctx, async ({ tx, audit }) => {
@@ -997,15 +977,6 @@ export async function setOnboardedCompanyHeadOffice(
       { reason: 'NOT_ONBOARDED' },
     );
   }
-  // Audit 2026-11-11 (L-08): separation of duties — the staff member who
-  // onboarded the company must not single-handedly set its head office.
-  // A colleague (or Branch/Super Admin, who hold company:onboard) does it.
-  if (company.createdBy === ctx.actor.userId) {
-    throw new ConflictError(
-      'You cannot set the head office of a company you onboarded yourself. Ask another staff member in your branch.',
-      { reason: 'SELF_ATTESTATION' },
-    );
-  }
   if (company.status !== 'DRAFT' && company.status !== 'INFO_REQUESTED') {
     throw new ConflictError(
       'The head office can only be set while the company is a draft or waiting for more information.',
@@ -1046,13 +1017,6 @@ export async function correctCompanyDetails(
   input: UpdateCompanyInput & { reason: string },
 ): Promise<CompanyView> {
   assertPermission(ctx.actor, 'company:manage');
-  // Audit 2026-11-11 (H-01): company:manage is also held by verifiers, so the
-  // permission alone does not prove Super/Branch Admin. Only Super Admin and
-  // Branch Admin may correct locked company details — a verifier must never
-  // rewrite legal fields (legalName, legalStructure, ntn, registrationNo) on
-  // a VERIFIED company. Mirrors transferCompany's role guard. Verifier
-  // callers are rejected here, so no contact-conflict check is needed.
-  assertRole(ctx.actor, 'SUPER_ADMIN', 'BRANCH_ADMIN');
   const { reason, ...requested } = input;
   if (Object.keys(requested).length === 0) {
     throw new ValidationError([{ path: 'root', message: 'Change at least one field' }]);
@@ -1114,9 +1078,6 @@ export async function correctCompanyDetails(
       // verifiedAt is cleared. Non-legal changes keep the badge. There is no
       // VERIFIED → SUBMITTED machine transition, so the round opens directly
       // (same shape as markCompanyRegistrationVerifiedSigned).
-      // Audit 2026-11-11 (M-11): the paper-form attestation is cleared too
-      // — it attested to the OLD legal details. verifyCompany blocks the
-      // new round until a colleague marks the new form verified & signed.
       if (touchesLegal && row.status === 'VERIFIED') {
         const now = new Date();
         const dueOn = await verificationDueOn(now);
@@ -1137,13 +1098,7 @@ export async function correctCompanyDetails(
           .returning();
         await tx
           .update(c)
-          .set({
-            ...changes,
-            status: 'SUBMITTED',
-            verifiedAt: null,
-            registrationVerifiedSignedAt: null,
-            registrationVerifiedSignedBy: null,
-          })
+          .set({ ...changes, status: 'SUBMITTED', verifiedAt: null })
           .where(eq(c.id, row.id));
         await recordTransition(tx, {
           verificationId: round!.id,

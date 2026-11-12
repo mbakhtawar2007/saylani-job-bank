@@ -66,6 +66,11 @@ const ROLE_ACTIONS: Record<
     action1: { label: 'View Applicants', href: '/staff/applicants' },
     action2: { label: 'Open Jobs', href: '/staff/jobs' },
   },
+  // Never rendered: the role's home page redirects to /interviewer-scheduler/interviews.
+  INTERVIEWER_SCHEDULER: {
+    action1: { label: 'View Interviews', href: '/interviewer-scheduler/interviews' },
+    action2: { label: 'View Interviews', href: '/interviewer-scheduler/interviews' },
+  },
   EMPLOYER: {
     action1: { label: 'Post a Job', href: '/employer/jobs/new' },
     action2: { label: 'View My Jobs', href: '/employer/jobs' },

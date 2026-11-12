@@ -16,11 +16,17 @@ import { getBranchContact } from '@/domains/branch';
 import { runCommand, type AuditEntry, type CommandScope } from '@/domains/shared/audit';
 import {
   ConflictError,
+  ForbiddenError,
   NotFoundError,
   ValidationError,
   isUniqueViolation,
 } from '@/domains/shared/errors';
-import { assertBranchAccess, assertPermission, isSuperAdmin } from '@/domains/shared/scope';
+import {
+  assertBranchAccess,
+  assertPermission,
+  hasRole,
+  isSuperAdmin,
+} from '@/domains/shared/scope';
 import { db } from '@/lib/db';
 import { cnicTakenError } from './profile';
 import { cnicOwner, type SignedIn } from './repository';
@@ -75,42 +81,15 @@ function toView(
   };
 }
 
-/**
- * Audit 2026-11-11 (M-06): an expired ISSUED token is dead — cancel it
- * (guarded by status = ISSUED) so the (branch, day, cnic) partial unique
- * index frees the CNIC for a fresh issue. No-op if the token was already
- * completed or cancelled in between.
- */
-async function cancelExpiredToken(
-  ctx: SignedIn,
-  token: { id: string; tokenNumber: number; branchId: string },
-): Promise<void> {
-  await runCommand(ctx, async ({ tx, audit }) => {
-    const [row] = await tx
-      .update(tokens)
-      .set({ status: 'CANCELLED' })
-      .where(and(eq(tokens.id, token.id), eq(tokens.status, 'ISSUED')))
-      .returning();
-    if (!row) return;
-    audit({
-      action: 'applicant.token_cancelled',
-      entityType: 'applicant_token',
-      entityId: token.id,
-      branchId: token.branchId,
-      before: { status: 'ISSUED' },
-      after: { status: 'CANCELLED' },
-      reason: 'expired',
-      metadata: { tokenNumber: token.tokenNumber },
-    });
-  });
-}
-
-/** Issue a token for a person at the branch (Staff / Branch Admin / Super Admin). */
+/** Issue a token for a person at the branch (Staff only, since 2026-11-12: Super Admin and Branch Admin no longer issue tokens). */
 export async function issueApplicantToken(
   ctx: SignedIn,
   input: IssueApplicantTokenInput,
 ): Promise<IssueApplicantTokenResult> {
   assertPermission(ctx.actor, 'applicant:manage');
+  if (hasRole(ctx.actor, 'SUPER_ADMIN', 'BRANCH_ADMIN')) {
+    throw new ForbiddenError('Only Staff can issue applicant tokens');
+  }
   if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, input.branchId);
 
   const branch = await getBranchContact(input.branchId);
@@ -134,7 +113,7 @@ export async function issueApplicantToken(
 
   // Same person, same branch, same day: hand back the token already issued
   // instead of a duplicate (e.g. the slip was lost, or the counter double-clicked).
-  let [existing] = await db
+  const [existing] = await db
     .select()
     .from(tokens)
     .where(
@@ -147,12 +126,6 @@ export async function issueApplicantToken(
     )
     .orderBy(desc(tokens.issuedAt))
     .limit(1);
-  // Audit 2026-11-11 (M-06): an expired ISSUED token is dead — never
-  // re-hand it. Cancel it first, then fall through to a fresh issue below.
-  if (existing && existing.expiresAt.getTime() <= now.getTime()) {
-    await cancelExpiredToken(ctx, existing);
-    existing = undefined;
-  }
   if (existing) {
     // If the name or phone now differ (a correction, or the slip details were
     // mistyped), update the stored details instead of silently returning the
@@ -266,16 +239,7 @@ export async function issueApplicantToken(
           )
           .orderBy(desc(tokens.issuedAt))
           .limit(1);
-        if (winner) {
-          // Audit 2026-11-11 (M-06): the race winner may be an expired
-          // token — never hand back a dead token. Cancel it first (frees
-          // the CNIC for a fresh issue) and retry the loop.
-          if (winner.expiresAt.getTime() <= Date.now()) {
-            await cancelExpiredToken(ctx, winner);
-            continue;
-          }
-          return { view: toView(winner, branch), reissued: true };
-        }
+        if (winner) return { view: toView(winner, branch), reissued: true };
       }
       // Audit 2026-11-10 (A-L3): on the final attempt a number-unique
       // violation used to fall through as a raw Postgres 500, even though
@@ -294,10 +258,9 @@ export async function issueApplicantToken(
  * Staff token lookup (step 2): by token code (`KHI-GULSHAN-007`), by CNIC +
  * branch (+ day, default today), or the whole branch-day list. Always
  * branch-scoped; Super Admins may look up any branch. A token code has no
- * day in it, and numbers reset daily — so the code lookup returns EVERY
- * token with that branch + number, most recent day first, and the dialog
- * shows each one's issue date so staff pick the right day (M-07). Returns
- * an array so the list and single shapes stay one contract.
+ * day in it, so the code lookup returns the most recent token with that
+ * branch + number. Returns an array (0 or 1 rows for the single lookups) so
+ * the list and single shapes stay one contract.
  */
 export async function lookupApplicantTokens(
   ctx: SignedIn,
@@ -320,16 +283,13 @@ export async function lookupApplicantTokens(
     if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, branchRow.id);
     const branch = await getBranchContact(branchRow.id);
     if (!branch) throw new NotFoundError('Token');
-    // Audit 2026-11-11 (M-07): no `.limit(1)` here — the number is reused
-    // every day, so returning only the most recent silently hands staff a
-    // different person's slip. Return all days, most recent first.
-    const rows = await db
+    const [row] = await db
       .select()
       .from(tokens)
       .where(and(eq(tokens.branchId, branch.id), eq(tokens.tokenNumber, parsed.tokenNumber)))
       .orderBy(desc(tokens.registrationDay), desc(tokens.issuedAt))
-      .limit(30);
-    return rows.map((row) => toView(row, branch));
+      .limit(1);
+    return row ? [toView(row, branch)] : [];
   }
 
   const branchId = query.branchId!;

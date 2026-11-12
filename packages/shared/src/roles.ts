@@ -3,6 +3,7 @@ export const ROLES = [
   'SUPER_ADMIN',
   'BRANCH_ADMIN',
   'VERIFIER',
+  'INTERVIEWER_SCHEDULER',
   'STAFF',
   'EMPLOYER',
   'APPLICANT',
@@ -11,12 +12,18 @@ export const ROLES = [
 export type Role = (typeof ROLES)[number];
 
 /** Roles whose authority is limited to the branch(es) they are assigned to. */
-export const BRANCH_SCOPED_ROLES: readonly Role[] = ['BRANCH_ADMIN', 'VERIFIER', 'STAFF'];
+export const BRANCH_SCOPED_ROLES: readonly Role[] = [
+  'BRANCH_ADMIN',
+  'VERIFIER',
+  'INTERVIEWER_SCHEDULER',
+  'STAFF',
+];
 
 export const ROLE_LABELS: Record<Role, string> = {
   SUPER_ADMIN: 'Super Admin',
   BRANCH_ADMIN: 'Branch Admin',
   VERIFIER: 'Verification Officer',
+  INTERVIEWER_SCHEDULER: 'Interviewer and Scheduler',
   STAFF: 'Job Bank Staff',
   EMPLOYER: 'Employer',
   APPLICANT: 'Applicant',
@@ -26,4 +33,10 @@ export const ROLE_LABELS: Record<Role, string> = {
 export const TWO_FACTOR_REQUIRED_ROLES: readonly Role[] = ['SUPER_ADMIN', 'BRANCH_ADMIN'];
 
 /** Roles that manage staff accounts and can be invited (applicants/employers self-register). */
-export const INTERNAL_ROLES: readonly Role[] = ['SUPER_ADMIN', 'BRANCH_ADMIN', 'VERIFIER', 'STAFF'];
+export const INTERNAL_ROLES: readonly Role[] = [
+  'SUPER_ADMIN',
+  'BRANCH_ADMIN',
+  'VERIFIER',
+  'INTERVIEWER_SCHEDULER',
+  'STAFF',
+];

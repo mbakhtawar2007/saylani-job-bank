@@ -4,8 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useRef, useState, type FormEvent } from 'react';
 import type { RadiusValue } from '@jobbank/shared';
 import { Button, Input, Switch } from '@/components/atoms';
-import { FormField, toast } from '@/components/molecules';
-import { MapPinPicker, type LatLng } from '@/components/organisms';
+import { FormField, LatLngFields, type LatLng, toast } from '@/components/molecules';
 import type { BranchView } from '@/domains/branch';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import { formatDistance } from '@/lib/format/distance';
@@ -17,7 +16,7 @@ interface Props {
   globalRadius: RadiusValue;
 }
 
-/** Create (no `branch`) or edit a branch. The code is fixed once created. */
+/** Create (no `branch`) or edit a branch. The code is editable by Super Admin only (this form lives on Super Admin pages); changing it breaks token slips issued under the old code. */
 export function BranchForm({ branch, globalRadius }: Props) {
   const router = useRouter();
   const idempotencyKey = useRef(crypto.randomUUID());
@@ -41,13 +40,17 @@ export function BranchForm({ branch, globalRadius }: Props) {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!location) {
-      setErrors({ location: 'Place the branch on the map' });
+      setErrors({ location: 'Enter the latitude and longitude' });
       return;
     }
     setPending(true);
     setErrors({});
     const body = {
-      ...(branch ? {} : { code: values.code }),
+      ...(branch
+        ? values.code !== branch.code
+          ? { code: values.code }
+          : {}
+        : { code: values.code }),
       name: values.name,
       city: values.city,
       address: values.address || null,
@@ -91,13 +94,16 @@ export function BranchForm({ branch, globalRadius }: Props) {
         <FormField
           label="Branch code"
           required
-          hint={branch ? 'Codes cannot change.' : 'e.g. KHI-GULSHAN — used in candidate codes.'}
+          hint={
+            branch
+              ? 'Changing the code breaks token slips issued under the old code.'
+              : 'e.g. KHI-GULSHAN — used in candidate codes.'
+          }
           error={errors.code}
         >
           <Input
             value={values.code}
             onChange={(e) => setValues((v) => ({ ...v, code: e.target.value.toUpperCase() }))}
-            disabled={Boolean(branch)}
             className="font-mono uppercase"
           />
         </FormField>
@@ -141,24 +147,10 @@ export function BranchForm({ branch, globalRadius }: Props) {
             *
           </span>
         </p>
-        <MapPinPicker
-          value={location}
-          onChange={setLocation}
-          label="Branch location"
-          height="18rem"
-          rings={
-            location
-              ? [
-                  {
-                    meters:
-                      (ownRadius ? toMeters(radius).maxM : globalRadius.maxM) || globalRadius.maxM,
-                    tone: 'info',
-                    label: 'Maximum matching radius',
-                  },
-                ]
-              : []
-          }
-        />
+        <LatLngFields value={location} onChange={setLocation} />
+        <p className="text-fg-muted text-sm">
+          Type the coordinates — matching uses this point to rank nearby applicants.
+        </p>
         {errors.location && (
           <p role="alert" className="text-danger text-sm">
             {errors.location}

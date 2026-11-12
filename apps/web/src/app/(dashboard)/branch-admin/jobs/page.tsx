@@ -12,7 +12,6 @@ export default function Page({
       role="BRANCH_ADMIN"
       basePath="/branch-admin/jobs"
       subtitle="in your branch"
-      postJobHref="/branch-admin/jobs/new"
       searchParams={searchParams}
     />
   );

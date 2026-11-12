@@ -26,7 +26,7 @@ export const PATCH = apiHandler({
     ok(await updateBranch({ ...ctx, actor: actor! }, p.id, body)),
 });
 
-/** DELETE /api/v1/branches/{id} — Super Admin deletes an already-deactivated branch. */
+/** DELETE /api/v1/branches/{id} — Super Admin deletes an already-deactivated branch, 90 days after its deactivation. */
 export const DELETE = apiHandler({
   permission: 'branch:manage',
   params,

@@ -42,11 +42,9 @@ import {
 import {
   DataTable,
   KanbanBoard,
-  MapPinPicker,
   Stepper,
   Timeline,
   TopBar,
-  type LatLng,
   type SortState,
 } from '@/components/organisms';
 import { tones } from '@/design-system/tokens';
@@ -60,7 +58,6 @@ const sections = [
   ['forms', 'Form molecules'],
   ['feedback', 'Feedback & display'],
   ['data', 'Data organisms'],
-  ['map', 'Map pin picker'],
   ['navigation', 'Navigation'],
   ['templates', 'Templates'],
 ] as const;
@@ -91,7 +88,6 @@ export function Gallery() {
   const [page, setPage] = useState(3);
   const [sort, setSort] = useState<SortState | null>({ id: 'distance', direction: 'asc' });
   const [tableLoading, setTableLoading] = useState(false);
-  const [pin, setPin] = useState<LatLng | null>({ lat: 24.9056, lng: 67.0822 });
   const [step, setStep] = useState(1);
   const [notify, setNotify] = useState(true);
 
@@ -691,26 +687,6 @@ export function Gallery() {
                 onPageChange={setPage}
                 pageSize={20}
                 total={312}
-              />
-            </Demo>
-          </Section>
-
-          {/* ── Map ─────────────────────────────────────── */}
-          <Section
-            id="map"
-            title="Map pin picker"
-            description="Tap to place, drag to adjust, use GPS, or type coordinates. Rings show the 8 km preferred / 10 km maximum radius."
-          >
-            <Demo title="Editable with radius rings">
-              <MapPinPicker
-                value={pin}
-                onChange={setPin}
-                label="Job site"
-                zoom={11}
-                rings={[
-                  { meters: 8_000, tone: 'success', label: '8 km preferred' },
-                  { meters: 10_000, tone: 'warning', label: '10 km maximum' },
-                ]}
               />
             </Demo>
           </Section>

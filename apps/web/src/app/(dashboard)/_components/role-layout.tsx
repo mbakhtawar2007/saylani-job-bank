@@ -21,31 +21,25 @@ async function Shell({
           branches.map((b) => ({ id: b.id, name: b.name })),
         )
       : Promise.resolve(undefined),
-    role === 'STAFF' || role === 'BRANCH_ADMIN' || role === 'VERIFIER'
-      ? listBranches(actor)
-      : role === 'SUPER_ADMIN' && !actor.twoFactorPending
-        ? listBranches({ ...actor, activeBranchId: null })
-        : Promise.resolve(undefined),
+    role === 'STAFF' || role === 'VERIFIER' ? listBranches(actor) : Promise.resolve(undefined),
   ]);
+  // Sidebar "Issue Token" button (2026-11-12): Staff only. Super Admin
+  // and Branch Admin no longer issue tokens — the server rejects them
+  // in issueApplicantToken too.
   const registrationBranches =
-    role === 'SUPER_ADMIN'
-      ? branchOptions
+    role === 'STAFF'
+      ? // N10: inactive branches must not be offered — the server rejects
+        // them, so listing them only produces a dead end in the dialog.
+        branchOptions
           ?.filter((branch) => branch.isActive)
           .map((branch) => ({ value: branch.id, label: branch.name }))
-      : role === 'STAFF' || role === 'BRANCH_ADMIN'
-        ? // N10: inactive branches must not be offered — the server rejects
-          // them, so listing them only produces a dead end in the dialog.
-          branchOptions
-            ?.filter((branch) => branch.isActive)
-            .map((branch) => ({ value: branch.id, label: branch.name }))
-        : undefined;
-  // Sidebar "Company Registration" button: Super Admin, Branch Admin and
-  // Verifier. F9/N16: Branch Admins register companies from this sidebar
-  // dialog (the field-visit onboard flow) — the legacy branch-admin
-  // "Add company" page is deleted, so this is their only entry point.
-  // Staff never registers companies.
+      : undefined;
+  // Sidebar "Company Registration" button (2026-11-12): Verifier only.
+  // Super Admin and Branch Admin no longer register companies — the
+  // server rejects them in staffOnboardCompany too. Staff never
+  // registers companies.
   const companyRegistrationBranches =
-    role === 'SUPER_ADMIN' || role === 'BRANCH_ADMIN' || role === 'VERIFIER'
+    role === 'VERIFIER'
       ? branchOptions
           ?.filter((branch) => branch.isActive)
           .map((branch) => ({ value: branch.id, label: branch.name }))

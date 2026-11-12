@@ -10,26 +10,21 @@ import {
   type CreateJobInput,
   type JobRequirementsInput,
   type JobStatus,
-  type JobStatusInput,
   type JobType,
   type ShiftType,
-  type UpdateJobInput,
 } from '@jobbank/shared';
 import { and, asc, count, desc, eq, exists, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
-import { getCompanyDetail } from '@/domains/company';
 import { ForbiddenError, NotFoundError, ValidationError } from '@/domains/shared/errors';
-import { likeContains, multiCode, multiEnum } from '@/domains/shared/filters';
+import { multiCode, multiEnum } from '@/domains/shared/filters';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
 import {
-  assertBranchAccess,
   assertCityAccess,
   assertPermission,
   assertRole,
   cityScope,
   hasRole,
-  isSuperAdmin,
   type Actor,
 } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
@@ -42,13 +37,6 @@ import {
 import { schema } from '@jobbank/db';
 import { buildJobView, j, jr, loadJob, type JobView } from './repository';
 import { jobMachine } from './machine';
-import {
-  assertCompanyNotSuspended,
-  assertJobUpdateReferencesValid,
-  assertMergedJobUpdateValid,
-  mapJobCheckViolation,
-  mergedMedicalCoverage,
-} from './rules';
 
 type SignedIn = RequestContext & { actor: Actor };
 
@@ -59,7 +47,7 @@ type SignedIn = RequestContext & { actor: Actor };
  * in the city. Only a pure-employer actor — EMPLOYER role and no internal
  * role — is forced to their own company here.
  */
-export function isPureEmployer(actor: Actor): boolean {
+function isPureEmployer(actor: Actor): boolean {
   return hasRole(actor, 'EMPLOYER') && !INTERNAL_ROLES.some((role) => actor.roles.includes(role));
 }
 
@@ -99,14 +87,9 @@ export interface JobListItem {
   branchId: string;
   title: string;
   categoryCode: string;
-  description: string;
-  jobType: JobType;
-  shift: JobView['shift'];
-  genderPreference: JobView['genderPreference'];
+  jobType: string;
   vacancies: number;
   vacanciesFilled: number;
-  salaryMin: number | null;
-  salaryMax: number | null;
   status: JobStatus;
   /** Label of the first location's city, if the job has a location. */
   cityLabel: string | null;
@@ -192,7 +175,7 @@ export async function listJobs(
     );
   }
   if (query.q) {
-    const like = likeContains(query.q);
+    const like = `%${query.q}%`;
     conditions.push(
       or(
         ilike(j.title, like),
@@ -239,14 +222,9 @@ export async function listJobs(
         branchId: j.branchId,
         title: j.title,
         categoryCode: j.categoryCode,
-        description: j.description,
         jobType: j.jobType,
-        shift: j.shift,
-        genderPreference: j.genderPreference,
         vacancies: j.vacancies,
         vacanciesFilled: j.vacanciesFilled,
-        salaryMin: j.salaryMin,
-        salaryMax: j.salaryMax,
         status: j.status,
         publishedAt: j.publishedAt,
         createdAt: j.createdAt,
@@ -312,59 +290,9 @@ export async function getJobDetail(actor: Actor, jobId: string): Promise<JobView
   return buildJobView(db, row);
 }
 
-export async function getCompanyJobDetail(actor: Actor, companyId: string, jobId: string) {
-  assertPermission(actor, 'job:read');
-  // Audit 2026-11-11 (M-27): same C-F2 guards as listJobs/getJobDetail —
-  // a pure applicant must never reach this endpoint, and a pure employer
-  // sees only their own company's jobs, whatever branch assignment they hold.
-  if (hasRole(actor, 'APPLICANT') && !INTERNAL_ROLES.some((role) => actor.roles.includes(role)))
-    throw new ForbiddenError('Applicants can only view jobs referred to them');
-  if (actor.companyId && isPureEmployer(actor) && companyId !== actor.companyId) {
-    throw new NotFoundError('Job', jobId);
-  }
-  const company = await getCompanyDetail(actor, companyId);
-  const row = await loadJob(db, jobId);
-  // Audit 2026-11-11 (L-25): city scope, like getJobDetail.
-  await assertCityAccess(actor, row.branchId, { entityType: 'job', entityId: row.id });
-  if (row.companyId !== companyId || row.branchId !== company.branch?.id) {
-    throw new NotFoundError('Job');
-  }
-  return { company, job: await buildJobView(db, row) };
-}
-
-/** Lists only jobs belonging to an accessible company and branch. */
-export async function listCompanyJobs(actor: Actor, companyId: string): Promise<JobView[]> {
-  assertPermission(actor, 'job:read');
-  // Audit 2026-11-11 (M-27): C-F2 guards — pure applicants are denied
-  // outright, pure employers are forced to their own company.
-  if (hasRole(actor, 'APPLICANT') && !INTERNAL_ROLES.some((role) => actor.roles.includes(role)))
-    throw new ForbiddenError('Applicants can only view jobs referred to them');
-  if (actor.companyId && isPureEmployer(actor) && companyId !== actor.companyId) {
-    throw new NotFoundError('Company', companyId);
-  }
-  const [company] = await db
-    .select({ branchId: schema.companies.branchId })
-    .from(schema.companies)
-    .where(eq(schema.companies.id, companyId));
-  if (!company) throw new NotFoundError('Company', companyId);
-  // Audit 2026-11-11 (L-25): city scope, like listJobs.
-  await assertCityAccess(actor, company.branchId, {
-    entityType: 'company',
-    entityId: companyId,
-  });
-
-  const scope = cityScope(actor, j.branchId);
-  const rows = await db
-    .select()
-    .from(j)
-    .where(and(eq(j.companyId, companyId), scope))
-    .orderBy(desc(j.createdAt));
-  return Promise.all(rows.map((row) => buildJobView(db, row)));
-}
-
 // ─── Staff job creation ───────────────────────────────────────────────────
 
-/** An authorized administrator posts a draft job on behalf of a verified company. */
+/** Staff or Verifier posts a job on behalf of a verified company. Branch Admin can no longer post jobs (2026-11-12); Super Admin never could (no job:manage). */
 export async function staffCreateJob(
   ctx: SignedIn,
   companyId: string,
@@ -372,6 +300,9 @@ export async function staffCreateJob(
   requirements?: JobRequirementsInput,
 ): Promise<JobView> {
   assertPermission(ctx.actor, 'job:manage');
+  if (hasRole(ctx.actor, 'BRANCH_ADMIN')) {
+    throw new ForbiddenError('Only Staff and Verifier can post jobs');
+  }
   const [company] = await db
     .select({
       id: schema.companies.id,
@@ -390,22 +321,6 @@ export async function staffCreateJob(
   });
 
   return runCommand(ctx, async ({ tx, audit }) => {
-    // Merge (2026-11-10): Rafeh's in-transaction re-check — re-read the
-    // company with a row lock so its VERIFIED status cannot change between
-    // the pre-check above and the insert.
-    const [lockedCompany] = await tx
-      .select({
-        id: schema.companies.id,
-        branchId: schema.companies.branchId,
-        status: schema.companies.status,
-      })
-      .from(schema.companies)
-      .where(eq(schema.companies.id, companyId))
-      .for('update');
-    if (!lockedCompany) throw new NotFoundError('Company', companyId);
-    if (lockedCompany.status !== 'VERIFIED')
-      throw new ForbiddenError('Jobs can only be posted for verified companies');
-    if (!lockedCompany.branchId) throw new ForbiddenError('Company has no branch assigned');
     // C4/H13: the category must be a real, active master-data code.
     await assertActiveMasterData(tx, 'JOB_CATEGORY', [input.categoryCode], () => 'categoryCode');
     // Salary must correspond to the designation, when a range is stored for it.
@@ -431,12 +346,11 @@ export async function staffCreateJob(
         if (issues.length > 0) throw new ValidationError(issues);
       }
     }
-
     const [row] = await tx
       .insert(j)
       .values({
-        companyId: lockedCompany.id,
-        branchId: lockedCompany.branchId,
+        companyId: company.id,
+        branchId: company.branchId!,
         title: input.title,
         categoryCode: input.categoryCode,
         description: input.description,
@@ -555,148 +469,4 @@ export async function forceCloseJob(ctx: SignedIn, jobId: string, note?: string)
     });
     return updated!;
   }).then((row) => buildJobView(db, row));
-}
-
-async function assertStaffJobAccess(ctx: SignedIn, jobId: string, companyScopeId?: string) {
-  const row = await loadJob(db, jobId);
-  if (companyScopeId && row.companyId !== companyScopeId) {
-    throw new NotFoundError('Job', jobId);
-  }
-  if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, row.branchId);
-  return row;
-}
-
-/** Updates a staff-created vacancy while retaining its company and branch ownership. */
-export async function staffUpdateJob(
-  ctx: SignedIn,
-  jobId: string,
-  input: UpdateJobInput,
-  companyScopeId?: string,
-): Promise<JobView> {
-  assertPermission(ctx.actor, 'job:manage');
-  if (Object.keys(input).length === 0) {
-    return buildJobView(db, await assertStaffJobAccess(ctx, jobId, companyScopeId));
-  }
-
-  const updated = await runCommand(ctx, async ({ tx, audit }) => {
-    const row = await loadJob(tx, jobId, { forUpdate: true });
-    if (companyScopeId && row.companyId !== companyScopeId) {
-      throw new NotFoundError('Job', jobId);
-    }
-    if (!isSuperAdmin(ctx.actor)) {
-      assertBranchAccess(ctx.actor, row.branchId, {
-        entityType: 'job',
-        entityId: row.id,
-      });
-    }
-    if (['FILLED', 'CLOSED', 'EXPIRED'].includes(row.status)) {
-      throw new ForbiddenError('A completed job cannot be edited');
-    }
-    // Audit 2026-11-11 (L-26): suspension freezes job edits — including
-    // staff edits. The company row is read under the same transaction so a
-    // suspension landing mid-edit is honoured.
-    const [company] = await tx
-      .select({ status: schema.companies.status })
-      .from(schema.companies)
-      .where(eq(schema.companies.id, row.companyId));
-    if (!company) throw new NotFoundError('Company', row.companyId);
-    assertCompanyNotSuspended(company.status);
-
-    // Audit 2026-11-11 (M-25): the same merged-value checks the employer
-    // path enforces (salary order, future closesAt, vacancies >= filled) —
-    // previously this function wrote input straight to the DB and a bad
-    // value surfaced as a raw 500 from the check constraints.
-    assertMergedJobUpdateValid(input, row);
-    // H13 + designation range, same as the employer path.
-    await assertJobUpdateReferencesValid(tx, input, row);
-    // A changed OPD / IPD limit re-derives the legacy cover label, as the
-    // employer path does.
-    const derivedCoverage = mergedMedicalCoverage(input, row);
-
-    const before = Object.fromEntries(
-      Object.keys(input).map((field) => [field, row[field as keyof typeof row]]),
-    );
-    let saved;
-    try {
-      [saved] = await tx
-        .update(j)
-        .set({
-          ...input,
-          closesAt:
-            input.closesAt === undefined
-              ? undefined
-              : input.closesAt
-                ? new Date(input.closesAt)
-                : null,
-          ...(derivedCoverage !== undefined && { medicalCoverage: derivedCoverage }),
-          updatedAt: new Date(),
-        })
-        .where(eq(j.id, jobId))
-        .returning();
-    } catch (error) {
-      // A race the pre-checks cannot close (e.g. a vacancy filling between
-      // the check and the write) surfaces as a 422 on the field, not a 500.
-      const mapped = mapJobCheckViolation(error);
-      if (mapped) throw mapped;
-      throw error;
-    }
-    audit({
-      action: 'job.staff_update',
-      entityType: 'job',
-      entityId: jobId,
-      branchId: row.branchId,
-      before,
-      after: saved,
-    });
-    return saved!;
-  });
-  return buildJobView(db, updated);
-}
-
-/** Staff can archive jobs, while publication remains employer-controlled. */
-export async function staffChangeJobStatus(
-  ctx: SignedIn,
-  jobId: string,
-  input: JobStatusInput,
-  companyScopeId?: string,
-): Promise<JobView> {
-  assertPermission(ctx.actor, 'job:manage');
-  if (input.status !== 'CLOSED') {
-    throw new ForbiddenError('Staff can archive jobs, but publication remains employer-controlled');
-  }
-
-  const updated = await runCommand(ctx, async ({ tx, audit }) => {
-    const row = await loadJob(tx, jobId, { forUpdate: true });
-    if (companyScopeId && row.companyId !== companyScopeId) {
-      throw new NotFoundError('Job', jobId);
-    }
-    if (!isSuperAdmin(ctx.actor)) {
-      assertBranchAccess(ctx.actor, row.branchId, {
-        entityType: 'job',
-        entityId: row.id,
-      });
-    }
-    // Audit 2026-11-11 (L-04): the machine is the single source of truth
-    // for status moves — archive is the ARCHIVE event (OPEN/PAUSED only),
-    // so a never-published DRAFT can no longer be archived to CLOSED.
-    const check = jobMachine.check(row.status, 'ARCHIVE', {}, ctx.actor.roles);
-    if (!check.ok) throw new ForbiddenError(check.message);
-
-    const [saved] = await tx
-      .update(j)
-      .set({ status: 'CLOSED', closedAt: new Date(), updatedAt: new Date() })
-      .where(eq(j.id, jobId))
-      .returning();
-    audit({
-      action: 'job.staff_status',
-      entityType: 'job',
-      entityId: jobId,
-      branchId: row.branchId,
-      before: { status: row.status },
-      after: { status: 'CLOSED' },
-      reason: input.note ?? null,
-    });
-    return saved!;
-  });
-  return buildJobView(db, updated);
 }

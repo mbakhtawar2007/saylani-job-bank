@@ -2,8 +2,14 @@
 
 import { useState } from 'react';
 import { Input, Select } from '@/components/atoms';
-import { CNICInput, FileUploader, FormField, toast } from '@/components/molecules';
-import { MapPinPicker, type LatLng } from '@/components/organisms';
+import {
+  CNICInput,
+  FileUploader,
+  FormField,
+  LatLngFields,
+  type LatLng,
+  toast,
+} from '@/components/molecules';
 import { WizardLayout } from '@/components/templates';
 import { fakeUpload } from '../_demo/data';
 
@@ -69,7 +75,7 @@ export default function WizardDemoPage() {
             </FormField>
           </div>
         )}
-        {current === 1 && <MapPinPicker value={pin} onChange={setPin} label="Your home location" />}
+        {current === 1 && <LatLngFields value={pin} onChange={setPin} />}
         {current === 2 && (
           <FormField label="Main trade" required>
             <Select

@@ -3,8 +3,7 @@
 import { applicantLocationSchema } from '@jobbank/shared';
 import { useState } from 'react';
 import { Input, Select } from '@/components/atoms';
-import { FormField } from '@/components/molecules';
-import { MapPinPicker, type LatLng } from '@/components/organisms';
+import { FormField, LatLngFields, type LatLng } from '@/components/molecules';
 import type { ApplicantProfile } from '@/domains/applicant';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import {
@@ -35,7 +34,7 @@ export function LocationStep({ profile, lists, bindSave }: StepProps) {
     });
     if (!parsed.success) {
       const next = zodFieldErrors(parsed.error);
-      if (!pin) next.location = 'Tap your home on the map';
+      if (!pin) next.location = 'Enter your latitude and longitude';
       setErrors(next);
       return null;
     }
@@ -66,30 +65,9 @@ export function LocationStep({ profile, lists, bindSave }: StepProps) {
 
       <div className="grid gap-2">
         <p className="text-fg text-sm font-medium">
-          Your home on the map <span className="text-danger">*</span>
+          Your home location <span className="text-danger">*</span>
         </p>
-        <MapPinPicker
-          value={pin}
-          onChange={setPin}
-          onLocate={(coords, addressLine, cityName) => {
-            setPin(coords);
-            const changes: Partial<typeof form> = {};
-            if (addressLine && !form.addressLine) {
-              changes.addressLine = addressLine;
-            }
-            if (cityName && !form.cityCode) {
-              const matchedCity = lists.cities.find(
-                (c) =>
-                  c.label.toLowerCase().includes(cityName.toLowerCase()) ||
-                  cityName.toLowerCase().includes(c.label.toLowerCase()),
-              );
-              if (matchedCity) changes.cityCode = matchedCity.value;
-            }
-            if (Object.keys(changes).length > 0) set(changes);
-          }}
-          label="Your home location"
-          height="18rem"
-        />
+        <LatLngFields value={pin} onChange={setPin} />
         {pinError && (
           <p role="alert" className="text-danger text-sm">
             {pinError}

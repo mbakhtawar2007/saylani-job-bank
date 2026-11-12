@@ -1,6 +1,6 @@
 'use client';
 
-import { Copy, Download } from 'lucide-react';
+import { Copy, Download, Eye, EyeOff } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import { Button, Input } from '@/components/atoms';
@@ -20,21 +20,11 @@ const steps = [
   { id: 'verify', label: 'Enter code' },
 ];
 
-export function TwoFactorSetup({
-  required,
-  setupToken,
-}: {
-  required: boolean;
-  /**
-   * Audit H-02: when the caller has no session (2FA-required role, never
-   * enrolled), login issued this short-lived token instead. It is sent with
-   * the password so enrolment can buy exactly the pending session it needs.
-   */
-  setupToken?: string;
-}) {
+export function TwoFactorSetup({ required }: { required: boolean }) {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [password, setPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [savedCodes, setSavedCodes] = useState(false);
   const [code, setCode] = useState('');
@@ -48,7 +38,7 @@ export function TwoFactorSetup({
     try {
       const { data } = await apiFetch<Enrollment>('/api/v1/account/2fa/enroll', {
         method: 'POST',
-        body: setupToken ? { password, setupToken } : { password },
+        body: { password },
       });
       setEnrollment(data);
       setPassword('');
@@ -93,10 +83,20 @@ export function TwoFactorSetup({
         <form className="grid gap-4" onSubmit={start}>
           <FormField label="Your password" required error={error ?? undefined}>
             <Input
-              type="password"
+              type={showPw ? 'text' : 'password'}
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              endAdornment={
+                <button
+                  type="button"
+                  aria-label={showPw ? 'Hide password' : 'Show password'}
+                  onClick={() => setShowPw((v) => !v)}
+                  className="text-fg-muted"
+                >
+                  {showPw ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              }
             />
           </FormField>
           <Button

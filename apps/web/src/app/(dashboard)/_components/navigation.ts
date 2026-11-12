@@ -3,6 +3,7 @@ import { ROLE_HOME } from '@jobbank/shared';
 import {
   Bell,
   Building2,
+  Calendar,
   CheckSquare,
   Contact,
   FileText,
@@ -68,7 +69,6 @@ export function navigationFor(
           items: [
             overview,
             { href: '/branch-admin/applicants', label: 'Applicants', icon: Contact },
-            { href: '/branch-admin/employers', label: 'Act for employer', icon: Building2 },
             { href: '/branch-admin/jobs', label: 'Jobs', icon: Briefcase },
             { href: '/branch-admin/staff', label: 'Staff', icon: Users },
             { href: '/branch-admin/settings', label: 'Branch settings', icon: SlidersHorizontal },
@@ -92,8 +92,20 @@ export function navigationFor(
           items: [
             overview,
             { href: '/staff/applicants', label: 'Applicants', icon: Contact },
-            { href: '/staff/employers', label: 'Employers', icon: Building2 },
             { href: '/staff/jobs', label: 'Jobs', icon: Briefcase },
+          ],
+        },
+      ];
+    case 'INTERVIEWER_SCHEDULER':
+      return [
+        {
+          items: [
+            overview,
+            {
+              href: '/interviewer-scheduler/interviews',
+              label: 'Interviews',
+              icon: Calendar,
+            },
           ],
         },
       ];
@@ -120,7 +132,8 @@ export function navigationFor(
             ...(opts.hideEmployerJobs
               ? []
               : [{ href: '/employer/jobs', label: 'Jobs', icon: Briefcase }]),
-            { href: '/employer/referrals', label: 'Referrals', icon: Users },
+            // Referrals entry removed 2026-11-12 (Act of employer removed):
+            // employers no longer see or decide referred candidates.
           ],
         },
       ];

@@ -6,7 +6,7 @@ import {
   radiusValueSchema,
   type ResolvedRadius,
 } from '@jobbank/shared';
-import { asc, count, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand, type RequestContext } from '@/domains/shared/audit';
 import { ConflictError, ForbiddenError, NotFoundError } from '@/domains/shared/errors';
@@ -53,19 +53,33 @@ const branchFields = z.object({
   matchRadius: radiusValueSchema.nullable().optional(),
 });
 
+/** Branch code format (create + update): letters, digits and dashes, e.g. KHI-GULSHAN. */
+const branchCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z0-9]+(-[A-Z0-9]+)*$/, 'Use letters, digits and dashes, e.g. KHI-GULSHAN')
+  .max(24);
+
 export const createBranchSchema = branchFields.extend({
-  code: z
-    .string()
-    .trim()
-    .toUpperCase()
-    .regex(/^[A-Z0-9]+(-[A-Z0-9]+)*$/, 'Use letters, digits and dashes, e.g. KHI-GULSHAN')
-    .max(24),
+  code: branchCodeSchema,
 });
 
-/** Code is permanent (it appears in candidate codes like JB-KHI-00412). */
+/**
+ * Code is editable by Super Admin only: updateBranch is `branch:manage`
+ * gated and only Super Admin holds that permission, and the edit form
+ * lives on Super Admin pages only. Changing a code breaks the token codes
+ * already issued under it — tokenCodeFor builds them live from
+ * branch.code, so old printed slips stop resolving — and history is NOT
+ * rewritten when a code changes.
+ */
 export const updateBranchSchema = branchFields.partial().extend({
   isActive: z.boolean().optional(),
+  code: branchCodeSchema.optional(),
 });
+
+/** Days a deactivated branch must wait before it can be deleted (2026-11-12; was "40 Days?" in the notes). */
+export const BRANCH_DELETE_WAIT_DAYS = 90;
 
 /** Deleting a branch is permanent, so a short reason is recorded in the audit log. */
 export const deleteBranchSchema = z.object({
@@ -263,6 +277,13 @@ export async function updateBranch(
       if (matchRadius) await writeRadiusPolicy(cmd, { scope: 'BRANCH', branchId }, matchRadius);
       if (matchRadius === null) await deleteRadiusPolicy(cmd, { scope: 'BRANCH', branchId });
       if (Object.keys(changes).length === 0) return;
+      if (changes.code) {
+        const [taken] = await tx
+          .select({ id: b.id })
+          .from(b)
+          .where(and(eq(b.code, changes.code as string), ne(b.id, branchId)));
+        if (taken) throw new ConflictError(`Branch code ${changes.code} is already used`);
+      }
       await tx.update(b).set(changes).where(eq(b.id, branchId));
       audit({
         action:
@@ -288,10 +309,14 @@ export async function updateBranch(
 /**
  * Permanently delete a branch. Super Admin only (`branch:manage`), and only
  * after the branch has been deactivated — an active branch cannot be deleted.
- * Refuses while anything still points at the branch: staff assignments,
- * applicants, companies, jobs and applications would otherwise be orphaned
- * (jobs / applications carry a plain branch id) or trip the restrict FKs.
- * The branch's own radius policy and settings rows cascade away with it.
+ * 90-day rule (2026-11-12): a deactivated branch cannot be deleted until 90
+ * days after its deactivation, so a mistaken deactivation can still be
+ * undone. The deactivation time is the latest `branch.deactivate` audit
+ * row — no schema change. Refuses while anything still points at the branch:
+ * staff assignments, applicants, companies, jobs and applications would
+ * otherwise be orphaned (jobs / applications carry a plain branch id) or
+ * trip the restrict FKs. The branch's own radius policy and settings rows
+ * cascade away with it.
  */
 export async function deleteBranch(ctx: SignedIn, branchId: string, reason: string): Promise<void> {
   assertPermission(ctx.actor, 'branch:manage');
@@ -299,6 +324,30 @@ export async function deleteBranch(ctx: SignedIn, branchId: string, reason: stri
     const [branch] = await tx.select(columns).from(b).where(eq(b.id, branchId));
     if (!branch) throw new NotFoundError('Branch', branchId);
     if (branch.isActive) throw new ForbiddenError('Deactivate the branch before deleting it');
+    const [deactivated] = await tx
+      .select({ occurredAt: schema.auditLogs.occurredAt })
+      .from(schema.auditLogs)
+      .where(
+        and(
+          eq(schema.auditLogs.action, 'branch.deactivate'),
+          eq(schema.auditLogs.entityType, 'branch'),
+          eq(schema.auditLogs.entityId, branchId),
+        ),
+      )
+      .orderBy(desc(schema.auditLogs.occurredAt))
+      .limit(1);
+    if (deactivated) {
+      const eligibleAt = new Date(
+        deactivated.occurredAt.getTime() + BRANCH_DELETE_WAIT_DAYS * 24 * 60 * 60 * 1000,
+      );
+      if (Date.now() < eligibleAt.getTime()) {
+        throw new ForbiddenError(
+          `This branch was deactivated on ${deactivated.occurredAt.toISOString().slice(0, 10)}. It can be deleted after ${eligibleAt.toISOString().slice(0, 10)} (${BRANCH_DELETE_WAIT_DAYS} days after deactivation).`,
+        );
+      }
+    }
+    // No deactivation row on file (deactivated before audit logging began):
+    // the wait cannot be measured, so the branch is treated as past it.
     const [staffRows] = await tx
       .select({ n: count() })
       .from(schema.userRoles)

@@ -7,7 +7,11 @@ export interface Assignment {
 }
 
 /** Roles a Branch Admin may hand out, and only inside their own branch. */
-export const BRANCH_ADMIN_GRANTABLE: readonly Role[] = ['VERIFIER', 'STAFF'];
+export const BRANCH_ADMIN_GRANTABLE: readonly Role[] = [
+  'VERIFIER',
+  'INTERVIEWER_SCHEDULER',
+  'STAFF',
+];
 
 /** true, or the reason the actor may not grant `role` at `branchId`. */
 export function canGrantRole(actor: Actor, role: Role, branchId: string | null): true | string {

@@ -1,6 +1,16 @@
 'use client';
 
-import { ArrowLeft, Briefcase, KeyRound, Lock, Mail, Shield, UserRound } from 'lucide-react';
+import {
+  ArrowLeft,
+  Briefcase,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Lock,
+  Mail,
+  Shield,
+  UserRound,
+} from 'lucide-react';
 import NextLink from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
@@ -8,7 +18,6 @@ import { Button, Checkbox, Input } from '@/components/atoms';
 import { FormField, OTPInput, PhoneInput } from '@/components/molecules';
 import { ApiClientError, apiFetch, safeNextPath } from '@/lib/api/client';
 import { formatPkMobileDisplay } from '@/lib/format/phone';
-import { TwoFactorSetup } from '@/app/(dashboard)/account/security/TwoFactorSetup';
 
 interface SignedIn {
   kind: 'signed_in';
@@ -19,11 +28,6 @@ interface TwoFactorRequired {
   methods: string[];
   /** False for 2FA-required roles: they never get a trusted device. */
   trustDeviceAllowed: boolean;
-}
-interface TwoFactorSetupRequired {
-  kind: 'two_factor_setup_required';
-  setupToken: string;
-  expiresInSeconds: number;
 }
 
 function useCountdown() {
@@ -415,15 +419,13 @@ function EmailCodeSignIn({ next, onBack }: { next: string | null; onBack: () => 
 
 function StaffSignIn({ next, onBack }: { next: string | null; onBack: () => void }) {
   const finish = useFinishSignIn(next);
-  const [mode, setMode] = useState<'password' | 'two_factor' | 'two_factor_setup' | 'email_code'>(
-    'password',
-  );
+  const [mode, setMode] = useState<'password' | 'two_factor' | 'email_code'>('password');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [trustDeviceAllowed, setTrustDeviceAllowed] = useState(true);
-  const [setupToken, setSetupToken] = useState<string | null>(null);
 
   if (mode === 'two_factor')
     return (
@@ -433,19 +435,6 @@ function StaffSignIn({ next, onBack }: { next: string | null; onBack: () => void
         trustDeviceAllowed={trustDeviceAllowed}
       />
     );
-  if (mode === 'two_factor_setup' && setupToken)
-    return (
-      <div className="grid gap-4">
-        <p className="text-fg-muted text-sm">
-          Your role requires two-factor authentication. Set it up now to finish signing in —
-          this setup link expires in 15 minutes.
-        </p>
-        <TwoFactorSetup required setupToken={setupToken} />
-        <Button variant="secondary" leftIcon={<ArrowLeft />} onClick={() => setMode('password')} className="justify-self-start">
-          Back to sign-in
-        </Button>
-      </div>
-    );
   if (mode === 'email_code')
     return <EmailCodeSignIn next={next} onBack={() => setMode('password')} />;
 
@@ -454,27 +443,15 @@ function StaffSignIn({ next, onBack }: { next: string | null; onBack: () => void
     setPending(true);
     setError(null);
     try {
-      const { data } = await apiFetch<SignedIn | TwoFactorRequired | TwoFactorSetupRequired>(
-        '/api/v1/auth/login',
-        {
-          method: 'POST',
-          body: { email, password },
-        },
-      );
+      const { data } = await apiFetch<SignedIn | TwoFactorRequired>('/api/v1/auth/login', {
+        method: 'POST',
+        body: { email, password },
+      });
       if (data.kind === 'two_factor_required') {
         setPassword('');
         setPending(false);
         setTrustDeviceAllowed(data.trustDeviceAllowed);
         setMode('two_factor');
-        return;
-      }
-      if (data.kind === 'two_factor_setup_required') {
-        // Audit H-02: no session was issued — the setup token is the only
-        // way forward, and it only starts enrolment.
-        setPassword('');
-        setPending(false);
-        setSetupToken(data.setupToken);
-        setMode('two_factor_setup');
         return;
       }
       finish(data);
@@ -507,11 +484,21 @@ function StaffSignIn({ next, onBack }: { next: string | null; onBack: () => void
         </FormField>
         <FormField label="Password" required>
           <Input
-            type="password"
+            type={showPw ? 'text' : 'password'}
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             startAdornment={<Lock aria-hidden="true" />}
+            endAdornment={
+              <button
+                type="button"
+                aria-label={showPw ? 'Hide password' : 'Show password'}
+                onClick={() => setShowPw((v) => !v)}
+                className="text-fg-muted"
+              >
+                {showPw ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </button>
+            }
           />
         </FormField>
         <div className="-mt-2 text-end text-sm">

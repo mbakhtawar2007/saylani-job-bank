@@ -53,25 +53,10 @@ describe('permission matrix encodes the PRD rules', () => {
     expect(ROLE_PERMISSIONS.EMPLOYER).not.toContain('applicant:verify_identity');
   });
 
-  it('applicant records: staff correct them and admins transfer them', () => {
-    // Audit 2026-11-11 (L-22): identity verification is no longer STAFF-only.
-    // Admins already hold every other applicant power, so blocking this one
-    // was an oversight, not separation of duties. The can.verifyIdentity UI
-    // flag derives from this permission (applicant/staff.ts), so it mirrors
-    // automatically. Super Admin deliberately stays out of the operational
-    // referral/interview permissions (match_case:manage/refer, job:refer,
-    // interview:schedule_jobbank) — the overseer design is unchanged.
-    expect(holders('applicant:verify_identity')).toEqual([
-      'SUPER_ADMIN',
-      'BRANCH_ADMIN',
-      'STAFF',
-    ]);
+  it('applicant records: staff correct them, only admins move them between branches', () => {
+    expect(holders('applicant:verify_identity')).toEqual(['STAFF']);
     expect(holders('applicant:manage')).toEqual(['SUPER_ADMIN', 'BRANCH_ADMIN', 'STAFF']);
     expect(holders('applicant:transfer')).toEqual(['SUPER_ADMIN', 'BRANCH_ADMIN']);
-    // Merge (2026-11-10): Rafeh's staff-assisted registration uses
-    // applicant:create; Super Admin, Branch Admin and Staff may register
-    // applicants on behalf of job seekers. Branch Admin is NOT read-only.
-    expect(holders('applicant:create')).toEqual(['SUPER_ADMIN', 'BRANCH_ADMIN', 'STAFF']);
     expect(ROLE_PERMISSIONS.EMPLOYER.filter((p) => p.startsWith('applicant:'))).toEqual([]);
   });
 
@@ -80,9 +65,32 @@ describe('permission matrix encodes the PRD rules', () => {
     expect(holders('restriction:lift')).toEqual(['SUPER_ADMIN']);
   });
 
-  it('Job Bank staff and branch admins refer candidates and run Job Bank interviews', () => {
+  it('Job Bank staff, branch admins and interview schedulers run Job Bank interviews', () => {
     expect(holders('match_case:refer')).toEqual(['BRANCH_ADMIN', 'STAFF']);
-    expect(holders('interview:schedule_jobbank')).toEqual(['BRANCH_ADMIN', 'STAFF']);
+    expect(holders('interview:schedule_jobbank')).toEqual([
+      'BRANCH_ADMIN',
+      'INTERVIEWER_SCHEDULER',
+      'STAFF',
+    ]);
+  });
+
+  it('the Interviewer and Scheduler role only reads the pipeline and schedules interviews', () => {
+    expect(ROLE_PERMISSIONS.INTERVIEWER_SCHEDULER).toEqual([
+      'branch:read',
+      'applicant:read',
+      'job:read',
+      'match_case:read',
+      'interview:schedule_jobbank',
+    ]);
+    // Read-only on the pipeline: no referring, no employer decisions,
+    // no job/company/staff management.
+    expect(ROLE_PERMISSIONS.INTERVIEWER_SCHEDULER).not.toContain('decision:employer');
+    expect(ROLE_PERMISSIONS.INTERVIEWER_SCHEDULER).not.toContain('job:manage');
+    expect(ROLE_PERMISSIONS.INTERVIEWER_SCHEDULER).not.toContain('job:refer');
+    expect(ROLE_PERMISSIONS.INTERVIEWER_SCHEDULER).not.toContain('applicant:manage');
+    expect(ROLE_PERMISSIONS.INTERVIEWER_SCHEDULER).not.toContain('company:onboard');
+    expect(ROLE_PERMISSIONS.INTERVIEWER_SCHEDULER).not.toContain('user:manage');
+    expect(homePathFor(['INTERVIEWER_SCHEDULER'])).toBe('/interviewer-scheduler');
   });
 
   it('every assigned permission exists in the catalogue', () => {

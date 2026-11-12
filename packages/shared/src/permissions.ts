@@ -23,7 +23,6 @@ export const PERMISSIONS = {
   'company:manage': 'Correct locked company details, transfer companies, assign verifiers',
 
   'applicant:read': 'View applicant profiles',
-  'applicant:create': 'Register applicants on behalf of job seekers',
   'applicant:self': 'Manage own applicant profile',
   'applicant:verify_identity': 'Verify applicant identity documents',
   'applicant:manage': 'Correct applicant records, change phone numbers, deactivate profiles',
@@ -74,8 +73,6 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'company:manage',
     'company:suspend',
     'applicant:read',
-    'applicant:create',
-    'applicant:verify_identity',
     'applicant:manage',
     'applicant:transfer',
     'job:read',
@@ -94,8 +91,6 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'company:manage',
     'company:suspend',
     'applicant:read',
-    'applicant:create',
-    'applicant:verify_identity',
     'applicant:manage',
     'applicant:transfer',
     'job:read',
@@ -125,7 +120,6 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'branch:read',
     'company:read',
     'applicant:read',
-    'applicant:create',
     'applicant:verify_identity',
     'applicant:manage',
     'job:read',
@@ -139,6 +133,17 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'interview:schedule_jobbank',
     'placement:manage',
     'blacklist:request',
+  ],
+  /** One combined role (2026-11-12): schedules Job Bank interviews and
+      records their outcomes for referred/shortlisted candidates in their
+      branch(es). Read-only on the interview pipeline — no referring, no
+      employer decisions, no job/company/staff management. */
+  INTERVIEWER_SCHEDULER: [
+    'branch:read',
+    'applicant:read',
+    'job:read',
+    'match_case:read',
+    'interview:schedule_jobbank',
   ],
   EMPLOYER: [
     'company:register',
@@ -161,6 +166,7 @@ export const ROLE_HOME: Record<Role, string> = {
   BRANCH_ADMIN: '/branch-admin',
   VERIFIER: '/verifier',
   STAFF: '/staff',
+  INTERVIEWER_SCHEDULER: '/interviewer-scheduler',
   EMPLOYER: '/employer',
   APPLICANT: '/applicant',
 };
@@ -170,6 +176,7 @@ export const ROLE_PRIORITY: readonly Role[] = [
   'BRANCH_ADMIN',
   'VERIFIER',
   'STAFF',
+  'INTERVIEWER_SCHEDULER',
   'EMPLOYER',
   'APPLICANT',
 ];

@@ -29,9 +29,7 @@ import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import { formatDate } from '@/lib/format/date';
 import { putWithProgress } from '@/lib/upload/put-with-progress';
 import type { CompanyOnboarding, CompanyView } from '@/domains/company';
-import type { JobView } from '@/domains/job';
 import { CompanyRegistrationFormPrint } from '@/app/(dashboard)/_components/companies/CompanyRegistrationFormPrint';
-import { JobManagementPanel } from '@/app/(dashboard)/_components/jobs/JobManagementPanel';
 
 interface MasterDataOption {
   id: string;
@@ -51,10 +49,7 @@ interface GeocodeResult {
 
 const STATUS_PILL: Record<
   CompanyStatus,
-  {
-    label: string;
-    variant: 'success' | 'danger' | 'warning' | 'neutral' | 'info';
-  }
+  { label: string; variant: 'success' | 'danger' | 'warning' | 'neutral' | 'info' }
 > = {
   DRAFT: { label: 'Draft', variant: 'neutral' },
   SUBMITTED: { label: 'Submitted', variant: 'info' },
@@ -72,18 +67,12 @@ export function StaffCompanyPanel({
   canSuspend,
   canManage,
   canOnboard = false,
-  jobs,
-  canManageJobs,
-  categories,
 }: {
   company: CompanyView;
   onboarding?: CompanyOnboarding | null;
   canSuspend: boolean;
   canManage: boolean;
   canOnboard?: boolean;
-  jobs: JobView[];
-  canManageJobs: boolean;
-  categories: { code: string; label: string }[];
 }) {
   const pathname = usePathname();
   const backHref = pathname.includes('super-admin')
@@ -95,16 +84,16 @@ export function StaffCompanyPanel({
         : '/branch-admin/companies';
   // "Post a job" goes to the current role's job-creation route with this
   // company preselected. Super Admin has no job:manage and no jobs/new
-  // route, so no button there. Only VERIFIED companies can take jobs (C1).
+  // route, so no button there. Branch Admin can no longer post jobs
+  // (2026-11-12), so no button there either. Only VERIFIED companies
+  // can take jobs (C1).
   const postJobHref =
     company.status === 'VERIFIED'
       ? pathname.includes('/verifier/')
         ? `/verifier/jobs/new?companyId=${company.id}`
         : pathname.includes('/staff/')
           ? `/staff/jobs/new?companyId=${company.id}`
-          : pathname.includes('/branch-admin/')
-            ? `/branch-admin/jobs/new?companyId=${company.id}`
-            : null
+          : null
       : null;
   // Self-verification entry point: a verifier may claim and verify a company
   // they created themselves — no other verifier is needed — but the detail
@@ -820,18 +809,9 @@ export function StaffCompanyPanel({
           columns={2}
           items={[
             { label: 'NTN', value: company_.details.ntn },
-            {
-              label: 'Reg. no.',
-              value: company_.details.registrationNo ?? '—',
-            },
-            {
-              label: 'Structure',
-              value: LEGAL_STRUCTURE_LABELS[company_.details.legalStructure],
-            },
-            {
-              label: 'Size',
-              value: COMPANY_SIZE_LABELS[company_.details.sizeBand],
-            },
+            { label: 'Reg. no.', value: company_.details.registrationNo ?? '—' },
+            { label: 'Structure', value: LEGAL_STRUCTURE_LABELS[company_.details.legalStructure] },
+            { label: 'Size', value: COMPANY_SIZE_LABELS[company_.details.sizeBand] },
             { label: 'Branch', value: company_.branch?.name ?? '—' },
           ]}
         />
@@ -1047,24 +1027,6 @@ export function StaffCompanyPanel({
             document.body,
           )
         : null}
-      <JobManagementPanel
-        companyId={company_.id}
-        jobs={jobs}
-        categories={categories}
-        canManage={canManageJobs}
-        canCreate={company_.status === 'VERIFIED'}
-        jobLinkBasePath={
-          pathname.startsWith('/branch-admin/')
-            ? `/branch-admin/companies/${company_.id}`
-            : pathname.includes('/staff/')
-              ? '/staff/jobs'
-              : pathname.includes('/verifier/')
-                ? '/verifier/jobs'
-                : pathname.includes('super-admin')
-                  ? '/super-admin/jobs'
-                  : undefined
-        }
-      />
     </div>
   );
 }

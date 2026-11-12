@@ -7,6 +7,7 @@ export * from './EmptyState';
 export * from './FileUploader';
 export * from './FormField';
 export * from './KeyValue';
+export * from './LatLngFields';
 export * from './Modal';
 export * from './OTPInput';
 export * from './Pagination';
