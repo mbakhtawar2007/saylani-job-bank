@@ -15,6 +15,7 @@ export {
 } from './account-tokens';
 export {
   ACTIVE_BRANCH_COOKIE,
+  ACTIVE_COMPANY_COOKIE,
   getAuthState,
   loadActor,
   requiresTwoFactor,

@@ -132,7 +132,9 @@ export const companyOnboarding = pgTable(
   (t) => [index('company_onboarding_onboarded_by_idx').on(t.onboardedBy)],
 );
 
-/** Employer accounts acting for a company. v1: one company per account (owner decision 2). */
+/** Employer accounts acting for a company. Up to two companies per account
+ * (2026-11-12: one email may register two companies); the (companyId, userId)
+ * primary key still stops the same account joining the same company twice. */
 export const companyMembers = pgTable(
   'company_members',
   {
@@ -141,7 +143,6 @@ export const companyMembers = pgTable(
       .references(() => companies.id, { onDelete: 'cascade' }),
     userId: uuid()
       .notNull()
-      .unique()
       .references(() => users.id, { onDelete: 'restrict' }),
     role: text({ enum: COMPANY_MEMBER_ROLES }).notNull().default('OWNER'),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),

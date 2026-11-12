@@ -879,16 +879,6 @@ export function StaffCompanyPanel({
               },
               { label: 'Head-office address', value: onboarding.notes.headOfficeAddress ?? '—' },
               { label: 'Other sites', value: onboarding.notes.otherSites ?? '—' },
-              {
-                label: 'Roles to hire for',
-                value: onboarding.notes.workforceRoles ?? '—',
-              },
-              { label: 'Type of work', value: onboarding.notes.workforceType ?? '—' },
-              { label: 'Shifts / timings', value: onboarding.notes.workforceShifts ?? '—' },
-              { label: 'Number of openings', value: onboarding.notes.workforceOpenings ?? '—' },
-              { label: 'Years in business', value: onboarding.notes.yearsInBusiness ?? '—' },
-              { label: 'Previous hiring', value: onboarding.notes.previousHiring ?? '—' },
-              { label: 'Certifications', value: onboarding.notes.certifications ?? '—' },
               { label: 'Additional notes', value: onboarding.notes.additionalNotes ?? '—' },
             ]}
           />

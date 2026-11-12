@@ -2,12 +2,34 @@
 
 import { Eye, EyeOff, Mail } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Input } from '@/components/atoms';
 import { FormField } from '@/components/molecules';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 
 type Step = 'email' | 'code';
+
+type FieldErrors = Partial<Record<'email' | 'code' | 'fullName' | 'password', string>>;
+
+/** Same 1s-tick countdown as LoginForm's "Resend in Ns" button. */
+function useCountdown() {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (seconds <= 0) return;
+    const timer = setTimeout(() => setSeconds((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [seconds]);
+  return [seconds, setSeconds] as const;
+}
+
+/** The server's message for one field, if it reported one for it. */
+function issueFor(err: unknown, path: string): string | undefined {
+  return err instanceof ApiClientError ? err.issueFor(path) : undefined;
+}
+
+function fallbackMessage(err: unknown): string {
+  return err instanceof ApiClientError ? err.message : 'Something went wrong.';
+}
 
 export function EmployerSignupForm() {
   const router = useRouter();
@@ -18,17 +40,46 @@ export function EmployerSignupForm() {
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [alert, setAlert] = useState<string | null>(null);
+  const [resendIn, setResendIn] = useCountdown();
 
-  async function requestCode(e: React.FormEvent) {
-    e.preventDefault();
+  async function requestCode(e?: React.FormEvent) {
+    e?.preventDefault();
     setPending(true);
-    setError(null);
+    setFieldErrors({});
+    setAlert(null);
     try {
-      await apiFetch('/api/v1/auth/signup/code', { method: 'POST', body: { email } });
+      const { data } = await apiFetch<{ resendAfterSeconds: number }>('/api/v1/auth/signup/code', {
+        method: 'POST',
+        body: { email },
+      });
+      setResendIn(data.resendAfterSeconds);
       setStep('code');
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Something went wrong.');
+      const emailError = issueFor(err, 'email');
+      if (emailError) setFieldErrors({ email: emailError });
+      else setAlert(fallbackMessage(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  /** Re-sends the confirmation code; the server enforces one resend per minute. */
+  async function resendCode() {
+    if (resendIn > 0 || pending) return;
+    setPending(true);
+    setFieldErrors({});
+    setAlert(null);
+    try {
+      const { data } = await apiFetch<{ resendAfterSeconds: number }>('/api/v1/auth/signup/code', {
+        method: 'POST',
+        body: { email },
+      });
+      setResendIn(data.resendAfterSeconds);
+    } catch (err) {
+      // A too-soon resend is a rate-limit error, not a field error.
+      setAlert(fallbackMessage(err));
     } finally {
       setPending(false);
     }
@@ -37,7 +88,8 @@ export function EmployerSignupForm() {
   async function complete(e: React.FormEvent) {
     e.preventDefault();
     setPending(true);
-    setError(null);
+    setFieldErrors({});
+    setAlert(null);
     try {
       await apiFetch('/api/v1/auth/signup/complete', {
         method: 'POST',
@@ -45,7 +97,19 @@ export function EmployerSignupForm() {
       });
       router.push('/employer');
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Something went wrong.');
+      // A wrong/expired code, a bad name or a weak password is reported on
+      // its own field; anything else (e.g. the email already has an account)
+      // goes to the alert above the form, never under the password field.
+      const errors: FieldErrors = {
+        code: issueFor(err, 'code'),
+        fullName: issueFor(err, 'fullName'),
+        password: issueFor(err, 'password'),
+      };
+      const shown = Object.fromEntries(
+        Object.entries(errors).filter(([, value]) => value !== undefined),
+      ) as FieldErrors;
+      setFieldErrors(shown);
+      if (Object.keys(shown).length === 0) setAlert(fallbackMessage(err));
     } finally {
       setPending(false);
     }
@@ -54,7 +118,15 @@ export function EmployerSignupForm() {
   if (step === 'email') {
     return (
       <form className="grid gap-4" onSubmit={(e) => void requestCode(e)}>
-        <FormField label="Work email" required error={error ?? undefined}>
+        {alert && (
+          <p
+            role="alert"
+            className="bg-danger-soft text-danger-soft-fg rounded-lg px-3 py-2 text-sm"
+          >
+            {alert}
+          </p>
+        )}
+        <FormField label="Work email" required error={fieldErrors.email}>
           <Input
             type="email"
             autoComplete="email"
@@ -73,11 +145,16 @@ export function EmployerSignupForm() {
 
   return (
     <form className="grid gap-4" onSubmit={(e) => void complete(e)}>
+      {alert && (
+        <p role="alert" className="bg-danger-soft text-danger-soft-fg rounded-lg px-3 py-2 text-sm">
+          {alert}
+        </p>
+      )}
       <p className="text-fg-muted text-sm">
         We sent a 6-digit code to <strong>{email}</strong>. Enter it below along with your name and
         a password.
       </p>
-      <FormField label="6-digit code" required>
+      <FormField label="6-digit code" required error={fieldErrors.code}>
         <Input
           type="text"
           inputMode="numeric"
@@ -88,10 +165,10 @@ export function EmployerSignupForm() {
           autoFocus
         />
       </FormField>
-      <FormField label="Your full name" required>
+      <FormField label="Your full name" required error={fieldErrors.fullName}>
         <Input autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
       </FormField>
-      <FormField label="Password" required error={error ?? undefined}>
+      <FormField label="Password" required error={fieldErrors.password}>
         <Input
           type={showPw ? 'text' : 'password'}
           autoComplete="new-password"
@@ -117,17 +194,23 @@ export function EmployerSignupForm() {
       >
         Create account
       </Button>
-      <button
-        type="button"
-        className="text-fg-muted text-center text-sm underline underline-offset-4"
-        onClick={() => {
-          setStep('email');
-          setCode('');
-          setError(null);
-        }}
-      >
-        Use a different email
-      </button>
+      <div className="flex items-center justify-between text-sm">
+        <button
+          type="button"
+          className="text-fg-muted text-sm underline underline-offset-4"
+          onClick={() => {
+            setStep('email');
+            setCode('');
+            setFieldErrors({});
+            setAlert(null);
+          }}
+        >
+          Use a different email
+        </button>
+        <Button variant="link" disabled={resendIn > 0 || pending} onClick={() => void resendCode()}>
+          {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
+        </Button>
+      </div>
     </form>
   );
 }

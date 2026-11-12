@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as apiClientModule from '@/lib/api/client';
+import { ApiClientError } from '@/lib/api/client';
 import { CompanyWizard } from './CompanyWizard';
 
 const push = vi.fn();
@@ -645,5 +646,51 @@ describe('CompanyWizard', () => {
         expect(submissionCall).toBeDefined();
         expect(registrationCall![1].idempotencyKey).not.toBe(submissionCall![1].idempotencyKey);
       });
+  });
+
+  it('shows a duplicate NTN on the NTN field, not as a page error', async () => {
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/master-data?type=INDUSTRY')
+        return { data: [{ code: 'IT', label: 'Information technology' }] };
+      if (path === '/api/v1/companies/register')
+        throw new ApiClientError(409, {
+          error: {
+            code: 'CONFLICT',
+            message:
+              'A company with this NTN is already registered with Saylani Job Bank. If it is yours, please contact your nearest Job Bank branch.',
+            details: { reason: 'NTN_TAKEN' },
+            correlation_id: 'test',
+          },
+        });
+      throw new Error(`unexpected call ${path}`);
+    });
+
+    const user = userEvent.setup();
+    render(<CompanyWizard initialStep="details" initialCompany={null} />);
+    await user.type(screen.getByLabelText(/Registered company name/), 'Example Company');
+    await user.selectOptions(screen.getByLabelText(/Business type/), 'PRIVATE_LIMITED');
+    await user.type(screen.getByLabelText(/NTN \(National Tax Number\)/), '1234567-8');
+    const industry = screen.getByLabelText(/Industry/);
+    await waitFor(() => expect(industry).toHaveTextContent('Information technology'));
+    await user.selectOptions(industry, 'IT');
+    await user.selectOptions(screen.getByLabelText(/Company size/), '1_10');
+    const saveButton = screen.getByRole('button', { name: 'Save and continue' });
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    await user.click(saveButton);
+
+    // The field error names the NTN field; the error summary lists the same
+    // message a second time with a jump-to-field button.
+    await waitFor(() =>
+      expect(screen.getAllByText(/already registered with Saylani Job Bank/)).toHaveLength(2),
+    );
+    const fieldError = screen
+      .getAllByText(/already registered with Saylani Job Bank/)
+      .map((el) => el.closest('p'))
+      .find((p) => p?.getAttribute('role') === 'alert');
+    expect(fieldError).toBeTruthy();
+    expect(fieldError).toHaveAttribute('id', expect.stringContaining('-error'));
+    expect(
+      screen.getByLabelText(/NTN \(National Tax Number\)/).getAttribute('aria-describedby'),
+    ).toContain(fieldError?.id);
   });
 });

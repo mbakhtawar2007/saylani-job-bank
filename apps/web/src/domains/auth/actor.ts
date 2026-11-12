@@ -1,12 +1,16 @@
 import 'server-only';
 import { permissionsFor, TWO_FACTOR_REQUIRED_ROLES, type Role } from '@jobbank/shared';
 import { schema } from '@jobbank/db';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type { Actor } from '@/domains/shared/scope';
+import { ACTIVE_COMPANY_COOKIE } from '@/lib/active-company';
 import { db } from '@/lib/db';
 import { getAuth, isPlaceholderEmail, SESSION_TTL_SECONDS } from './auth';
 
 export const ACTIVE_BRANCH_COOKIE = 'jb-active-branch';
+
+/** Re-exported for server code that reads the active-company cookie. */
+export { ACTIVE_COMPANY_COOKIE };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -40,7 +44,11 @@ export function requiresTwoFactor(roles: readonly Role[]): boolean {
 }
 
 /** Builds the Actor (roles, permissions, branch scope, 2FA state) for a user. */
-export async function loadActor(userId: string, requestedActiveBranch?: string): Promise<Actor> {
+export async function loadActor(
+  userId: string,
+  requestedActiveBranch?: string,
+  requestedActiveCompany?: string,
+): Promise<Actor> {
   const [assignments, [user]] = await Promise.all([
     db
       .select({ role: schema.userRoles.roleCode, branchId: schema.userRoles.branchId })
@@ -53,7 +61,7 @@ export async function loadActor(userId: string, requestedActiveBranch?: string):
   ]);
 
   const roles = [...new Set(assignments.map((a) => a.role as Role))];
-  const [[applicant], [membership]] = await Promise.all([
+  const [[applicant], memberships] = await Promise.all([
     roles.includes('APPLICANT')
       ? db
           .select({ id: schema.applicants.id })
@@ -65,11 +73,22 @@ export async function loadActor(userId: string, requestedActiveBranch?: string):
           .select({ companyId: schema.companyMembers.companyId })
           .from(schema.companyMembers)
           .where(eq(schema.companyMembers.userId, userId))
+          .orderBy(asc(schema.companyMembers.createdAt))
       : [],
   ]);
   const branchIds = [
     ...new Set(assignments.map((a) => a.branchId).filter((id): id is string => id !== null)),
   ];
+
+  // An employer may hold up to two companies: the switcher-picked one is
+  // active, but only when it is really one of their memberships — a forged
+  // or stale cookie falls back to the first membership, never to a company
+  // the user does not belong to.
+  const membershipCompanyIds = memberships.map((m) => m.companyId);
+  const companyId =
+    (requestedActiveCompany && membershipCompanyIds.includes(requestedActiveCompany)
+      ? requestedActiveCompany
+      : membershipCompanyIds[0]) ?? null;
 
   let activeBranchId: string | null = null;
   if (roles.includes('SUPER_ADMIN') && requestedActiveBranch && UUID.test(requestedActiveBranch)) {
@@ -88,7 +107,7 @@ export async function loadActor(userId: string, requestedActiveBranch?: string):
     permissions: permissionsFor(roles),
     branchIds,
     activeBranchId,
-    companyId: membership?.companyId ?? null,
+    companyId,
     applicantId: applicant?.id ?? null,
     twoFactorPending: requiresTwoFactor(roles) && !user?.twoFactorEnabled,
   };
@@ -132,6 +151,10 @@ export async function getAuthState(headers: Headers): Promise<AuthState> {
   };
   if (row.status !== 'ACTIVE') return { status: 'blocked', reason: row.status, user };
 
-  const actor = await loadActor(row.id, readCookie(headers, ACTIVE_BRANCH_COOKIE));
+  const actor = await loadActor(
+    row.id,
+    readCookie(headers, ACTIVE_BRANCH_COOKIE),
+    readCookie(headers, ACTIVE_COMPANY_COOKIE),
+  );
   return { status: 'active', user, actor };
 }

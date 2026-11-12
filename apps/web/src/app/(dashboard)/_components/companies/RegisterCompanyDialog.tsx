@@ -109,13 +109,6 @@ const COMPANY_FIELD_LABELS: Record<string, string> = {
   agreed: 'Company agreed to work with us',
   headOfficeAddress: 'Head-office address',
   otherSites: 'Other sites',
-  workforceRoles: 'Roles to hire for',
-  workforceType: 'Type of work',
-  workforceShifts: 'Shifts / timings',
-  workforceOpenings: 'Number of openings',
-  yearsInBusiness: 'Years in business',
-  certifications: 'Certifications',
-  previousHiring: 'Previous hiring experience',
   additionalNotes: 'Additional details / assessment notes',
 };
 
@@ -163,13 +156,6 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
     agreed: false,
     headOfficeAddress: '',
     otherSites: '',
-    workforceRoles: '',
-    workforceType: '',
-    workforceShifts: '',
-    workforceOpenings: '',
-    yearsInBusiness: '',
-    previousHiring: '',
-    certifications: '',
     additionalNotes: '',
   });
 
@@ -252,13 +238,6 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
         agreed: false,
         headOfficeAddress: '',
         otherSites: '',
-        workforceRoles: '',
-        workforceType: '',
-        workforceShifts: '',
-        workforceOpenings: '',
-        yearsInBusiness: '',
-        previousHiring: '',
-        certifications: '',
         additionalNotes: '',
       });
     }
@@ -295,6 +274,14 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
     } catch (error) {
       if (error instanceof ApiClientError && error.issues.length > 0) {
         setErrors(toFieldErrors(error.issues));
+        requestErrorFocus();
+      } else if (
+        error instanceof ApiClientError &&
+        (error.details as { reason?: unknown } | null)?.reason === 'NTN_TAKEN'
+      ) {
+        // A duplicate NTN is a field problem, not a page-level one: show it
+        // on the NTN field instead of the generic alert.
+        setErrors({ ntn: error.message });
         requestErrorFocus();
       } else {
         // A non-field server error supersedes any stale field errors.
@@ -615,98 +602,7 @@ export function RegisterCompanyDialog({ branches, placement = 'default' }: Props
           </section>
 
           <section className="grid gap-3">
-            <h2 className="text-fg border-b pb-2 font-semibold">5. Workforce needs</h2>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <FormField
-                label="Roles to hire for"
-                error={errors.workforceRoles}
-                id={fieldControlId('workforceRoles')}
-              >
-                <Input
-                  value={form.workforceRoles}
-                  onChange={(e) => updateForm({ workforceRoles: e.target.value })}
-                  placeholder="e.g. Machine operators, helpers"
-                />
-              </FormField>
-              <FormField
-                label="Type of work"
-                error={errors.workforceType}
-                id={fieldControlId('workforceType')}
-              >
-                <Input
-                  value={form.workforceType}
-                  onChange={(e) => updateForm({ workforceType: e.target.value })}
-                  placeholder="e.g. Full-time, shift-based"
-                />
-              </FormField>
-              <FormField
-                label="Shifts / timings"
-                error={errors.workforceShifts}
-                id={fieldControlId('workforceShifts')}
-              >
-                <Input
-                  value={form.workforceShifts}
-                  onChange={(e) => updateForm({ workforceShifts: e.target.value })}
-                  placeholder="e.g. Day shift, 9am–6pm"
-                />
-              </FormField>
-              <FormField
-                label="Number of openings"
-                error={errors.workforceOpenings}
-                id={fieldControlId('workforceOpenings')}
-              >
-                <Input
-                  value={form.workforceOpenings}
-                  onChange={(e) => updateForm({ workforceOpenings: e.target.value })}
-                  placeholder="If known"
-                />
-              </FormField>
-            </div>
-          </section>
-
-          <section className="grid gap-3">
-            <h2 className="text-fg border-b pb-2 font-semibold">6. Business background</h2>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <FormField
-                label="Years in business"
-                error={errors.yearsInBusiness}
-                id={fieldControlId('yearsInBusiness')}
-              >
-                <Input
-                  value={form.yearsInBusiness}
-                  onChange={(e) => updateForm({ yearsInBusiness: e.target.value })}
-                  placeholder="e.g. 5 years"
-                />
-              </FormField>
-              <FormField
-                label="Certifications"
-                error={errors.certifications}
-                id={fieldControlId('certifications')}
-              >
-                <Input
-                  value={form.certifications}
-                  onChange={(e) => updateForm({ certifications: e.target.value })}
-                  placeholder="If any"
-                />
-              </FormField>
-              <FormField
-                label="Previous hiring experience"
-                error={errors.previousHiring}
-                id={fieldControlId('previousHiring')}
-                className="sm:col-span-2"
-              >
-                <Textarea
-                  value={form.previousHiring}
-                  onChange={(e) => updateForm({ previousHiring: e.target.value })}
-                  placeholder="How the company hired before, if known"
-                  rows={2}
-                />
-              </FormField>
-            </div>
-          </section>
-
-          <section className="grid gap-3">
-            <h2 className="text-fg border-b pb-2 font-semibold">7. Additional information</h2>
+            <h2 className="text-fg border-b pb-2 font-semibold">5. Additional information</h2>
             <FormField
               label="Additional details / assessment notes"
               error={errors.additionalNotes}

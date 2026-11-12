@@ -21,6 +21,7 @@ import { FormField, PhoneInput } from '@/components/molecules';
 import { apiFetch, ApiClientError, friendlyApiError } from '@/lib/api/client';
 import type { CompanyView } from '@/domains/company';
 import { normalizePkMobile } from '@/lib/format/phone';
+import { setActiveCompanyCookie } from '@/lib/active-company';
 import {
   FormErrorSummary,
   fieldControlId,
@@ -189,6 +190,10 @@ function DetailsStep({
           body,
           idempotencyKey: registrationIdempotency.current.key,
         }));
+        // The company just created becomes the active one, so the remaining
+        // wizard steps (contacts, location, documents, submit) save to it —
+        // not to the employer's first company.
+        setActiveCompanyCookie(saved.id);
       } else {
         ({ data: saved } = await apiFetch<CompanyView>('/api/v1/companies/me', {
           method: 'PATCH',
@@ -199,6 +204,14 @@ function DetailsStep({
     } catch (err) {
       if (err instanceof ApiClientError && err.issues.length > 0) {
         setErrors(toFieldErrors(err.issues));
+        requestErrorFocus();
+      } else if (
+        err instanceof ApiClientError &&
+        (err.details as { reason?: unknown } | null)?.reason === 'NTN_TAKEN'
+      ) {
+        // A duplicate NTN is a field problem, not a page-level one: show it
+        // on the NTN field instead of the generic alert.
+        setErrors({ ntn: err.message });
         requestErrorFocus();
       } else {
         setErrors({});
@@ -1128,6 +1141,7 @@ function SubmitStep({
   const idempotencyKey = useRef<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [noteError, setNoteError] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const pill = STATUS_PILL[company.status];
 
@@ -1163,6 +1177,7 @@ function SubmitStep({
   async function resubmit() {
     setPending(true);
     setError(null);
+    setNoteError(null);
     try {
       const { data: saved } = await apiFetch<CompanyView>('/api/v1/companies/me/resubmit', {
         method: 'POST',
@@ -1170,7 +1185,10 @@ function SubmitStep({
       });
       onSubmitted(saved);
     } catch (err) {
-      setError(friendlyError(err));
+      // A too-short note is a field error on the note box, not a page error.
+      const noteIssue = err instanceof ApiClientError ? err.issueFor('note') : undefined;
+      if (noteIssue) setNoteError(noteIssue);
+      else setError(friendlyError(err));
     } finally {
       setPending(false);
     }
@@ -1223,6 +1241,7 @@ function SubmitStep({
       {canResubmit && (
         <FormField
           label="What did you change or send?"
+          error={noteError ?? undefined}
           hint={
             hasNewDocument
               ? 'A document you uploaded after the request is attached — you can send it back now, or add a note as well.'

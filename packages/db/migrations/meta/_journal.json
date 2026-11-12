@@ -323,6 +323,13 @@
       "when": 1794387358262,
       "tag": "0045_employer_decisions",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1794500670217,
+      "tag": "0046_company_members_two_companies",
+      "breakpoints": true
     }
   ]
 }
