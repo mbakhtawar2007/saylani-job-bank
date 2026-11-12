@@ -22,9 +22,8 @@ import { useRouter } from 'next/navigation';
 import { useRef, useState, type FormEvent } from 'react';
 import { Button, Checkbox, Input, RadioGroup, Select, Textarea } from '@/components/atoms';
 import type { SelectOption } from '@/components/atoms';
-import { CNICInput, FormField, PhoneInput, toast } from '@/components/molecules';
+import { CNICInput, FormField, LatLngFields, PhoneInput, toast } from '@/components/molecules';
 import type { ApplicantStaffView } from '@/domains/applicant';
-import { MapPinPicker } from '@/components/organisms';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import { errorMessage, toFieldErrors, type FieldErrors } from './form';
 import {
@@ -202,9 +201,9 @@ export function StaffRegisterApplicantForm({
   const parse = () => {
     // Audit 2026-11-11 (M-01): no pin, no registration — fail here with a
     // plain message instead of letting zod report "Expected object" on the
-    // map field.
+    // location field.
     if (form.lat == null || form.lng == null) {
-      setErrors({ 'address.location': 'Place the applicant’s home pin on the map' });
+      setErrors({ 'address.location': 'Enter the applicant’s home latitude and longitude' });
       requestErrorFocus();
       return null;
     }
@@ -222,8 +221,7 @@ export function StaffRegisterApplicantForm({
         cityCode: form.cityCode,
         areaCode: form.areaCode || null,
         branchId: form.branchId,
-        location:
-          form.lat != null && form.lng != null ? { lat: form.lat, lng: form.lng } : null,
+        location: form.lat != null && form.lng != null ? { lat: form.lat, lng: form.lng } : null,
       },
       education: {
         items: education.map((item) => ({
@@ -458,12 +456,7 @@ export function StaffRegisterApplicantForm({
                 onChange={(event) => set({ fatherName: event.target.value })}
               />
             </FormField>
-            <FormField
-              label="CNIC"
-              required
-              error={errors.cnic}
-              id={fieldControlId('cnic')}
-            >
+            <FormField label="CNIC" required error={errors.cnic} id={fieldControlId('cnic')}>
               <CNICInput value={form.cnic} onChange={(value) => set({ cnic: value.digits })} />
             </FormField>
             <FormField
@@ -587,18 +580,15 @@ export function StaffRegisterApplicantForm({
                 id={fieldControlId('address.location')}
                 hint={
                   form.lat == null
-                    ? 'Tap the map to place the applicant’s home pin — it is required for matching and branch assignment.'
+                    ? 'Type the latitude and longitude — it is required for matching and branch assignment.'
                     : undefined
                 }
               >
-                <MapPinPicker
+                <LatLngFields
                   value={
-                    form.lat != null && form.lng != null
-                      ? { lat: form.lat, lng: form.lng }
-                      : null
+                    form.lat != null && form.lng != null ? { lat: form.lat, lng: form.lng } : null
                   }
-                  onChange={(location) => set(location)}
-                  label="Applicant home location"
+                  onChange={(location) => set(location ?? { lat: null, lng: null })}
                 />
               </FormField>
             </div>
@@ -1147,7 +1137,10 @@ export function StaffRegisterApplicantForm({
                         label={`Preferred job category ${index + 1}`}
                         className="flex-1"
                         id={fieldControlId(`preferences.categoryCodes.${index}`)}
-                        error={errors[`preferences.categoryCodes.${index}`] ?? errors['preferences.categoryCodes']}
+                        error={
+                          errors[`preferences.categoryCodes.${index}`] ??
+                          errors['preferences.categoryCodes']
+                        }
                       >
                         <Select
                           value={categoryCode}
