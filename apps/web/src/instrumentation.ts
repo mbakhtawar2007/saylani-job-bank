@@ -18,7 +18,12 @@
  * Admin maintenance route (`POST /api/v1/admin/maintenance/expire-jobs`)
  * keeps working by hand. The sweep is NOT run per request.
  */
-import { expirePastCloseJobs, msUntilNextExpiryRun } from '@/domains/job';
+// The job barrel re-exports applicant-referrals, which pulls the Redis
+// client (ioredis, Node-only) into the bundle — webpack fails the build on
+// 'stream'/'crypto'/'dns'/'net'. Import the server-safe expiry module
+// directly instead.
+// eslint-disable-next-line no-restricted-imports
+import { expirePastCloseJobs, msUntilNextExpiryRun } from '@/domains/job/expiry';
 import { systemContext } from '@/domains/shared/audit';
 import { logger } from '@/lib/logger';
 
