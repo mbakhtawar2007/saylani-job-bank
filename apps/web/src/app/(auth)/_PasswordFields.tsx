@@ -13,12 +13,19 @@ export function PasswordFields({
   onPassword,
   onConfirm,
   showErrors,
+  serverError,
 }: {
   password: string;
   confirm: string;
   onPassword: (v: string) => void;
   onConfirm: (v: string) => void;
   showErrors: boolean;
+  /**
+   * The API's message for the password field (e.g. a server validation
+   * message), shown on the password field itself instead of as a generic
+   * banner. Wins over the local policy error when present.
+   */
+  serverError?: string;
 }) {
   const policy = passwordSchema.safeParse(password);
   const policyError = showErrors && !policy.success ? policy.error.issues[0]?.message : undefined;
@@ -27,7 +34,12 @@ export function PasswordFields({
   const [showConfirmPw, setShowConfirmPw] = useState(false);
   return (
     <>
-      <FormField label="New password" required hint={PASSWORD_HINT} error={policyError}>
+      <FormField
+        label="New password"
+        required
+        hint={PASSWORD_HINT}
+        error={serverError ?? policyError}
+      >
         <Input
           type={showPw ? 'text' : 'password'}
           autoComplete="new-password"

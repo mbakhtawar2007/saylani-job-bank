@@ -13,7 +13,7 @@ import { useRouter } from 'next/navigation';
 import { useState, type FormEvent, type ReactElement } from 'react';
 import { Button, Checkbox, Input, Select, Switch, Textarea } from '@/components/atoms';
 import { FormField, Modal, toast } from '@/components/molecules';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { ApiClientError, apiFetch, friendlyApiError } from '@/lib/api/client';
 import { isReasonType, MIME_LABELS, TYPE_SINGULAR } from './labels';
 
 export interface ParentOption {
@@ -132,7 +132,7 @@ export function MasterDataItemDialog({ type, item, parents, trigger, open, onOpe
     } catch (err) {
       if (err instanceof ApiClientError) {
         setErrors(Object.fromEntries(err.issues.map((i) => [i.path, i.message])));
-        if (!err.issues.length) setErrors({ form: err.message });
+        if (!err.issues.length) setErrors({ form: friendlyApiError(err) });
       } else setErrors({ form: 'Could not save the item' });
     } finally {
       setPending(false);

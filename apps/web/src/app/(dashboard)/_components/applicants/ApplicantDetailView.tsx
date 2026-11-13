@@ -43,7 +43,7 @@ import { DocumentList, Timeline } from '@/components/organisms';
 import type { ApplicantStaffView } from '@/domains/applicant';
 import type { StaffMatchedJob } from '@/domains/matching';
 import type { ApplicationView } from '@/domains/placement';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { ApiClientError, apiFetch, friendlyApiError } from '@/lib/api/client';
 import { formatCnic } from '@/lib/format/cnic';
 import { formatDate } from '@/lib/format/date';
 import { formatPkMobileDisplay } from '@/lib/format/phone';
@@ -769,9 +769,7 @@ function MatchedJobsForReferralCard({
       setReferredIds((prev) => new Set(prev).add(job.jobId));
       toast.success(`“${job.title}” referred to this applicant.`);
     } catch (err) {
-      setError(
-        err instanceof ApiClientError ? err.message : 'Could not refer this job. Try again.',
-      );
+      setError(friendlyApiError(err));
     } finally {
       setBusyId(null);
     }

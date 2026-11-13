@@ -4,7 +4,7 @@ import { Send } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { Button, Select, Textarea, type SelectOption } from '@/components/atoms';
 import { FormField, toast } from '@/components/molecules';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import type { JobApplicantReferralView } from '@/domains/job';
 
 interface Props {
@@ -57,9 +57,7 @@ export function ReferJobToApplicantPanel({ jobId, targets, initialReferrals }: P
       setNote('');
       toast.success(`Job referred to ${data.applicantName ?? 'applicant'}.`);
     } catch (error) {
-      setAlert(
-        error instanceof ApiClientError ? error.message : 'Could not refer this job. Try again.',
-      );
+      setAlert(friendlyApiError(error));
     } finally {
       setLoading(false);
     }

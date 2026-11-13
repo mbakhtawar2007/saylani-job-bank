@@ -17,8 +17,8 @@ import { ArrowLeft, ArrowRight, CheckCircle2, Send } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Badge, Input, Select, StatusPill, Textarea } from '@/components/atoms';
-import { FormField, PhoneInput } from '@/components/molecules';
-import { apiFetch, ApiClientError, friendlyApiError } from '@/lib/api/client';
+import { ErrorBanner, FormField, PhoneInput } from '@/components/molecules';
+import { apiFetch, ApiClientError } from '@/lib/api/client';
 import type { CompanyView } from '@/domains/company';
 import { normalizePkMobile } from '@/lib/format/phone';
 import { setActiveCompanyCookie } from '@/lib/active-company';
@@ -33,10 +33,6 @@ import {
   zodFieldErrors,
   type FieldErrors,
 } from '../../../_components/applicants/form';
-
-function friendlyError(err: unknown): string {
-  return friendlyApiError(err);
-}
 
 type WizardStep = 'details' | 'contacts' | 'location' | 'documents' | 'submit';
 
@@ -137,7 +133,7 @@ function DetailsStep({
   });
   const [industries, setIndustries] = useState<{ code: string; label: string }[]>([]);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const formRef = useRef<HTMLFormElement | null>(null);
   const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, error);
@@ -215,7 +211,7 @@ function DetailsStep({
         requestErrorFocus();
       } else {
         setErrors({});
-        setError(friendlyError(err));
+        setError(err);
         requestAlertFocus();
       }
     } finally {
@@ -345,11 +341,9 @@ function DetailsStep({
           onChange={(e) => set('description')(e.target.value)}
         />
       </FormField>
-      {error && (
-        <p role="alert" className="text-danger text-sm sm:col-span-2">
-          {error}
-        </p>
-      )}
+      <div className="sm:col-span-2">
+        <ErrorBanner error={error ?? undefined} operation="Save company" />
+      </div>
       <div className="sm:col-span-2">
         <FormErrorSummary errors={errors} labelFor={humanizeFieldKey} />
       </div>
@@ -399,7 +393,7 @@ function ContactsStep({
       : [{ ...emptyContact(), isPrimary: true }],
   );
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const formRef = useRef<HTMLFormElement | null>(null);
   const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, error);
@@ -448,7 +442,7 @@ function ContactsStep({
         requestErrorFocus();
       } else {
         setErrors({});
-        setError(friendlyError(err));
+        setError(err);
         requestAlertFocus();
       }
     } finally {
@@ -553,11 +547,7 @@ function ContactsStep({
           Add another contact
         </Button>
       )}
-      {error && (
-        <p role="alert" className="text-danger text-sm">
-          {error}
-        </p>
-      )}
+      <ErrorBanner error={error ?? undefined} operation="Save company" />
       <FormErrorSummary errors={errors} labelFor={humanizeFieldKey} />
       <Button
         type="submit"
@@ -654,7 +644,7 @@ function LocationStep({
   const [branchId, setBranchId] = useState(company.branch?.id ?? '');
   const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const formRef = useRef<HTMLFormElement | null>(null);
   const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, error);
@@ -832,7 +822,7 @@ function LocationStep({
         requestErrorFocus();
       } else {
         setErrors({});
-        setError(friendlyError(err));
+        setError(err);
         requestAlertFocus();
       }
     } finally {
@@ -941,11 +931,7 @@ function LocationStep({
           />
         </FormField>
       )}
-      {error && (
-        <p role="alert" className="text-danger text-sm">
-          {error}
-        </p>
-      )}
+      <ErrorBanner error={error ?? undefined} operation="Save company" />
       <FormErrorSummary errors={errors} labelFor={humanizeFieldKey} />
       {!hasCoords && isReady && (
         <p className="text-fg-muted text-xs">
@@ -981,7 +967,7 @@ function DocumentsStep({
   onSaved: (c: CompanyView) => void;
 }) {
   const [uploading, setUploading] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [company_, setCompany_] = useState(company);
   const [previews, setPreviews] = useState<Record<string, string>>({});
 
@@ -1036,7 +1022,7 @@ function DocumentsStep({
       );
       setCompany_(saved);
     } catch (err) {
-      setError(friendlyError(err));
+      setError(err);
     } finally {
       setUploading(null);
     }
@@ -1116,7 +1102,7 @@ function DocumentsStep({
           </div>
         );
       })}
-      {error && <p className="text-danger text-sm">{error}</p>}
+      <ErrorBanner error={error ?? undefined} operation="Save company" />
       <Button
         onClick={() => onSaved(company_)}
         fullWidth
@@ -1140,7 +1126,7 @@ function SubmitStep({
 }) {
   const idempotencyKey = useRef<string | null>(null);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [noteError, setNoteError] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const pill = STATUS_PILL[company.status];
@@ -1168,7 +1154,7 @@ function SubmitStep({
       });
       onSubmitted(saved);
     } catch (err) {
-      setError(friendlyError(err));
+      setError(err);
     } finally {
       setPending(false);
     }
@@ -1188,7 +1174,7 @@ function SubmitStep({
       // A too-short note is a field error on the note box, not a page error.
       const noteIssue = err instanceof ApiClientError ? err.issueFor('note') : undefined;
       if (noteIssue) setNoteError(noteIssue);
-      else setError(friendlyError(err));
+      else setError(err);
     } finally {
       setPending(false);
     }
@@ -1257,7 +1243,7 @@ function SubmitStep({
         </FormField>
       )}
 
-      {error && <p className="text-danger text-sm">{error}</p>}
+      <ErrorBanner error={error ?? undefined} operation="Save company" />
 
       {canSubmit && (
         <Button

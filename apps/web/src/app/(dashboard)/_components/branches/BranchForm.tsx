@@ -6,7 +6,7 @@ import type { RadiusValue } from '@jobbank/shared';
 import { Button, Input, Switch } from '@/components/atoms';
 import { FormField, LatLngFields, type LatLng, toast } from '@/components/molecules';
 import type { BranchView } from '@/domains/branch';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { ApiClientError, apiFetch, friendlyApiError } from '@/lib/api/client';
 import { formatDistance } from '@/lib/format/distance';
 import { RadiusFields, toKm, toMeters, type RadiusKm } from '../settings/RadiusFields';
 
@@ -82,7 +82,7 @@ export function BranchForm({ branch, globalRadius }: Props) {
     } catch (err) {
       if (err instanceof ApiClientError) {
         setErrors(Object.fromEntries(err.issues.map((i) => [i.path, i.message])));
-        if (!err.issues.length) toast.error(err.message);
+        if (!err.issues.length) toast.error(friendlyApiError(err));
       } else toast.error('Could not save the branch');
       setPending(false);
     }

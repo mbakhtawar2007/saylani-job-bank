@@ -15,7 +15,7 @@ import NextLink from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button, Checkbox, Input } from '@/components/atoms';
-import { FormField, OTPInput, PhoneInput } from '@/components/molecules';
+import { ErrorBanner, FormField, OTPInput, PhoneInput } from '@/components/molecules';
 import { ApiClientError, apiFetch, safeNextPath } from '@/lib/api/client';
 import { formatPkMobileDisplay } from '@/lib/format/phone';
 import { TwoFactorSetup } from '@/app/(dashboard)/account/security/TwoFactorSetup';
@@ -46,10 +46,8 @@ function useCountdown() {
   return [seconds, setSeconds] as const;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof ApiClientError
-    ? error.message
-    : 'Something went wrong. Please try again.';
+function fieldError(error: unknown, path: string): string | undefined {
+  return error instanceof ApiClientError ? error.issueFor(path) : undefined;
 }
 
 function useFinishSignIn(next: string | null) {
@@ -60,13 +58,9 @@ function useFinishSignIn(next: string | null) {
   };
 }
 
-function Alert({ message }: { message: string | null }) {
-  if (!message) return null;
-  return (
-    <p role="alert" className="bg-danger-soft text-danger-soft-fg rounded-lg px-3 py-2 text-sm">
-      {message}
-    </p>
-  );
+function Alert({ error, operation = 'Sign in' }: { error: unknown; operation?: string }) {
+  if (error == null) return null;
+  return <ErrorBanner error={error} operation={operation} />;
 }
 
 function CodeStep({
@@ -84,7 +78,7 @@ function CodeStep({
   onBack: () => void;
   resendIn: number;
   pending: boolean;
-  error: string | null;
+  error: unknown;
 }) {
   const [code, setCode] = useState('');
   useEffect(() => {
@@ -110,7 +104,7 @@ function CodeStep({
         invalid={Boolean(error)}
         autoFocus
       />
-      <Alert message={error} />
+      <Alert error={error} />
       <Button type="submit" fullWidth disabled={code.length < 6} loading={pending}>
         Verify and continue
       </Button>
@@ -133,7 +127,7 @@ function PhoneSignIn({ next, onBack }: { next: string | null; onBack: () => void
   const [step, setStep] = useState<'phone' | 'code'>('phone');
   const [phone, setPhone] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [resendIn, setResendIn] = useCountdown();
 
   const sendCode = async () => {
@@ -148,7 +142,7 @@ function PhoneSignIn({ next, onBack }: { next: string | null; onBack: () => void
       setStep('code');
       setResendIn(data.resendAfterSeconds);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(err);
     } finally {
       setPending(false);
     }
@@ -165,7 +159,7 @@ function PhoneSignIn({ next, onBack }: { next: string | null; onBack: () => void
       });
       finish(data);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(err);
       setPending(false);
     }
   };
@@ -208,11 +202,12 @@ function PhoneSignIn({ next, onBack }: { next: string | null; onBack: () => void
         <FormField
           label="Mobile number"
           required
-          error={error ?? undefined}
+          error={fieldError(error, 'phone')}
           hint="New here? Your account is created when you verify."
         >
           <PhoneInput autoFocus onChange={(change) => setPhone(change.e164)} />
         </FormField>
+        <ErrorBanner error={error ?? undefined} operation="Send sign-in code" />
         <Button type="submit" fullWidth disabled={!phone} loading={pending}>
           Send code
         </Button>
@@ -237,7 +232,7 @@ function AuthenticatorStep({
   const [backupCode, setBackupCode] = useState('');
   const [trustDevice, setTrustDevice] = useState(false);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   const verify = async (value?: string) => {
     setPending(true);
@@ -255,7 +250,7 @@ function AuthenticatorStep({
       });
       onDone(data);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(err);
       setCode('');
       setPending(false);
     }
@@ -307,7 +302,7 @@ function AuthenticatorStep({
             : 'Required for your role: you will enter a code on every sign-in.'
         }
       />
-      <Alert message={error} />
+      <Alert error={error} />
       <Button
         type="submit"
         fullWidth
@@ -339,7 +334,7 @@ function EmailCodeSignIn({ next, onBack }: { next: string | null; onBack: () => 
   const [email, setEmail] = useState('');
   const [step, setStep] = useState<'email' | 'code'>('email');
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [resendIn, setResendIn] = useCountdown();
 
   const send = async () => {
@@ -353,7 +348,7 @@ function EmailCodeSignIn({ next, onBack }: { next: string | null; onBack: () => 
       setStep('code');
       setResendIn(data.resendAfterSeconds);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(err);
     } finally {
       setPending(false);
     }
@@ -369,7 +364,7 @@ function EmailCodeSignIn({ next, onBack }: { next: string | null; onBack: () => 
       });
       finish(data);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(err);
       setPending(false);
     }
   };
@@ -398,7 +393,7 @@ function EmailCodeSignIn({ next, onBack }: { next: string | null; onBack: () => 
       <p className="text-fg-muted text-sm">
         Employers can sign in with a one-time code sent to their email.
       </p>
-      <FormField label="Work email" required error={error ?? undefined}>
+      <FormField label="Work email" required error={fieldError(error, 'email')}>
         <Input
           type="email"
           autoComplete="username"
@@ -408,6 +403,7 @@ function EmailCodeSignIn({ next, onBack }: { next: string | null; onBack: () => 
           autoFocus
         />
       </FormField>
+      <ErrorBanner error={error ?? undefined} operation="Email sign-in" />
       <Button type="submit" fullWidth loading={pending} disabled={!email.includes('@')}>
         Email me a code
       </Button>
@@ -432,7 +428,7 @@ function StaffSignIn({ next, onBack }: { next: string | null; onBack: () => void
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [trustDeviceAllowed, setTrustDeviceAllowed] = useState(true);
   const [setupToken, setSetupToken] = useState<string | null>(null);
 
@@ -495,7 +491,7 @@ function StaffSignIn({ next, onBack }: { next: string | null; onBack: () => void
       }
       finish(data);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(err);
       setPending(false);
     }
   };
@@ -548,7 +544,7 @@ function StaffSignIn({ next, onBack }: { next: string | null; onBack: () => void
             Forgot password?
           </NextLink>
         </div>
-        <Alert message={error} />
+        <Alert error={error} />
         <Button type="submit" fullWidth loading={pending} disabled={!email || !password}>
           Sign in
         </Button>

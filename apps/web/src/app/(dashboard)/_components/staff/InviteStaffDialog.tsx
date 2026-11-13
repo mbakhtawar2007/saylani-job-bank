@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import { Button, Input, Select } from '@/components/atoms';
 import { FormField, Modal, toast } from '@/components/molecules';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { ApiClientError, apiFetch, friendlyApiError } from '@/lib/api/client';
 
 export interface BranchOption {
   id: string;
@@ -77,7 +77,7 @@ export function InviteStaffDialog({ grantableRoles, branches, basePath }: Props)
     } catch (err) {
       if (err instanceof ApiClientError) {
         setErrors(Object.fromEntries(err.issues.map((i) => [i.path, i.message])));
-        if (!err.issues.length) setErrors({ form: err.message });
+        if (!err.issues.length) setErrors({ form: friendlyApiError(err) });
       } else setErrors({ form: 'Could not send the invitation' });
     } finally {
       setPending(false);

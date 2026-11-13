@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Bell, Check, MailCheck, X } from 'lucide-react';
 import type { PendingOffer } from '@/domains/matching';
 import type { NotificationView } from '@/domains/notifications';
-import { apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import { formatDate } from '@/lib/format/date';
 import { Badge, Button, Label, Select, StatusPill, Textarea } from '@/components/atoms';
 import { EmptyState, Modal, toast } from '@/components/molecules';
@@ -71,7 +71,7 @@ export function NotificationsClient({ items, unread, offers, refusalReasons }: P
       toast.success('All updates marked as read.');
       router.refresh();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not mark updates as read.');
+      toast.error(friendlyApiError(e));
     } finally {
       setBusyId(null);
     }
@@ -100,7 +100,7 @@ export function NotificationsClient({ items, unread, offers, refusalReasons }: P
       setModalError(null);
       router.refresh();
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Could not send your answer.';
+      const message = friendlyApiError(e);
       setModalError(message);
       toast.error(message);
     } finally {

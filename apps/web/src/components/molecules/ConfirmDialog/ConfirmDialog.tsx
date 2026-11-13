@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Button } from '@/components/atoms/Button';
 import { Input } from '@/components/atoms/Input';
 import { Textarea } from '@/components/atoms/Textarea';
+import { ErrorBanner } from '../ErrorBanner';
 import { FormField } from '../FormField';
 import type { ConfirmDialogProps } from './confirmDialog.types';
 
@@ -27,7 +28,7 @@ export function ConfirmDialog({
   const [reason, setReason] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   const minLength = requireReason?.minLength ?? 1;
   const reasonOk = !requireReason || reason.trim().length >= minLength;
@@ -60,7 +61,7 @@ export function ConfirmDialog({
       setOpen(false);
     } catch (err) {
       setPending(false);
-      setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
+      setError(err);
     }
   };
 
@@ -110,14 +111,7 @@ export function ConfirmDialog({
             </FormField>
           )}
 
-          {error && (
-            <p
-              role="alert"
-              className="bg-danger-soft text-danger-soft-fg rounded-lg px-3 py-2 text-sm"
-            >
-              {error}
-            </p>
-          )}
+          <ErrorBanner error={error ?? undefined} operation="Confirm" />
 
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <AlertDialog.Cancel asChild>

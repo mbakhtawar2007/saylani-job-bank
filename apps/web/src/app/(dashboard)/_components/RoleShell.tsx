@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { toast } from '@/components/molecules';
 import { DashboardLayout } from '@/components/templates';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import type { SelectOption } from '@/components/atoms';
 import { IssueApplicantTokenDialog } from './applicants/IssueApplicantTokenDialog';
 import { RegisterCompanyDialog } from './companies/RegisterCompanyDialog';
@@ -57,7 +57,7 @@ export function RoleShell({
       });
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof ApiClientError ? err.message : 'Could not switch branch');
+      toast.error(friendlyApiError(err));
     }
   };
 

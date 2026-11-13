@@ -4,7 +4,7 @@ import { useState, useTransition, type ReactNode } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { BarChart3, Check, Eye, RefreshCw, UserPlus, Users, X } from 'lucide-react';
 import type { JobMatchView, MatchesPage, MatchReviewStatus } from '@/domains/matching';
-import { apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import { formatDate } from '@/lib/format/date';
 import { Badge, Button, Label, Select, StatusPill, Textarea } from '@/components/atoms';
 import { DistanceBadge, EmptyState, Modal, toast } from '@/components/molecules';
@@ -94,7 +94,7 @@ export function MatchesShortlist({ jobId, matches, page, pageSize, reasons }: Pr
         // The Python worker usually finishes in well under a second (LISTEN wakeup).
         setTimeout(() => router.refresh(), 2_500);
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Could not queue recalculation.');
+        toast.error(friendlyApiError(e));
       }
     });
   }
@@ -118,7 +118,7 @@ export function MatchesShortlist({ jobId, matches, page, pageSize, reasons }: Pr
       setModalError(null);
       router.refresh();
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Could not update the decision.';
+      const message = friendlyApiError(e);
       setModalError(message);
       toast.error(message);
     } finally {

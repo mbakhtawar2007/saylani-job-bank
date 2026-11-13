@@ -7,7 +7,7 @@ import { useState, type FormEvent, type ReactElement } from 'react';
 import { Button, Input, Select, StatusPill, Switch } from '@/components/atoms';
 import { DateTimePicker, EmptyState, FormField, Modal, toast } from '@/components/molecules';
 import { DataTable } from '@/components/organisms';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { ApiClientError, apiFetch, friendlyApiError } from '@/lib/api/client';
 
 const weekday = (date: string) =>
   new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' });
@@ -72,7 +72,7 @@ function HolidayDialog({
     } catch (err) {
       if (err instanceof ApiClientError) {
         setErrors(Object.fromEntries(err.issues.map((i) => [i.path, i.message])));
-        if (!err.issues.length) setErrors({ form: err.message });
+        if (!err.issues.length) setErrors({ form: friendlyApiError(err) });
       } else setErrors({ form: 'Could not save the holiday' });
     } finally {
       setPending(false);

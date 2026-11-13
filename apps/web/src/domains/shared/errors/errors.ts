@@ -19,15 +19,47 @@ export class DomainError extends Error {
 }
 
 export class BadRequestError extends DomainError {
-  constructor(message = 'Bad request', details?: unknown) {
+  constructor(
+    message = 'The request could not be understood — check the data you sent and try again.',
+    details?: unknown,
+  ) {
     super('BAD_REQUEST', 400, message, details);
   }
 }
 
+/** Human label for a field path: "salaryMin" → "Salary min", "items.0.skillCode" → "Skill code". */
+export function fieldLabel(path: string): string {
+  if (path === '(root)' || path === 'root') return 'Form';
+  const leaf = path.split('.').pop() ?? path;
+  const words = leaf
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .trim()
+    .toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * Top-level message for a validation failure, derived from the issues
+ * themselves — never the bare "Some fields are invalid" when the server
+ * knows exactly which field failed and why. A single issue speaks for
+ * itself (e.g. "Password: must be at least 10 characters"); several are counted
+ * and the first is named so the user knows where to start.
+ */
+export function validationMessage(issues: FieldIssue[]): string {
+  const [first] = issues;
+  if (!first) return 'Some fields are invalid';
+  if (issues.length === 1) {
+    if (first.path === '(root)' || first.path === 'root') return first.message;
+    return `${fieldLabel(first.path)}: ${first.message}`;
+  }
+  return `Please fix ${issues.length} fields: ${fieldLabel(first.path)} — ${first.message}`;
+}
+
 export class ValidationError extends DomainError {
   readonly issues: FieldIssue[];
-  constructor(issues: FieldIssue[], message = 'Some fields are invalid') {
-    super('VALIDATION_FAILED', 422, message);
+  constructor(issues: FieldIssue[], message?: string) {
+    super('VALIDATION_FAILED', 422, message ?? validationMessage(issues));
     this.issues = issues;
   }
 }

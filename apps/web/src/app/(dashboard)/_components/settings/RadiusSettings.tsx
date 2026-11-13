@@ -9,7 +9,7 @@ import { Button, Select } from '@/components/atoms';
 import { ConfirmDialog, EmptyState, FormField, Modal, toast } from '@/components/molecules';
 import { DataTable } from '@/components/organisms';
 import type { RadiusOverview, RadiusPolicyView } from '@/domains/settings';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { ApiClientError, apiFetch, friendlyApiError } from '@/lib/api/client';
 import { formatDistance } from '@/lib/format/distance';
 import { RadiusFields, toKm, toMeters, type RadiusKm } from './RadiusFields';
 
@@ -23,7 +23,7 @@ const pair = (r: RadiusValue) => `${formatDistance(r.preferredM)} / ${formatDist
 /** Field errors from a radius write, keyed for RadiusFields. */
 function radiusErrors(err: unknown): { preferredM?: string; maxM?: string; form?: string } {
   if (!(err instanceof ApiClientError)) return { form: 'Could not save the radius' };
-  if (!err.issues.length) return { form: err.message };
+  if (!err.issues.length) return { form: friendlyApiError(err) };
   return {
     preferredM: err.issueFor('preferredM'),
     maxM: err.issueFor('maxM') ?? err.issueFor('(root)'),
@@ -184,7 +184,7 @@ function CategoryOverrides({
       toast.success(`${policy.label} now follows branch and global radius`);
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not remove the override');
+      toast.error(friendlyApiError(err));
     }
   };
 

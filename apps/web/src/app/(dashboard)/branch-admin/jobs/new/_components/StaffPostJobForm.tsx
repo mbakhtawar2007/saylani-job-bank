@@ -31,8 +31,8 @@ import {
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { Button, Input, Select, Textarea } from '@/components/atoms';
-import { FormField, toast } from '@/components/molecules';
-import { apiFetch, ApiClientError, friendlyApiError } from '@/lib/api/client';
+import { ErrorBanner, FormField, toast } from '@/components/molecules';
+import { apiFetch, ApiClientError } from '@/lib/api/client';
 import {
   FormErrorSummary,
   fieldControlId,
@@ -118,7 +118,7 @@ export function StaffPostJobForm({
   const [vacancies, setVacancies] = useState('1');
   const [salaryMin, setSalaryMin] = useState('');
   const [salaryMax, setSalaryMax] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const formRef = useRef<HTMLFormElement | null>(null);
   const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, error);
@@ -230,7 +230,7 @@ export function StaffPostJobForm({
         } else {
           // A non-field server error supersedes any stale field errors.
           setErrors({});
-          setError(friendlyApiError(e));
+          setError(e);
           requestAlertFocus();
         }
       }
@@ -622,11 +622,7 @@ export function StaffPostJobForm({
               />
             </FormField>
           </div>
-          {error && (
-            <p role="alert" className="text-danger text-sm">
-              {error}
-            </p>
-          )}
+          <ErrorBanner error={error ?? undefined} operation="Create job" />
           <FormErrorSummary errors={errors} labelFor={humanizeFieldKey} />
           <div className="flex gap-3">
             <Button

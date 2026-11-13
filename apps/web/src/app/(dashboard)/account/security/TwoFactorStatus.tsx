@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Button, Input } from '@/components/atoms';
 import { FormField, toast } from '@/components/molecules';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 
 export function TwoFactorStatus({ canDisable }: { canDisable: boolean }) {
   const router = useRouter();
@@ -42,7 +42,7 @@ export function TwoFactorStatus({ canDisable }: { canDisable: boolean }) {
                 toast.success('Two-factor authentication is off');
                 router.refresh();
               } catch (err) {
-                setError(err instanceof ApiClientError ? err.message : 'Could not turn it off');
+                setError(friendlyApiError(err));
                 setPending(false);
               }
             }}

@@ -34,9 +34,9 @@ import {
   type SkillLevel,
 } from '@jobbank/shared';
 import type { JobView } from '@/domains/job';
-import { apiFetch, ApiClientError, friendlyApiError } from '@/lib/api/client';
+import { apiFetch, ApiClientError } from '@/lib/api/client';
 import { Button, Input, Select, Spinner, Textarea } from '@/components/atoms';
-import { FormField, LatLngFields, type LatLng } from '@/components/molecules';
+import { ErrorBanner, FormField, LatLngFields, type LatLng } from '@/components/molecules';
 import {
   FormErrorSummary,
   fieldControlId,
@@ -89,10 +89,6 @@ const BONUS_FREQUENCY_OPTIONS = BONUS_FREQUENCIES.map((v) => ({
 }));
 const LEVEL_OPTIONS = SKILL_LEVELS.map((v) => ({ value: v, label: SKILL_LEVEL_LABELS[v] }));
 
-function friendlyError(err: unknown): string {
-  return friendlyApiError(err);
-}
-
 // ─── Types ──────────────────────────────────────────────────────────────
 
 interface SkillEntry {
@@ -113,7 +109,7 @@ interface Props {
 export function JobWizard({ initialJob = null, basePath = '/employer' }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const formRef = useRef<HTMLFormElement | null>(null);
   const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, error);
@@ -424,7 +420,7 @@ export function JobWizard({ initialJob = null, basePath = '/employer' }: Props) 
         } else {
           // A non-field server error supersedes any stale field errors.
           setErrors({});
-          setError(friendlyError(e));
+          setError(e);
           requestAlertFocus();
         }
       }
@@ -961,11 +957,7 @@ export function JobWizard({ initialJob = null, basePath = '/employer' }: Props) 
           )}
         </div>
 
-        {error && (
-          <p role="alert" className="text-danger text-sm">
-            {error}
-          </p>
-        )}
+        <ErrorBanner error={error ?? undefined} operation="Save job" />
         <FormErrorSummary errors={errors} labelFor={humanizeFieldKey} />
 
         <div className="flex justify-end gap-3 pb-4">

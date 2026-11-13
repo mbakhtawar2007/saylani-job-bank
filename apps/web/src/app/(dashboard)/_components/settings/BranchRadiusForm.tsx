@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import { Button, Switch } from '@/components/atoms';
 import { toast } from '@/components/molecules';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { ApiClientError, apiFetch, friendlyApiError } from '@/lib/api/client';
 import { formatDistance } from '@/lib/format/distance';
 import { RadiusFields, toKm, toMeters, type RadiusKm } from './RadiusFields';
 
@@ -43,7 +43,7 @@ export function BranchRadiusForm({ branchId, radius, global }: Props) {
     } catch (err) {
       if (err instanceof ApiClientError && err.issues.length) {
         setErrors({ preferredM: err.issueFor('preferredM'), maxM: err.issueFor('maxM') });
-      } else setErrors({ form: err instanceof Error ? err.message : 'Could not save the radius' });
+      } else setErrors({ form: friendlyApiError(err) });
     } finally {
       setPending(false);
     }

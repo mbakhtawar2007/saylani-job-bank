@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Button } from '@/components/atoms';
+import { ErrorBanner } from '@/components/molecules';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import { PasswordFields, passwordReady } from '../_PasswordFields';
 
@@ -12,7 +13,10 @@ export function AcceptInviteForm({ token }: { token: string }) {
   const [confirm, setConfirm] = useState('');
   const [touched, setTouched] = useState(false);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+
+  /** The server's message for the password field, if it reported one. */
+  const passwordError = error instanceof ApiClientError ? error.issueFor('password') : undefined;
 
   return (
     <form
@@ -35,9 +39,7 @@ export function AcceptInviteForm({ token }: { token: string }) {
           router.replace(data.kind === 'signed_in' && data.homePath ? data.homePath : '/login');
           router.refresh();
         } catch (err) {
-          setError(
-            err instanceof ApiClientError ? err.message : 'Something went wrong. Please try again.',
-          );
+          setError(err);
           setPending(false);
         }
       }}
@@ -48,12 +50,9 @@ export function AcceptInviteForm({ token }: { token: string }) {
         onPassword={setPassword}
         onConfirm={setConfirm}
         showErrors={touched}
+        serverError={passwordError}
       />
-      {error && (
-        <p role="alert" className="bg-danger-soft text-danger-soft-fg rounded-lg px-3 py-2 text-sm">
-          {error}
-        </p>
-      )}
+      <ErrorBanner error={error ?? undefined} operation="Activate account" />
       <Button type="submit" fullWidth loading={pending}>
         Activate my account
       </Button>

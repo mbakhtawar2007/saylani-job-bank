@@ -6,7 +6,7 @@ import { useState, type FormEvent } from 'react';
 import { Button, Input } from '@/components/atoms';
 import { FormField, OTPInput, toast } from '@/components/molecules';
 import { Stepper } from '@/components/organisms';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 
 interface Enrollment {
   qrSvg: string;
@@ -55,7 +55,7 @@ export function TwoFactorSetup({
       setPassword('');
       setStep(1);
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Could not start setup');
+      setError(friendlyApiError(err));
     } finally {
       setPending(false);
     }
@@ -74,7 +74,7 @@ export function TwoFactorSetup({
       }
       router.refresh();
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Could not verify the code');
+      setError(friendlyApiError(err));
       setCode('');
       setPending(false);
     }

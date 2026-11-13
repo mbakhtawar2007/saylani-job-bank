@@ -3,14 +3,17 @@
 import { MailCheck, Mail } from 'lucide-react';
 import { useState } from 'react';
 import { Button, Input } from '@/components/atoms';
-import { FormField } from '@/components/molecules';
+import { ErrorBanner, FormField } from '@/components/molecules';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 
 export function ForgotPasswordForm() {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+
+  /** The server's message for the email field, if it reported one. */
+  const emailError = error instanceof ApiClientError ? error.issueFor('email') : undefined;
 
   if (sent) {
     return (
@@ -38,15 +41,13 @@ export function ForgotPasswordForm() {
           await apiFetch('/api/v1/auth/password/forgot', { method: 'POST', body: { email } });
           setSent(true);
         } catch (err) {
-          setError(
-            err instanceof ApiClientError ? err.message : 'Something went wrong. Please try again.',
-          );
+          setError(err);
         } finally {
           setPending(false);
         }
       }}
     >
-      <FormField label="Email" required error={error ?? undefined}>
+      <FormField label="Email" required error={emailError}>
         <Input
           type="email"
           autoComplete="email"
@@ -56,6 +57,7 @@ export function ForgotPasswordForm() {
           autoFocus
         />
       </FormField>
+      <ErrorBanner error={error ?? undefined} operation="Send reset link" />
       <Button type="submit" fullWidth loading={pending} disabled={!email.includes('@')}>
         Send reset link
       </Button>

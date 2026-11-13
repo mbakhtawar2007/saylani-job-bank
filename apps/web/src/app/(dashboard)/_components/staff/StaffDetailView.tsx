@@ -7,12 +7,11 @@ import { useState, type FormEvent } from 'react';
 import { Badge, Button, Input, Select } from '@/components/atoms';
 import { ConfirmDialog, FormField, KeyValue, toast } from '@/components/molecules';
 import type { StaffDetail } from '@/domains/user';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import { formatDateTime } from '@/lib/format/date';
 import type { BranchOption } from './InviteStaffDialog';
 
-const message = (err: unknown) =>
-  err instanceof ApiClientError ? err.message : 'Something went wrong';
+const message = (err: unknown) => friendlyApiError(err);
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (

@@ -6,7 +6,7 @@ import { useState, type FormEvent } from 'react';
 import { Badge, Button, Checkbox, Input, Switch } from '@/components/atoms';
 import { FormField, toast } from '@/components/molecules';
 import type { SettingView } from '@/domains/settings';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { ApiClientError, apiFetch, friendlyApiError } from '@/lib/api/client';
 
 /** Editors work on text so partial input ("7, 3") can be typed; converted on save. */
 type Draft = string | boolean | number[];
@@ -60,9 +60,7 @@ function SettingEditor({ setting }: { setting: SettingView }) {
       router.refresh();
     } catch (err) {
       setError(
-        err instanceof ApiClientError
-          ? (err.issues[0]?.message ?? err.message)
-          : 'Could not save the setting',
+        err instanceof ApiClientError ? friendlyApiError(err) : 'Could not save the setting',
       );
     } finally {
       setPending(false);

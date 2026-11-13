@@ -4,7 +4,7 @@ import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Textarea } from '@/components/atoms';
 import { toast } from '@/components/molecules';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import type { MessageView } from '@/domains/placement';
 
 interface Props {
@@ -30,7 +30,7 @@ export function ChatPanel({ applicationId, messages, currentUserRole }: Props) {
       setContent('');
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof ApiClientError ? err.message : 'Failed to send message');
+      toast.error(friendlyApiError(err));
     } finally {
       setLoading(false);
     }

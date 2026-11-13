@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { LogOut, MonitorSmartphone } from 'lucide-react';
 import { Button, StatusPill } from '@/components/atoms';
 import { toast } from '@/components/molecules';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import { formatDateTime } from '@/lib/format/date';
 
 /** Shape of GET /api/v1/auth/sessions (dates arrive as ISO strings). */
@@ -58,7 +58,7 @@ export function SessionsSection() {
       const { data } = await apiFetch<{ sessions: ApiSession[] }>('/api/v1/auth/sessions');
       setSessions(data.sessions);
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Could not load sessions');
+      setError(friendlyApiError(err));
     }
   }, []);
 
@@ -79,7 +79,7 @@ export function SessionsSection() {
       toast.success('Session signed out');
       await load();
     } catch (err) {
-      toast.error(err instanceof ApiClientError ? err.message : 'Could not sign out that session');
+      toast.error(friendlyApiError(err));
     } finally {
       setRevokingId(null);
     }
@@ -93,7 +93,7 @@ export function SessionsSection() {
       router.push('/login');
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof ApiClientError ? err.message : 'Could not sign out everywhere');
+      toast.error(friendlyApiError(err));
       setRevokingAll(false);
       setConfirmAll(false);
     }

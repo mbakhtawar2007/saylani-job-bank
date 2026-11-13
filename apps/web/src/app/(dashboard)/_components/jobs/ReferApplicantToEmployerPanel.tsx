@@ -4,7 +4,7 @@ import { ArrowRightLeft } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { Button, Select, Textarea, type SelectOption } from '@/components/atoms';
 import { FormField, toast } from '@/components/molecules';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import type { ApplicationView, JobCandidateReferralView } from '@/domains/placement';
 
 interface Props {
@@ -86,11 +86,7 @@ export function ReferApplicantToEmployerPanel({
       setNote('');
       toast.success(`${entry.applicantName} referred to the employer.`);
     } catch (error) {
-      setAlert(
-        error instanceof ApiClientError
-          ? error.message
-          : 'Could not refer this applicant. Try again.',
-      );
+      setAlert(friendlyApiError(error));
     } finally {
       setLoading(false);
     }

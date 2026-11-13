@@ -1,6 +1,8 @@
 'use client';
 
+import type { FieldIssue } from '@jobbank/shared';
 import { useCallback, useEffect, useRef } from 'react';
+import { ErrorBanner } from '@/components/molecules';
 import type { FieldErrors } from './applicants/form';
 
 /**
@@ -122,6 +124,28 @@ export function FormErrorSummary({ errors, labelFor }: FormErrorSummaryProps) {
   );
 }
 
+/**
+ * The same summary for API (422) errors: renders the shared ErrorBanner
+ * validation list next to the submit button, so a server rejection is as
+ * visible as a client-side one. Each item jumps to its field (via
+ * `focusField`) unless the caller passes its own `onIssueClick`. Renders
+ * nothing when there are no issues. Use this in the long wizards
+ * (CompanyWizard, JobWizard, EmployerSignupForm) alongside
+ * `FormErrorSummary` for client-side errors.
+ */
+export function ApiErrorSummary({
+  issues,
+  onIssueClick,
+}: {
+  issues: readonly FieldIssue[];
+  onIssueClick?: (path: string) => void;
+}) {
+  if (issues.length === 0) return null;
+  return (
+    <ErrorBanner variant="validation" issues={issues} onIssueClick={onIssueClick ?? focusField} />
+  );
+}
+
 type FormRef = { current: HTMLFormElement | null };
 
 /**
@@ -132,7 +156,7 @@ type FormRef = { current: HTMLFormElement | null };
  * target always exists by then. Field errors set any other way (e.g. the
  * full-name blur check) never trigger a jump.
  */
-export function useFocusFieldErrors(errors: FieldErrors, formRef: FormRef, alert: string | null) {
+export function useFocusFieldErrors(errors: FieldErrors, formRef: FormRef, alert: unknown) {
   const pendingRef = useRef<'errors' | 'alert' | null>(null);
 
   useEffect(() => {

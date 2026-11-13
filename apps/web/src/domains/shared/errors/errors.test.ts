@@ -52,6 +52,78 @@ describe('toErrorResponse', () => {
     expect(zod.body.error.issues?.[0]?.path).toBe('age');
   });
 
+  it('derives the validation message from the issues, never the generic default', () => {
+    // The 2026-11-12 signup bug: one issue, the password message, was hidden
+    // behind "Some fields are invalid".
+    const single = toErrorResponse(
+      new ValidationError([
+        {
+          path: 'password',
+          message: 'Use at least 10 characters, including a letter and a number.',
+        },
+      ]),
+      CID,
+    );
+    expect(single.body.error.message).toBe(
+      'Password: Use at least 10 characters, including a letter and a number.',
+    );
+
+    const multi = toErrorResponse(
+      new ValidationError([
+        { path: 'email', message: 'Enter a valid email' },
+        { path: 'password', message: 'Use at least 8 characters' },
+      ]),
+      CID,
+    );
+    expect(multi.body.error.message).toBe('Please fix 2 fields: Email — Enter a valid email');
+
+    // An explicit message still wins.
+    const explicit = toErrorResponse(
+      new ValidationError([{ path: 'code', message: 'Wrong code' }], 'Invalid list parameters'),
+      CID,
+    );
+    expect(explicit.body.error.message).toBe('Invalid list parameters');
+
+    // Zod errors get the same treatment.
+    const parsed = z.object({ age: z.number().min(18) }).safeParse({ age: 12 });
+    const zod = toErrorResponse(parsed.error, CID);
+    expect(zod.body.error.message).not.toBe('Some fields are invalid');
+    expect(zod.body.error.message).toContain('Age');
+  });
+
+  it('names the field for Postgres duplicate / missing-reference errors', () => {
+    const duplicate = Object.assign(new Error('duplicate key value'), {
+      code: '23505',
+      detail: 'Key (email)=(someone@example.com) already exists.',
+    });
+    const dupRes = toErrorResponse(duplicate, CID);
+    expect(dupRes.status).toBe(409);
+    expect(dupRes.body.error.message).toContain('this email already exists');
+    // The conflicting value is never echoed back.
+    expect(dupRes.body.error.message).not.toContain('someone@example.com');
+
+    const missing = Object.assign(new Error('insert or update violates foreign key'), {
+      code: '23503',
+      detail: 'Key (company_id)=(c-9) is not present in table "companies".',
+    });
+    expect(toErrorResponse(missing, CID).body.error.message).toContain(
+      'The company id you selected does not exist',
+    );
+
+    // Without a detail, the generic text (with guidance) still applies.
+    const bare = Object.assign(new Error('duplicate key value'), { code: '23505' });
+    expect(toErrorResponse(bare, CID).body.error.message).toContain(
+      'A record with these details already exists',
+    );
+  });
+
+  it('keeps the 500 message generic but always includes the correlation id', () => {
+    const res = toErrorResponse(new Error('connect ECONNREFUSED 10.0.0.5:5432'), CID);
+    expect(res.status).toBe(500);
+    expect(res.body.error.message).toBe('Something went wrong on our side. Please try again.');
+    expect(res.body.error.correlation_id).toBe(CID);
+  });
+
   it('adds Retry-After for rate limits', () => {
     expect(toErrorResponse(new RateLimitedError(30), CID).headers).toEqual({ 'retry-after': '30' });
   });

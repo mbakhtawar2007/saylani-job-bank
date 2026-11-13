@@ -11,7 +11,7 @@ import {
 } from '@jobbank/shared';
 // eslint-disable-next-line no-restricted-imports
 import type { JobView } from '@/domains/job/repository';
-import { apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import { Badge, Button, Link } from '@/components/atoms';
 import { Modal } from '@/components/molecules';
 // The job barrel re-exports server-only modules (profile.ts, staff.ts), so
@@ -85,7 +85,7 @@ export function JobDetailPanel({ job, basePath = '/employer' }: Props) {
         });
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Something went wrong.');
+        setError(friendlyApiError(e));
       }
     });
   }
@@ -100,7 +100,7 @@ export function JobDetailPanel({ job, basePath = '/employer' }: Props) {
         await apiFetch<{ deleted: boolean }>(`/api/v1/jobs/me/${job.id}`, { method: 'DELETE' });
         router.push(`${basePath}/jobs`);
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Something went wrong.');
+        setError(friendlyApiError(e));
       }
     });
   }

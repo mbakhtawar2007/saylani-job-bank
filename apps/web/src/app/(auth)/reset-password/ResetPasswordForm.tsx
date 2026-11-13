@@ -4,6 +4,7 @@ import { CircleCheck } from 'lucide-react';
 import NextLink from 'next/link';
 import { useState } from 'react';
 import { Button } from '@/components/atoms';
+import { ErrorBanner } from '@/components/molecules';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
 import { PasswordFields, passwordReady } from '../_PasswordFields';
 
@@ -12,7 +13,10 @@ export function ResetPasswordForm({ token }: { token: string }) {
   const [confirm, setConfirm] = useState('');
   const [touched, setTouched] = useState(false);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+
+  /** The server's message for the password field, if it reported one. */
+  const passwordError = error instanceof ApiClientError ? error.issueFor('password') : undefined;
   const [done, setDone] = useState(false);
 
   if (!token) {
@@ -52,9 +56,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
           });
           setDone(true);
         } catch (err) {
-          setError(
-            err instanceof ApiClientError ? err.message : 'Something went wrong. Please try again.',
-          );
+          setError(err);
           setPending(false);
         }
       }}
@@ -65,17 +67,15 @@ export function ResetPasswordForm({ token }: { token: string }) {
         onPassword={setPassword}
         onConfirm={setConfirm}
         showErrors={touched}
+        serverError={passwordError}
       />
-      {error && (
-        <p role="alert" className="bg-danger-soft text-danger-soft-fg rounded-lg px-3 py-2 text-sm">
-          {error}{' '}
-          {error.includes('expired') && (
-            <NextLink href="/forgot-password" className="underline">
-              Request a new link
-            </NextLink>
-          )}
-        </p>
-      )}
+      <ErrorBanner error={error ?? undefined} operation="Save new password">
+        {error instanceof ApiClientError && error.message.includes('expired') && (
+          <NextLink href="/forgot-password" className="underline">
+            Request a new link
+          </NextLink>
+        )}
+      </ErrorBanner>
       <Button type="submit" fullWidth loading={pending}>
         Save new password
       </Button>

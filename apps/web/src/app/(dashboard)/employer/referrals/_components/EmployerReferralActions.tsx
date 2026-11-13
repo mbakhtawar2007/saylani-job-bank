@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Textarea } from '@/components/atoms';
 import { FormField, Modal, toast } from '@/components/molecules';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { ApiClientError, apiFetch, friendlyApiError } from '@/lib/api/client';
 import type { ApplicationView } from '@/domains/placement';
 
 interface Props {
@@ -51,10 +51,10 @@ export function EmployerReferralActions({ applicationId, status, companyName, jo
       if (err instanceof ApiClientError) {
         setDecisionNoteError(err.issueFor('note'));
         if (!err.issueFor('note')) {
-          toast.error(err.message);
+          toast.error(friendlyApiError(err));
         }
       } else {
-        toast.error('Failed to record decision');
+        toast.error(friendlyApiError(err));
       }
     } finally {
       setLoading(false);

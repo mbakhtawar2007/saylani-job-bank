@@ -1,6 +1,6 @@
 import type { FieldIssue } from '@jobbank/shared';
 import type { ZodError } from 'zod';
-import { ApiClientError } from '@/lib/api/client';
+import { friendlyApiError } from '@/lib/api/client';
 
 export type FieldErrors = Record<string, string>;
 
@@ -20,5 +20,9 @@ export function zodFieldErrors(error: ZodError): FieldErrors {
   );
 }
 
-export const errorMessage = (err: unknown) =>
-  err instanceof ApiClientError ? err.message : 'Something went wrong. Please try again.';
+/**
+ * One shared message for a failed API call: with 422 issues, list them
+ * field by field; otherwise the server message. Never the bare
+ * "Something went wrong" when the server said more.
+ */
+export const errorMessage = (err: unknown) => friendlyApiError(err);

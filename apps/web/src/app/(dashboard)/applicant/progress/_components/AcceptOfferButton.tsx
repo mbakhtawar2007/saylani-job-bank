@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/atoms';
 import { Modal, toast } from '@/components/molecules';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 
 interface Props {
   applicationId: string;
@@ -28,7 +28,7 @@ export function AcceptOfferButton({ applicationId, jobTitle }: Props) {
       setOpen(false);
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof ApiClientError ? err.message : 'Failed to accept offer');
+      toast.error(friendlyApiError(err));
     } finally {
       setLoading(false);
     }
