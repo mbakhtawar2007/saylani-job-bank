@@ -52,8 +52,8 @@ export const companies = pgTable(
     legalName: text().notNull(),
     tradeName: text(),
     legalStructure: text({ enum: LEGAL_STRUCTURES }).notNull(),
-    /** "1234567-8", a 7-digit NTN, or a 13-digit CNIC-based NTN. */
-    ntn: text().notNull(),
+    /** "1234567-8", a 7-digit NTN, or a 13-digit CNIC-based NTN. Nullable from migration 0047: staff field-visit onboarding does not require an NTN (2026-11-13). */
+    ntn: text(),
     registrationNo: text(),
     industryCode: text().notNull(),
     sizeBand: text({ enum: COMPANY_SIZE_BANDS }).notNull(),
@@ -90,7 +90,13 @@ export const companies = pgTable(
       sql`${t.legalStructure} in (${list(LEGAL_STRUCTURES)})`,
     ),
     check('companies_size_band_valid', sql`${t.sizeBand} in (${list(COMPANY_SIZE_BANDS)})`),
-    check('companies_ntn_format', sql`${t.ntn} ~ '^([0-9]{7}(-[0-9])?|[1-9][0-9]{12})$'`),
+    // A null NTN passes: staff onboarding leaves it blank (migration 0047).
+    // The partial unique index below still stops two live companies sharing
+    // one non-null NTN; Postgres treats NULLs as distinct there.
+    check(
+      'companies_ntn_format',
+      sql`${t.ntn} is null or ${t.ntn} ~ '^([0-9]{7}(-[0-9])?|[1-9][0-9]{12})$'`,
+    ),
     check(
       'companies_submitted_needs_branch',
       sql`${t.status} = 'DRAFT' or ${t.branchId} is not null`,

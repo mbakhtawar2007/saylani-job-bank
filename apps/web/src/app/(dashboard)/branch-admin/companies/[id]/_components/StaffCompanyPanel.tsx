@@ -384,7 +384,7 @@ export function StaffCompanyPanel({
       legalName: company_.details.legalName,
       tradeName: company_.details.tradeName ?? '',
       legalStructure: company_.details.legalStructure,
-      ntn: company_.details.ntn,
+      ntn: company_.details.ntn ?? '',
       registrationNo: company_.details.registrationNo ?? '',
       industryCode: company_.details.industryCode,
       sizeBand: company_.details.sizeBand,
@@ -404,7 +404,10 @@ export function StaffCompanyPanel({
       changes.tradeName = correct.tradeName.trim();
     if (correct.legalStructure !== d.legalStructure)
       changes.legalStructure = correct.legalStructure;
-    if (correct.ntn.trim() !== d.ntn) changes.ntn = correct.ntn.trim();
+    // A blank NTN is not a change (staff onboarding leaves it blank); the
+    // update schema has no way to clear an NTN, so only a filled value counts.
+    if (correct.ntn.trim() !== (d.ntn ?? '') && correct.ntn.trim() !== '')
+      changes.ntn = correct.ntn.trim();
     if (correct.registrationNo.trim() !== (d.registrationNo ?? ''))
       changes.registrationNo = correct.registrationNo.trim();
     if (correct.industryCode !== d.industryCode) changes.industryCode = correct.industryCode;

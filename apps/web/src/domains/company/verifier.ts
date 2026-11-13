@@ -69,7 +69,7 @@ export interface QueueItem {
   companyId: string;
   legalName: string;
   tradeName: string | null;
-  ntn: string;
+  ntn: string | null;
   state: VerificationState;
   round: number;
   submittedAt: string;

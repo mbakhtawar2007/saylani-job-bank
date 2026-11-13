@@ -76,7 +76,7 @@ export const companyViewSchema = z.object({
     legalName: z.string(),
     tradeName: z.string().nullable(),
     legalStructure: z.enum(LEGAL_STRUCTURES),
-    ntn: z.string(),
+    ntn: z.string().nullable(),
     registrationNo: z.string().nullable(),
     industryCode: z.string(),
     sizeBand: z.enum(COMPANY_SIZE_BANDS),

@@ -330,6 +330,13 @@
       "when": 1794500670217,
       "tag": "0046_company_members_two_companies",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1794556784089,
+      "tag": "0047_company_ntn_optional",
+      "breakpoints": true
     }
   ]
 }

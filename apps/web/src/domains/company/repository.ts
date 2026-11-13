@@ -102,7 +102,7 @@ export interface CompanyView {
     legalName: string;
     tradeName: string | null;
     legalStructure: LegalStructure;
-    ntn: string;
+    ntn: string | null;
     registrationNo: string | null;
     industryCode: string;
     sizeBand: CompanySizeBand;

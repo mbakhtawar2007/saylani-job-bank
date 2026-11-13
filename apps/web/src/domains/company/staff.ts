@@ -123,7 +123,7 @@ export interface CompanyListItem {
   id: string;
   legalName: string;
   tradeName: string | null;
-  ntn: string;
+  ntn: string | null;
   status: CompanyStatus;
   branchName: string | null;
   industryLabel: string | null;
@@ -605,10 +605,17 @@ export async function staffOnboardCompany(
   } = input;
 
   await assertActiveMasterData(db, 'INDUSTRY', [companyInput.industryCode], () => 'industryCode');
-  const [existing] = await db
-    .select({ id: c.id })
-    .from(c)
-    .where(and(eq(c.ntn, companyInput.ntn), sql`${c.status} not in ('DRAFT', 'REJECTED')`));
+  // NTN is optional on this flow (2026-11-13): with no NTN there is nothing
+  // to collide with and no DRAFT to resume — every check below is skipped
+  // and a fresh row is always created. (A null NTN must never match other
+  // null-NTN rows: `eq(ntn, null)` would read as IS NULL.)
+  const ntn = companyInput.ntn ?? null;
+  const [existing] = ntn
+    ? await db
+        .select({ id: c.id })
+        .from(c)
+        .where(and(eq(c.ntn, ntn), sql`${c.status} not in ('DRAFT', 'REJECTED')`))
+    : [];
   if (existing) throw ntnTaken();
 
   // F4: a second DRAFT for the same NTN used to be created silently — a
@@ -620,10 +627,12 @@ export async function staffOnboardCompany(
   // go through the company panel. A REJECTED company is not resumed (owner
   // decision 4: it may be re-registered fresh). A live duplicate still 409s
   // NTN_TAKEN above.
-  const [draft] = await db
-    .select({ id: c.id, branchId: c.branchId })
-    .from(c)
-    .where(and(eq(c.ntn, companyInput.ntn), eq(c.status, 'DRAFT')));
+  const [draft] = ntn
+    ? await db
+        .select({ id: c.id, branchId: c.branchId })
+        .from(c)
+        .where(and(eq(c.ntn, ntn), eq(c.status, 'DRAFT')))
+    : [];
   if (draft) {
     if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, draft.branchId);
     const [draftRow] = await db.select().from(c).where(eq(c.id, draft.id));
@@ -637,17 +646,19 @@ export async function staffOnboardCompany(
   try {
     await runCommand(ctx, async ({ tx, audit }) => {
       // Re-check inside the transaction: a live company with this NTN may have
-      // appeared after the read above (see assertNtnFree).
-      await assertNtnFree(tx, companyInput.ntn);
+      // appeared after the read above (see assertNtnFree). Skipped with no NTN.
+      if (ntn) await assertNtnFree(tx, ntn);
       // F4 (race): a DRAFT for this NTN may have appeared after the read
       // above — a concurrent onboard, or the same double-submit. Resume it
       // instead of inserting a second DRAFT; the resumption is audited, and
       // runCommand requires an audit entry, so the no-op write still records
       // one. Same branch rule as the pre-check above.
-      const [racyDraft] = await tx
-        .select({ id: c.id, branchId: c.branchId })
-        .from(c)
-        .where(and(eq(c.ntn, companyInput.ntn), eq(c.status, 'DRAFT')));
+      const [racyDraft] = ntn
+        ? await tx
+            .select({ id: c.id, branchId: c.branchId })
+            .from(c)
+            .where(and(eq(c.ntn, ntn), eq(c.status, 'DRAFT')))
+        : [];
       if (racyDraft) {
         if (!isSuperAdmin(ctx.actor)) assertBranchAccess(ctx.actor, racyDraft.branchId);
         resumedId = racyDraft.id;
@@ -661,7 +672,7 @@ export async function staffOnboardCompany(
       }
       const [row] = await tx
         .insert(c)
-        .values({ ...companyInput, branchId, createdBy: ctx.actor.userId })
+        .values({ ...companyInput, ntn, branchId, createdBy: ctx.actor.userId })
         .returning();
       createdId = row!.id;
       await tx.insert(contacts).values({
@@ -810,12 +821,20 @@ export async function markCompanyRegistrationVerifiedSigned(
         { submissionMissing: missing, documentsNotAccepted: [] },
         ctx.actor.roles,
       );
-      const [other] = await tx
-        .select({ id: c.id })
-        .from(c)
-        .where(
-          and(eq(c.ntn, row.ntn), notInArray(c.status, ['DRAFT', 'REJECTED']), ne(c.id, row.id)),
-        );
+      // No NTN, no duplicate to find: `eq(ntn, null)` would read as IS NULL
+      // and wrongly match every other live company without an NTN.
+      const [other] = row.ntn
+        ? await tx
+            .select({ id: c.id })
+            .from(c)
+            .where(
+              and(
+                eq(c.ntn, row.ntn),
+                notInArray(c.status, ['DRAFT', 'REJECTED']),
+                ne(c.id, row.id),
+              ),
+            )
+        : [];
       if (other) {
         throw new ConflictError(
           'A company with this NTN is already registered with Saylani Job Bank.',

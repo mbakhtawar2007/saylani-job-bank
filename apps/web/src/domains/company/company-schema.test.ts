@@ -4,7 +4,9 @@ import {
   companySiteSchema,
   isResubmitNoteSufficient,
   ntnSchema,
+  registerCompanySchema,
   resubmitSchema,
+  staffOnboardCompanySchema,
 } from '@jobbank/shared';
 
 // Regression tests for the H12 finding: company head-office / site cityCode
@@ -71,6 +73,49 @@ describe('ntnSchema (M17 — format only)', () => {
     expect(() => ntnSchema.parse('123456')).toThrow();
     expect(() => ntnSchema.parse('1234567-89')).toThrow();
     expect(() => ntnSchema.parse('ABCDEFG-8')).toThrow();
+  });
+});
+
+// NTN is optional on staff field-visit onboarding (2026-11-13, user): a
+// company visited in the field may not share its NTN on the spot. A filled
+// NTN still gets the full format check, and employer self-registration
+// still requires one.
+describe('staffOnboardCompanySchema NTN (optional)', () => {
+  const base = {
+    legalName: 'Example Company',
+    legalStructure: 'PRIVATE_LIMITED',
+    industryCode: 'RETAIL',
+    sizeBand: '1_10',
+    branchId: '00000000-0000-4000-8000-000000000001',
+    contactName: 'Aisha Khan',
+    contactPhone: '0300 1234567',
+    visitDate: '2026-11-01',
+    agreed: true,
+  };
+
+  it('accepts a missing NTN as null', () => {
+    expect(staffOnboardCompanySchema.parse(base).ntn).toBeNull();
+  });
+
+  it('accepts a blank NTN as null', () => {
+    expect(staffOnboardCompanySchema.parse({ ...base, ntn: '' }).ntn).toBeNull();
+    expect(staffOnboardCompanySchema.parse({ ...base, ntn: '   ' }).ntn).toBeNull();
+  });
+
+  it('still normalises and validates a filled NTN', () => {
+    expect(staffOnboardCompanySchema.parse({ ...base, ntn: '12345678' }).ntn).toBe('1234567-8');
+    expect(staffOnboardCompanySchema.safeParse({ ...base, ntn: '123456' }).success).toBe(false);
+  });
+
+  it('employer self-registration still requires an NTN', () => {
+    expect(() =>
+      registerCompanySchema.parse({
+        legalName: 'Example Company',
+        legalStructure: 'PRIVATE_LIMITED',
+        industryCode: 'RETAIL',
+        sizeBand: '1_10',
+      }),
+    ).toThrow();
   });
 });
 

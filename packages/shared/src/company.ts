@@ -212,6 +212,23 @@ export const ntnSchema = z
       .regex(/^(\d{7}(-\d)?|[1-9]\d{12})$/, 'Enter the NTN, e.g. 1234567-8 or a 13-digit CNIC'),
   );
 
+/**
+ * NTN for staff field-visit onboarding only (2026-11-13, user): NTN is NOT
+ * mandatory there — a company visited in the field may not share its NTN on
+ * the spot. Blank / missing parses to null; a filled value still gets the
+ * full ntnSchema format check. The employer self-registration schema keeps
+ * the required `ntnSchema` above, so this does not loosen employer sign-up.
+ */
+export const optionalNtnSchema = z
+  .preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
+    ntnSchema.nullable(),
+  )
+  // A missing key parses to null, not undefined: Zod skips an optional
+  // field's inner schema when the key is absent, so the default — not the
+  // preprocess above — is what normalises a missing NTN.
+  .default(null);
+
 const optionalText = (max: number) =>
   z
     .string()
@@ -306,11 +323,16 @@ export type RegisterCompanyInput = z.infer<typeof registerCompanySchema>;
  * agrees to hire through Saylani, and the staff member registers it on its behalf.
  * Few required fields so the form is quick to fill during/after a visit; the rest is
  * completable later. Legal structure and company size stay required: the database keeps
- * them NOT NULL, so making them optional would need a migration.
+ * them NOT NULL, so making them optional would need a migration. NTN is optional
+ * here (2026-11-13): the database column is nullable from migration 0047, and the
+ * duplicate-NTN checks in domains/company/staff.ts are skipped when it is null.
  */
 export const staffOnboardCompanySchema = z
   .object({
     ...companyFields,
+    // NTN is optional here (see optionalNtnSchema): overrides the required
+    // ntn from companyFields, which employer self-registration keeps.
+    ntn: optionalNtnSchema,
     branchId: z.uuid('Choose a branch'),
     contactName: z
       .string('Enter the contact person’s name')

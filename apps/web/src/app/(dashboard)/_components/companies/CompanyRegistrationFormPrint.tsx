@@ -144,6 +144,17 @@ export function CompanyRegistrationFormPrint({
         </FormSection>
 
         <FormSection title="5. Additional information">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+            <Field label="Roles to hire for" value={notes.workforceRoles} />
+            <Field label="Type of work" value={notes.workforceType} />
+            <Field label="Shifts / timings" value={notes.workforceShifts} />
+            <Field label="Number of openings" value={notes.workforceOpenings} />
+            <Field label="Years in business" value={notes.yearsInBusiness} />
+            <Field label="Certifications" value={notes.certifications} />
+            <div className="col-span-2">
+              <Field label="Previous hiring experience" value={notes.previousHiring} />
+            </div>
+          </div>
           <Field label="Additional details / assessment notes" value={notes.additionalNotes} />
           <div className="grid grid-cols-2 gap-x-8 gap-y-5 pt-3">
             <Field label="Company representative signature" />

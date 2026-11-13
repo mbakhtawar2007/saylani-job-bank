@@ -417,7 +417,9 @@ export async function submitMyCompany(ctx: SignedIn): Promise<CompanyView> {
       if (await openVerification(tx, row.id)) {
         throw new ConflictError('This company is already waiting for verification');
       }
-      await assertNtnFree(tx, row.ntn, row.id);
+      // Employer companies always carry an NTN (registerCompanySchema still
+      // requires it); the guard is for the now-nullable column type only.
+      if (row.ntn) await assertNtnFree(tx, row.ntn, row.id);
       const [{ last } = { last: 0 }] = await tx
         .select({ last: max(ver.round) })
         .from(ver)
