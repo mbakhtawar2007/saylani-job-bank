@@ -186,7 +186,7 @@ describe('verifier creates companies', () => {
     expect(res.body.data.status).toBe('UNDER_VERIFICATION');
   });
 
-  it('sees only the companies they onboarded in the company list', async () => {
+  it('sees every company in their city in the company list', async () => {
     const mine = await onboardedCompany();
     // Branch Admin can no longer onboard companies (Step 2), so the other
     // company is onboarded by the second KHI verifier instead.
@@ -203,6 +203,10 @@ describe('verifier creates companies', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     const ids = (res.body.data.items as { id: string }[]).map((c) => c.id);
     expect(ids).toContain(mine.id);
-    expect(ids).not.toContain(otherRes.body.data.id);
+    // Round 3: verifiers hold company:manage (Nov 8 "verifiers manage
+    // companies" model, permissions.test.ts), so the createdBy scope does
+    // not apply to them — the list is city-scoped, and a colleague's
+    // Karachi company is visible too.
+    expect(ids).toContain(otherRes.body.data.id);
   });
 });

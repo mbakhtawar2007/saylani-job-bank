@@ -367,7 +367,10 @@ describe('matching radius policies', () => {
       body: {
         code: `R-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
         name: 'Radius test branch',
-        city: 'Karachi',
+        // Round 3: NOT Karachi — a leftover Karachi branch used to win the
+        // applicant location auto-assignment lottery over KHI-GULSHAN (the
+        // old unordered LIMIT 1). The radius test never needs the city.
+        city: 'Hyderabad',
         location: { lat: 24.9, lng: 67.1 },
       },
     });

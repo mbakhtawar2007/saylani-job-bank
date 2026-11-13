@@ -85,3 +85,52 @@ regressions.** No production code was changed. Branch:
   a file whose `beforeAll` plain-signs-in the verifier at that exact moment
   would hit the same `totpCode` error as round-2 item 1. Only
   `verifier-onboard` was hit in practice.
+
+---
+
+## Round 3 — proof run 2026-11-11 ~18:44 PKT: 7 failed / 615 passed (622)
+
+> Replay note, 2026-11-13: this section was written for the round-3 branch
+> (`3ce8cad`) and replayed onto remote `dev` `41170982`. By then fix14
+> (`8748fd5`) had already fixed the production defect differently — SQL
+> `ST_Distance` nearest-first ordering in `setMyLocation`, instead of the
+> `listBranchOptions` version described in rows #1–#4 — and had already
+> covered rows #5–#6 with a CNIC_FRONT upload inside `onboardedCompany()`.
+> What the replay actually kept: the row-#7 list assertion (both companies
+> visible), the Hyderabad city for the radius-test branch, and this record.
+> Dropped as redundant: the `profile.ts` change, the NTN upload helper,
+> and the explicit branch DELETE (`restoreGlobals` already removes it).
+
+Branch: `fix/integration-tests-round3-2026-11-11` (from `2ab64d7`).
+
+**Verdict: 4 failures share one REAL production defect (nondeterministic
+branch assignment); 3 are stale tests.** One small production change was
+made, with the user's explicit go-ahead (options widget, 18:54 PKT).
+
+| #   | Failure                                                                                                       | Verdict                                | Fix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `applicant.integration` CNIC test: message names "Radius test branch", not "Karachi — Gulshan-e-Iqbal"        | Real defect (production)               | `setMyLocation` assigned `cityBranches[0]` from an unordered LIMIT 1 query — an arbitrary same-city branch. The settings suite's leftover "Radius test branch" (Karachi, one more per run, never deleted) won the lottery in this run. Now assigns the NEAREST active branch in the chosen city, reusing the branch-options ordering (`listBranchOptions`), so the suggestion and the assignment agree. In production there is one branch per city, so behaviour is unchanged live. |
+| 2   | `applicant.integration` nearest-branch test: location save assigns `R-DD4B60`, not `KHI-GULSHAN`              | Same defect as #1                      | Same fix. (The branch-options suggestion itself was correct — KHI first — only the assignment was arbitrary.)                                                                                                                                                                                                                                                                                                                                                                       |
+| 3   | `applicant.integration` search test: row `branchName` is "Radius test branch"                                 | Same defect as #1                      | Same fix — the searched applicant's branch is now deterministically KHI-GULSHAN.                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 4   | `applicant.integration` transfer test: Super Admin transfer 409 "branch has changed" (expectedBranchId `khi`) | Same defect as #1                      | Same fix — the applicant's actual branch is KHI-GULSHAN again, so `expectedBranchId: khi` matches.                                                                                                                                                                                                                                                                                                                                                                                  |
+| 5   | `verifier-onboard` mark-signed: 409 DOCUMENTS_MISSING                                                         | Stale test vs deliberate N15 floor     | The Nov 9 N15 floor requires ≥1 required document (UPLOADED, not rejected) before mark-signed. The test (written Nov 8, first live run in round 2) never uploaded one. It now uploads an NTN_CERTIFICATE (required for PRIVATE_LIMITED) via the staff presign → PUT → confirm flow before mark-signed.                                                                                                                                                                              |
+| 6   | `verifier-onboard` claim/verify: same 409 DOCUMENTS_MISSING                                                   | Same as #5                             | Same upload helper before mark-signed.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 7   | `verifier-onboard` list: verifier sees the Branch Admin's company                                             | Stale test vs current permission model | Verifiers hold `company:manage` (Nov 8 "verifiers manage companies" model, `permissions.test.ts:31-33`), so the `createdBy` scope in `listCompanies` does not apply to them — the list is city-scoped. The test now asserts the list contains BOTH companies. Legal-field correction stays role-gated to SA/BA (H-01 fix), so this does not reopen H-01.                                                                                                                            |
+
+Test hygiene (settings suite): the radius test's branch is no longer created
+in Karachi — its city is now Hyderabad (the test only exercises radius
+resolution, the city is irrelevant) — and the branch is deleted at the end of
+the test, after its radius policies. Leftover `R-*` branches from earlier runs
+stay in the laptop DB (some have applicants assigned, so they cannot be
+deleted); with nearest-assignment they can no longer win an assignment.
+
+## Round 3 verification (VM — no live DB here)
+
+- Typecheck `apps/web`, `packages/shared`, `packages/db`: 0 errors each.
+- ESLint on all touched files: 0 errors (one unused `ilike` import removed
+  after the production edit). Prettier: pass.
+- Web unit + component suites (`vitest run --project unit --project components`):
+  475 tests, all passed.
+- **Integration suite NOT run in the VM** (no live DB). Laptop re-run is the
+  verification step:
+  `pnpm.cmd --filter @jobbank/web test -- --project integration`
