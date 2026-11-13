@@ -1,5 +1,5 @@
 import type { Role } from '@jobbank/shared';
-import { StatusPill } from '@/components/atoms';
+import { Button, StatusPill } from '@/components/atoms';
 import { DetailPageLayout } from '@/components/templates';
 import {
   APPLICANT_SORTABLE,
@@ -25,7 +25,9 @@ import { ApplicantsTable } from './ApplicantsTable';
 import { APPLICANT_STATUS_PILL } from './labels';
 import { profileLabels, profileLists } from './lists';
 import { StaffRegisterApplicantForm } from './StaffRegisterApplicantForm';
+import { TokenRegistrationFlow } from './TokenRegistrationFlow';
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -64,6 +66,18 @@ export async function ApplicantListPage({
     listMasterData(actor, { type: 'AREA' }),
   ]);
 
+  // Counter 2 entry point (2026-11-13): staff who can register applicants
+  // reach the token lookup from here. The Interviewer and Scheduler role
+  // sees this list too but cannot register, so it gets no button.
+  const registerBasePath =
+    role === 'STAFF'
+      ? '/staff/applicants'
+      : role === 'BRANCH_ADMIN'
+        ? '/branch-admin/applicants'
+        : role === 'SUPER_ADMIN'
+          ? '/super-admin/applicants'
+          : null;
+
   return (
     <div className="grid w-full gap-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -81,7 +95,15 @@ export async function ApplicantListPage({
           the sidebar "Issue token" dialog (token-only first counter step),
           then completes through the same form in edit mode on the
           applicant's complete page.
+          Counter 2 (2026-11-13): the "Register from token" button below is
+          the only create-mode entry — it looks a token up first, then
+          opens the full form prefilled from it.
         */}
+        {registerBasePath && (
+          <Button asChild>
+            <Link href={`${registerBasePath}/register-from-token`}>Register from token</Link>
+          </Button>
+        )}
       </header>
       <ApplicantsTable
         rows={data}
@@ -225,6 +247,39 @@ export function ApplicantEditLoading() {
       <div className="bg-surface-muted h-40 animate-pulse rounded-xl" />
       <div className="bg-surface-muted h-40 animate-pulse rounded-xl" />
       <span className="sr-only">Loading applicant profile...</span>
+    </div>
+  );
+}
+
+/**
+ * Counter 2 (2026-11-13): find the token issued at Counter 1, check it
+ * against the applicant's CNIC card, then complete the full registration
+ * on their behalf. The tokenId travels in component state only, never in
+ * the URL — the lookup and the form live on this one page.
+ */
+export async function TokenRegistrationPage({ role, basePath }: { role: Role; basePath: string }) {
+  const { actor } = await requireRole(role);
+  const [lists, branches] = await Promise.all([profileLists(actor), listBranches(actor)]);
+  return (
+    <div className="grid w-full gap-6">
+      <header className="grid gap-1">
+        <h1 className="text-fg text-2xl font-semibold">Register from token</h1>
+        <p className="text-fg-muted text-sm">
+          Find the token issued at Counter 1, check the name and CNIC against the applicant&apos;s
+          CNIC card, then complete the registration on their behalf. Saving the form completes the
+          token.
+        </p>
+      </header>
+      <TokenRegistrationFlow
+        branches={branches.map((b) => ({ value: b.id, label: b.name }))}
+        cities={lists.cities}
+        areas={lists.areas}
+        educationLevels={lists.educationLevels}
+        skills={lists.skills}
+        languages={lists.languages}
+        categories={lists.categories}
+        basePath={basePath}
+      />
     </div>
   );
 }

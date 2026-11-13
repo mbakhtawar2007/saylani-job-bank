@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ApiClientModule from '@/lib/api/client';
@@ -166,5 +166,92 @@ describe('StaffRegisterApplicantForm edit mode', () => {
         expect.objectContaining({ body: expect.objectContaining({ gender: 'MALE' }) }),
       ),
     );
+  });
+});
+
+const issuedToken = {
+  id: '11111111-1111-4111-8111-111111111111',
+  tokenNumber: 7,
+  tokenCode: 'KHI-GULSHAN-007',
+  branchId: '22222222-2222-4222-8222-222222222222',
+  branchCode: 'KHI-GULSHAN',
+  branchName: 'Gulshan',
+  cnic: '4210112345671',
+  applicantName: 'Ahmed Raza',
+  phone: '+923001234567',
+  issuedAt: '2026-11-13T09:00:00.000Z',
+  expiresAt: '2026-11-13T18:59:59.000Z',
+  expired: false,
+  status: 'ISSUED' as const,
+  applicantId: null,
+};
+
+const tokenOptions = {
+  branches: [{ value: issuedToken.branchId, label: 'Gulshan' }],
+  cities: [{ value: 'KARACHI', label: 'Karachi' }],
+  areas: [],
+  educationLevels: [],
+  skills: [],
+  languages: [],
+  categories: [],
+  basePath: '/staff/applicants',
+};
+
+describe('StaffRegisterApplicantForm token mode', () => {
+  beforeEach(() => {
+    apiFetchMock.mockReset().mockResolvedValue({
+      data: {
+        id: '44444444-4444-4444-8444-444444444444',
+        personal: { fullName: 'Ahmed Raza' },
+        registrationReference: 'SJB-2026-TEST',
+        branch: { name: 'Gulshan' },
+        status: 'ACTIVE',
+      },
+    });
+    pushMock.mockReset();
+    refreshMock.mockReset();
+  });
+
+  it('prefills name, CNIC and phone from the token and locks the CNIC', () => {
+    render(<StaffRegisterApplicantForm {...tokenOptions} token={issuedToken} />);
+
+    expect(screen.getByDisplayValue('Ahmed Raza')).toBeInTheDocument();
+    const cnic = screen.getByDisplayValue('42101-1234567-1');
+    expect(cnic).toBeDisabled();
+    expect(screen.getByLabelText('Seven-digit subscriber number')).toHaveValue('1234567');
+    expect(screen.getByText(/From the token, locked. If the CNIC is wrong/)).toBeInTheDocument();
+  });
+
+  it('submits the token id with the registration and shows the token completed', async () => {
+    const user = userEvent.setup();
+    render(<StaffRegisterApplicantForm {...tokenOptions} token={issuedToken} />);
+
+    await user.type(screen.getByLabelText(/Father's or husband's name/), 'Imran Raza');
+    fireEvent.change(screen.getByLabelText(/Date of birth/), {
+      target: { value: '1998-04-12' },
+    });
+    await user.click(screen.getByRole('radio', { name: 'Male' }));
+    await user.selectOptions(screen.getByLabelText(/City/), 'KARACHI');
+    await user.type(screen.getByLabelText(/Latitude/), '24.8607');
+    await user.type(screen.getByLabelText(/Longitude/), '67.0011');
+
+    await user.click(screen.getByRole('button', { name: 'Review registration' }));
+    await user.click(screen.getByRole('button', { name: 'Register job seeker' }));
+
+    await waitFor(() => {
+      expect(apiFetchMock).toHaveBeenCalledTimes(1);
+      expect(apiFetchMock).toHaveBeenCalledWith(
+        '/api/v1/applicants',
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.objectContaining({
+            tokenId: issuedToken.id,
+            cnic: '4210112345671',
+            fullName: 'Ahmed Raza',
+          }),
+        }),
+      );
+    });
+    expect(screen.getByText('KHI-GULSHAN-007 · completed')).toBeInTheDocument();
   });
 });

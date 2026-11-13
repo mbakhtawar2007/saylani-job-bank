@@ -1,7 +1,6 @@
 'use client';
 
 import {
-  assistedApplicantRegistrationSchema,
   ASSISTED_REGISTRATION_GENDERS,
   GENDER_LABELS,
   JOB_TYPE_LABELS,
@@ -13,7 +12,9 @@ import {
   SKILL_LEVEL_LABELS,
   SKILL_LEVELS,
   staffApplicantProfileUpdateSchema,
+  staffRegisterApplicantSchema,
   type ApplicantStatus,
+  type ApplicantTokenView,
   type Gender,
 } from '@jobbank/shared';
 import { ArrowLeft, Check, Plus, Printer, Trash2, UserPlus } from 'lucide-react';
@@ -73,6 +74,13 @@ interface Props {
   categories: SelectOption[];
   basePath: string;
   applicant?: ApplicantStaffView;
+  /**
+   * Counter 2 token mode (2026-11-13): the first-counter token this
+   * registration completes. CNIC, name, phone and branch come prefilled
+   * from the token; the CNIC is locked because the server only completes a
+   * token whose CNIC matches the registration.
+   */
+  token?: ApplicantTokenView;
 }
 
 export function StaffRegisterApplicantForm({
@@ -85,6 +93,7 @@ export function StaffRegisterApplicantForm({
   categories,
   basePath,
   applicant,
+  token,
 }: Props) {
   const router = useRouter();
   const editing = Boolean(applicant);
@@ -96,6 +105,7 @@ export function StaffRegisterApplicantForm({
     reference: string;
     branchName: string | null;
     status: ApplicantStatus;
+    tokenCode: string | null;
   } | null>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [alert, setAlert] = useState<string | null>(null);
@@ -170,13 +180,13 @@ export function StaffRegisterApplicantForm({
     availableFrom: applicant?.preferences?.availableFrom ?? '',
   });
   const [form, setForm] = useState({
-    branchId: applicant?.branch?.id ?? branches[0]?.value ?? '',
-    fullName: applicant?.personal.fullName ?? '',
+    branchId: token?.branchId ?? applicant?.branch?.id ?? branches[0]?.value ?? '',
+    fullName: token?.applicantName ?? applicant?.personal.fullName ?? '',
     fatherName: applicant?.personal.fatherName ?? '',
-    cnic: applicant?.personal.cnic ?? '',
+    cnic: token?.cnic ?? applicant?.personal.cnic ?? '',
     dateOfBirth: applicant?.personal.dateOfBirth ?? '',
     gender: applicant?.personal.gender ?? ('' as Gender | ''),
-    phone: applicant?.personal.phone ?? '',
+    phone: token?.phone ?? applicant?.personal.phone ?? '',
     email: applicant?.personal.email ?? '',
     addressLine: applicant?.address?.addressLine ?? '',
     cityCode: applicant?.address?.cityCode ?? '',
@@ -209,6 +219,9 @@ export function StaffRegisterApplicantForm({
     }
     const raw = {
       branchId: form.branchId,
+      // Token mode: the registration names the first-counter token, and the
+      // server completes it (ISSUED → COMPLETED) in the same transaction.
+      ...(token ? { tokenId: token.id } : {}),
       fullName: form.fullName,
       fatherName: form.fatherName,
       cnic: form.cnic,
@@ -278,7 +291,7 @@ export function StaffRegisterApplicantForm({
             certifications: certifications.map((item) => item.id),
           },
         })
-      : assistedApplicantRegistrationSchema.safeParse(raw);
+      : staffRegisterApplicantSchema.safeParse(raw);
     if (!parsed.success) {
       setErrors(
         toFieldErrors(
@@ -324,7 +337,7 @@ export function StaffRegisterApplicantForm({
         registrationReference: string;
         branch: { name: string } | null;
         status: ApplicantStatus;
-      }>('/api/v1/applicants/staff-register', {
+      }>('/api/v1/applicants', {
         method: 'POST',
         body: payload,
         idempotencyKey: crypto.randomUUID(),
@@ -335,6 +348,7 @@ export function StaffRegisterApplicantForm({
         reference: data.registrationReference,
         branchName: data.branch?.name ?? null,
         status: data.status,
+        tokenCode: token?.tokenCode ?? null,
       });
     } catch (error) {
       if (error instanceof ApiClientError && error.issues.length > 0) {
@@ -383,6 +397,12 @@ export function StaffRegisterApplicantForm({
               {APPLICANT_STATUS_PILL[registered.status].label}
             </dd>
           </div>
+          {registered.tokenCode && (
+            <div>
+              <dt className="text-fg-muted">Token</dt>
+              <dd className="text-fg font-medium">{registered.tokenCode} · completed</dd>
+            </div>
+          )}
         </dl>
         <div className="flex flex-wrap gap-2">
           <Button asChild leftIcon={<Printer />}>
@@ -413,6 +433,11 @@ export function StaffRegisterApplicantForm({
             {applicant ? (
               <p className="text-fg-muted text-sm">
                 Assigned branch: {branchName}. Profile editing does not change branch assignment.
+              </p>
+            ) : token ? (
+              <p className="text-fg-muted text-sm">
+                Assigned branch: {branchName}. The token was issued at this branch; the registration
+                stays at this branch.
               </p>
             ) : (
               <FormField
@@ -456,8 +481,22 @@ export function StaffRegisterApplicantForm({
                 onChange={(event) => set({ fatherName: event.target.value })}
               />
             </FormField>
-            <FormField label="CNIC" required error={errors.cnic} id={fieldControlId('cnic')}>
-              <CNICInput value={form.cnic} onChange={(value) => set({ cnic: value.digits })} />
+            <FormField
+              label="CNIC"
+              required
+              error={errors.cnic}
+              id={fieldControlId('cnic')}
+              hint={
+                token
+                  ? 'From the token, locked. If the CNIC is wrong, cancel this token and issue a new one at Counter 1.'
+                  : undefined
+              }
+            >
+              <CNICInput
+                value={form.cnic}
+                onChange={(value) => set({ cnic: value.digits })}
+                disabled={Boolean(token)}
+              />
             </FormField>
             <FormField
               label="Date of birth"
@@ -512,7 +551,11 @@ export function StaffRegisterApplicantForm({
               {applicant ? (
                 <Input value={form.phone} disabled />
               ) : (
-                <PhoneInput segmented onChange={(value) => set({ phone: value.e164 ?? '' })} />
+                <PhoneInput
+                  segmented
+                  value={form.phone}
+                  onChange={(value) => set({ phone: value.e164 ?? '' })}
+                />
               )}
             </FormField>
             <FormField
@@ -1309,6 +1352,12 @@ export function StaffRegisterApplicantForm({
               <dt className="text-fg-muted">Branch</dt>
               <dd>{branchName}</dd>
             </div>
+            {token && (
+              <div>
+                <dt className="text-fg-muted">Token</dt>
+                <dd>{token.tokenCode}</dd>
+              </div>
+            )}
             <div>
               <dt className="text-fg-muted">Location</dt>
               <dd>{[selectedArea, selectedCity].filter(Boolean).join(', ')}</dd>
