@@ -5,14 +5,19 @@ import type * as ApiClientModule from '@/lib/api/client';
 import type { ApplicantStaffView } from '@/domains/applicant';
 import { StaffRegisterApplicantForm } from './StaffRegisterApplicantForm';
 
-const { apiFetchMock, pushMock, refreshMock } = vi.hoisted(() => ({
+const { apiFetchMock, pushMock, refreshMock, putWithProgressMock } = vi.hoisted(() => ({
   apiFetchMock: vi.fn(),
   pushMock: vi.fn(),
   refreshMock: vi.fn(),
+  putWithProgressMock: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: pushMock, refresh: refreshMock }),
+}));
+
+vi.mock('@/lib/upload/put-with-progress', () => ({
+  putWithProgress: putWithProgressMock,
 }));
 
 vi.mock('@/components/organisms', () => ({
@@ -199,14 +204,27 @@ const tokenOptions = {
 
 describe('StaffRegisterApplicantForm token mode', () => {
   beforeEach(() => {
-    apiFetchMock.mockReset().mockResolvedValue({
-      data: {
-        id: '44444444-4444-4444-8444-444444444444',
-        personal: { fullName: 'Ahmed Raza' },
-        registrationReference: 'SJB-2026-TEST',
-        branch: { name: 'Gulshan' },
-        status: 'ACTIVE',
-      },
+    globalThis.URL.createObjectURL = vi.fn(() => 'blob:mock-photo');
+    globalThis.URL.revokeObjectURL = vi.fn();
+    putWithProgressMock.mockReset().mockResolvedValue(undefined);
+    apiFetchMock.mockReset().mockImplementation(async (url: string) => {
+      if (url.includes('/documents/') && url.includes('/confirm')) return { data: {} };
+      if (url.includes('/documents'))
+        return {
+          data: {
+            documentId: '55555555-5555-4555-8555-555555555555',
+            upload: { url: 'https://storage.test/photo', headers: {} },
+          },
+        };
+      return {
+        data: {
+          id: '44444444-4444-4444-8444-444444444444',
+          personal: { fullName: 'Ahmed Raza' },
+          registrationReference: 'SJB-2026-TEST',
+          branch: { name: 'Gulshan' },
+          status: 'ACTIVE',
+        },
+      };
     });
     pushMock.mockReset();
     refreshMock.mockReset();
@@ -235,11 +253,18 @@ describe('StaffRegisterApplicantForm token mode', () => {
     await user.type(screen.getByLabelText(/Latitude/), '24.8607');
     await user.type(screen.getByLabelText(/Longitude/), '67.0011');
 
+    await user.upload(
+      screen.getByLabelText('Upload a photo file'),
+      new File(['fake-jpeg'], 'photo.jpg', { type: 'image/jpeg' }),
+    );
+    expect(screen.getByAltText('Captured applicant photo preview')).toBeInTheDocument();
+
     await user.click(screen.getByRole('button', { name: 'Review registration' }));
+    expect(screen.getByText('Passport photo captured')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Register job seeker' }));
 
     await waitFor(() => {
-      expect(apiFetchMock).toHaveBeenCalledTimes(1);
+      expect(apiFetchMock).toHaveBeenCalledTimes(3);
       expect(apiFetchMock).toHaveBeenCalledWith(
         '/api/v1/applicants',
         expect.objectContaining({
@@ -251,7 +276,28 @@ describe('StaffRegisterApplicantForm token mode', () => {
           }),
         }),
       );
+      expect(apiFetchMock).toHaveBeenCalledWith(
+        '/api/v1/applicants/44444444-4444-4444-8444-444444444444/documents',
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.objectContaining({ typeCode: 'PHOTO', contentType: 'image/jpeg' }),
+        }),
+      );
     });
+    expect(putWithProgressMock).toHaveBeenCalledWith(
+      expect.objectContaining({ url: 'https://storage.test/photo' }),
+    );
     expect(screen.getByText('KHI-GULSHAN-007 · completed')).toBeInTheDocument();
+    expect(screen.getByText('Passport photo saved')).toBeInTheDocument();
+  });
+
+  it('blocks review until a photo is captured or skipped', async () => {
+    const user = userEvent.setup();
+    render(<StaffRegisterApplicantForm {...tokenOptions} token={issuedToken} />);
+
+    await user.click(screen.getByRole('button', { name: 'Review registration' }));
+
+    expect(screen.getByText(/Capture the applicant’s photo/)).toBeInTheDocument();
+    expect(apiFetchMock).not.toHaveBeenCalled();
   });
 });

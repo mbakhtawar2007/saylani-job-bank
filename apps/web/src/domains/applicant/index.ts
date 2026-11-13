@@ -3,9 +3,11 @@ import './events';
 
 export {
   confirmMyDocument,
+  confirmStaffApplicantPhoto,
   listApplicantDocumentTypes,
   myDocumentLink,
   presignMyDocument,
+  presignStaffApplicantPhoto,
   removeMyDocument,
   staffDocumentLink,
   type DocumentLink,

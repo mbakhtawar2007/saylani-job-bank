@@ -211,3 +211,80 @@ export async function staffDocumentLink(
   });
   return link;
 }
+
+// ─── Staff photo capture (2026-11-13) ────────────────────────────────────
+// Live photo capture at registration runs before the applicant exists, so the
+// photo cannot go through the applicant's own upload path. Instead the form
+// holds the captured JPEG in memory, creates the applicant, then uploads it
+// here — the same presign → PUT straight to storage → confirm pipeline, with
+// the seeded PHOTO document type (Passport-size photo, JPEG/PNG, max 2 MB).
+// Only PHOTO is accepted on these endpoints: staff document uploads of any
+// other type stay on the applicant's own path.
+
+/** Staff registering an applicant: city-scoped like the profile read. */
+async function loadStaffApplicantForPhoto(
+  ctx: SignedIn,
+  applicantId: string,
+): Promise<ApplicantRow> {
+  assertPermission(ctx.actor, 'applicant:create');
+  const row = await loadApplicant(db, applicantId);
+  await assertCityAccess(ctx.actor, row.branchId, { entityType: 'applicant', entityId: row.id });
+  return row;
+}
+
+/** Step 1 (staff): presign a PHOTO upload for a just-registered applicant. */
+export async function presignStaffApplicantPhoto(
+  ctx: SignedIn,
+  applicantId: string,
+  input: PresignDocumentInput,
+): Promise<PresignedDocument> {
+  const row = await loadStaffApplicantForPhoto(ctx, applicantId);
+  if (input.typeCode !== 'PHOTO') {
+    throw new ForbiddenError('Only the passport-size photo can be uploaded here.');
+  }
+  return presignDocumentUpload({
+    ctx,
+    store: applicantDocumentStore,
+    row,
+    input,
+    entity: 'applicant',
+    types: (await listApplicantDocumentTypes()).filter((t) => t.code === 'PHOTO'),
+    rateLimitName: 'applicant-upload',
+    branchError: 'Set your home location and branch before uploading documents',
+  });
+}
+
+/** Step 2 (staff): confirm a PHOTO upload for a just-registered applicant. */
+export async function confirmStaffApplicantPhoto(
+  ctx: SignedIn,
+  applicantId: string,
+  documentId: string,
+): Promise<ApplicantProfile> {
+  const row = await loadStaffApplicantForPhoto(ctx, applicantId);
+  const doc = await ownDocument(db, row, documentId);
+  if (doc.typeCode !== 'PHOTO') {
+    throw new ForbiddenError('Only the passport-size photo can be confirmed here.');
+  }
+  if (doc.status !== 'PENDING_UPLOAD') return buildProfile(db, row);
+  const type = (await applicantDocumentTypes()).find((t) => t.code === doc.typeCode);
+  await confirmDocumentUpload({
+    ctx,
+    store: applicantDocumentStore,
+    doc,
+    entityType: 'applicant',
+    entityId: row.id,
+    branchId: row.branchId,
+    ownerId: row.id,
+    multiple: type?.meta.multiple ?? false,
+    mismatch: {
+      status: 'REJECTED',
+      reviewNote: 'The file contents do not match its declared type',
+    },
+    infectedStatus: 'REJECTED',
+    loadOwner: (tx) => loadApplicant(tx, row.id, { forUpdate: true }),
+    afterUpload: async (cmd) => {
+      await refreshProfileState(cmd, row.id);
+    },
+  });
+  return buildProfile(db, await loadApplicant(db, row.id));
+}

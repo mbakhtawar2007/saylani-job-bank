@@ -24,9 +24,11 @@ import { useRef, useState, type FormEvent } from 'react';
 import { Button, Checkbox, Input, RadioGroup, Select, Textarea } from '@/components/atoms';
 import type { SelectOption } from '@/components/atoms';
 import { CNICInput, FormField, LatLngFields, PhoneInput, toast } from '@/components/molecules';
-import type { ApplicantStaffView } from '@/domains/applicant';
+import type { ApplicantStaffView, PresignedDocument } from '@/domains/applicant';
 import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { putWithProgress } from '@/lib/upload/put-with-progress';
 import { errorMessage, toFieldErrors, type FieldErrors } from './form';
+import { PhotoCapture, type CapturedPhoto } from './PhotoCapture';
 import {
   FormErrorSummary,
   fieldControlId,
@@ -106,9 +108,16 @@ export function StaffRegisterApplicantForm({
     branchName: string | null;
     status: ApplicantStatus;
     tokenCode: string | null;
+    photoStatus: 'saved' | 'failed' | 'skipped';
   } | null>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [alert, setAlert] = useState<string | null>(null);
+  // Live photo capture (2026-11-13): the captured JPEG is held in memory until
+  // the applicant exists, then uploaded as the PHOTO document. Registration
+  // only — profile editing keeps its photo in the applicant's Documents page.
+  const [photo, setPhoto] = useState<CapturedPhoto | null>(null);
+  const [photoSkipped, setPhotoSkipped] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
   const { requestErrorFocus, requestAlertFocus } = useFocusFieldErrors(errors, formRef, alert);
   const [education, setEducation] = useState<EducationRow[]>(
@@ -310,6 +319,45 @@ export function StaffRegisterApplicantForm({
     return parsed.data;
   };
 
+  /**
+   * Photo upload after the applicant exists: presign → PUT straight to storage
+   * → confirm, through the staff photo endpoints. Never throws: a failed photo
+   * must not undo a completed registration — the success screen says so and
+   * staff retry from the applicant's Documents page.
+   */
+  const uploadPhoto = async (
+    applicantId: string,
+    captured: CapturedPhoto,
+  ): Promise<'saved' | 'failed'> => {
+    try {
+      const contentType = captured.blob.type === 'image/png' ? 'image/png' : 'image/jpeg';
+      const { data: presigned } = await apiFetch<PresignedDocument>(
+        `/api/v1/applicants/${applicantId}/documents`,
+        {
+          method: 'POST',
+          body: {
+            typeCode: 'PHOTO',
+            fileName: contentType === 'image/png' ? 'passport-photo.png' : 'passport-photo.jpg',
+            contentType,
+            sizeBytes: captured.blob.size,
+          },
+        },
+      );
+      await putWithProgress({
+        url: presigned.upload.url,
+        file: captured.blob,
+        headers: presigned.upload.headers,
+      });
+      await apiFetch(
+        `/api/v1/applicants/${applicantId}/documents/${presigned.documentId}/confirm`,
+        { method: 'POST' },
+      );
+      return 'saved';
+    } catch {
+      return 'failed';
+    }
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const payload = parse();
@@ -349,6 +397,7 @@ export function StaffRegisterApplicantForm({
         branchName: data.branch?.name ?? null,
         status: data.status,
         tokenCode: token?.tokenCode ?? null,
+        photoStatus: photo ? await uploadPhoto(data.id, photo) : 'skipped',
       });
     } catch (error) {
       if (error instanceof ApiClientError && error.issues.length > 0) {
@@ -403,6 +452,16 @@ export function StaffRegisterApplicantForm({
               <dd className="text-fg font-medium">{registered.tokenCode} · completed</dd>
             </div>
           )}
+          <div>
+            <dt className="text-fg-muted">Photo</dt>
+            <dd className="text-fg font-medium">
+              {registered.photoStatus === 'saved'
+                ? 'Passport photo saved'
+                : registered.photoStatus === 'failed'
+                  ? 'Photo could not be saved — upload it from the applicant’s Documents'
+                  : 'No photo captured'}
+            </dd>
+          </div>
         </dl>
         <div className="flex flex-wrap gap-2">
           <Button asChild leftIcon={<Printer />}>
@@ -456,7 +515,25 @@ export function StaffRegisterApplicantForm({
             )}
           </section>
           <section className="border-border bg-surface shadow-card grid gap-4 rounded-xl border p-5 sm:grid-cols-2">
-            <h2 className="text-fg text-base font-semibold sm:col-span-2">Personal information</h2>
+            <div className="flex flex-wrap items-start justify-between gap-4 sm:col-span-2">
+              <h2 className="text-fg text-base font-semibold">Personal information</h2>
+              {!editing && (
+                <PhotoCapture
+                  photo={photo}
+                  onPhotoChange={(next) => {
+                    setPhoto(next);
+                    if (next) setPhotoError(null);
+                  }}
+                  skipped={photoSkipped}
+                  onSkippedChange={(next) => {
+                    setPhotoSkipped(next);
+                    if (next) setPhotoError(null);
+                  }}
+                  validationError={photoError}
+                  disabled={saving}
+                />
+              )}
+            </div>
             <FormField
               label="Full name"
               required
@@ -1318,6 +1395,13 @@ export function StaffRegisterApplicantForm({
             <Button
               type="button"
               onClick={() => {
+                if (!editing && !photo && !photoSkipped) {
+                  setPhotoError(
+                    'Capture the applicant’s photo, upload one, or continue without a photo.',
+                  );
+                  return;
+                }
+                setPhotoError(null);
                 if (parse()) setReview(true);
               }}
               rightIcon={<Check />}
@@ -1352,6 +1436,28 @@ export function StaffRegisterApplicantForm({
               <dt className="text-fg-muted">Branch</dt>
               <dd>{branchName}</dd>
             </div>
+            {!editing && (
+              <div>
+                <dt className="text-fg-muted">Photo</dt>
+                <dd>
+                  {photo ? (
+                    <span className="flex items-center gap-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={photo.previewUrl}
+                        alt="Applicant photo preview"
+                        className="h-[90px] w-[70px] rounded border object-cover"
+                      />
+                      Passport photo captured
+                    </span>
+                  ) : photoSkipped ? (
+                    'No photo — continued without one'
+                  ) : (
+                    'No photo'
+                  )}
+                </dd>
+              </div>
+            )}
             {token && (
               <div>
                 <dt className="text-fg-muted">Token</dt>
