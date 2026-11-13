@@ -3,7 +3,6 @@ import { getApplicationForEmployer, listMessages } from '@/domains/placement';
 import { Badge } from '@/components/atoms';
 import { KeyValue } from '@/components/molecules';
 import { MessageCircle } from 'lucide-react';
-import { EmployerReferralActions } from './EmployerReferralActions';
 import { EmployerInterviewScheduler } from './EmployerInterviewScheduler';
 import { ChatPanel } from './ChatPanel';
 
@@ -284,21 +283,8 @@ export async function ReferralDetail({ actor, id }: { actor: Actor; id: string }
           )}
         </div>
 
-        {/* Right column — actions */}
+        {/* Right column */}
         <div className="grid content-start gap-6">
-          <section
-            className="rounded-xl border p-5"
-            style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
-          >
-            <h2 className="text-fg mb-4 text-base font-semibold">Actions</h2>
-            <EmployerReferralActions
-              applicationId={app.id}
-              status={app.status}
-              companyName={app.companyName}
-              jobTitle={app.jobTitle}
-            />
-          </section>
-
           {/* Employer interview (audit H-09): staff first, then company */}
           <section
             className="rounded-xl border p-5"

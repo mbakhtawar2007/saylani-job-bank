@@ -323,12 +323,15 @@ describe('first-counter applicant tokens', () => {
     expect(today.body.data.tokenNumber).toBe(issued.body.data.tokenNumber);
 
     const found = await lookup(`?tokenCode=${issued.body.data.tokenCode}`);
-    expect(found.body.data).toHaveLength(2);
+    // The shared test DB can hold this number from earlier days/runs, so
+    // assert membership and order, not an exact length (same pattern as the
+    // re-issue-after-expiry test above).
     expect(found.body.data[0]).toMatchObject({ id: today.body.data.id, status: 'ISSUED' });
-    expect(found.body.data[1]).toMatchObject({
-      id: issued.body.data.id,
-      status: 'ISSUED',
-      expired: true,
-    });
+    expect(found.body.data).toContainEqual(
+      expect.objectContaining({ id: today.body.data.id, status: 'ISSUED' }),
+    );
+    expect(found.body.data).toContainEqual(
+      expect.objectContaining({ id: issued.body.data.id, status: 'ISSUED', expired: true }),
+    );
   });
 });

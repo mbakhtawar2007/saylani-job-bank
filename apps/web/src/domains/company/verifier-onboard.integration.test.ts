@@ -84,6 +84,7 @@ const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2
 async function uploadCompanyDocument(companyId: string, jar: Jar) {
   const presigned = await call(presignCompanyDoc, `/api/v1/companies/${companyId}/documents`, {
     method: 'POST',
+    params: { id: companyId },
     body: {
       typeCode: 'AUTHORISED_PERSON_CNIC_FRONT',
       fileName: 'AUTHORISED_PERSON_CNIC_FRONT.png',

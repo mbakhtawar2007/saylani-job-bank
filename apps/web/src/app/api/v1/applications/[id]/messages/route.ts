@@ -24,7 +24,6 @@ const listOptions = {
  */
 export const GET = apiHandler({
   roles: ['SUPER_ADMIN', 'BRANCH_ADMIN', 'STAFF', 'EMPLOYER', 'APPLICANT'],
-  onBehalfOfEmployer: true,
   params,
   handler: async ({ actor, params: p, request }) => {
     let query;
@@ -43,7 +42,6 @@ export const GET = apiHandler({
 /** POST /api/v1/applications/{id}/messages — send a message. */
 export const POST = apiHandler({
   roles: ['SUPER_ADMIN', 'BRANCH_ADMIN', 'STAFF', 'EMPLOYER', 'APPLICANT'],
-  onBehalfOfEmployer: true,
   params,
   body: sendMessageBody,
   handler: async ({ ctx, actor, params: p, body }) =>

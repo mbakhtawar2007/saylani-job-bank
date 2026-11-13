@@ -2,12 +2,6 @@
 import './events';
 
 export {
-  actingForEmployer,
-  listManagedEmployers,
-  type ActingEmployer,
-  type ManagedEmployer,
-} from './act-for-employer';
-export {
   confirmMyCompanyDocument,
   confirmStaffCompanyDocument,
   myCompanyDocumentLink,

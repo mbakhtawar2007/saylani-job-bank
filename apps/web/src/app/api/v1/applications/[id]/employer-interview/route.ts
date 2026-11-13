@@ -12,7 +12,6 @@ const params = z.object({ id: z.uuid() });
 /** POST /api/v1/applications/{id}/employer-interview — employer schedules their interview. */
 export const POST = apiHandler({
   permission: 'decision:employer',
-  onBehalfOfEmployer: true,
   params,
   body: scheduleEmployerInterviewSchema,
   handler: async ({ ctx, actor, params: p, body }) =>
@@ -22,7 +21,6 @@ export const POST = apiHandler({
 /** PATCH /api/v1/applications/{id}/employer-interview — employer reschedules, postpones or cancels. */
 export const PATCH = apiHandler({
   permission: 'decision:employer',
-  onBehalfOfEmployer: true,
   params,
   body: updateEmployerInterviewStatusSchema,
   handler: async ({ ctx, actor, params: p, body }) =>

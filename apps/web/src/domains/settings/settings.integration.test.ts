@@ -76,7 +76,7 @@ async function restoreGlobals() {
   createdBranchIds.length = 0;
   for (const id of createdCategoryIds) {
     await owner`DELETE FROM match_radius_policies WHERE category_id = ${id}`;
-    await owner`DELETE FROM master_data_items WHERE id = ${id}`;
+    await owner`DELETE FROM master_data WHERE id = ${id}`;
   }
   createdCategoryIds.length = 0;
 }

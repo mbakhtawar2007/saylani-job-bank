@@ -8,7 +8,6 @@ import { apiHandler, ok, type HandlerResult } from '@/domains/shared/http';
  */
 export const GET = apiHandler({
   permission: 'match_case:read',
-  onBehalfOfEmployer: true,
   params: z.object({ id: z.uuid() }),
   query: z.object({
     page: z.coerce.number().int().min(1).default(1),

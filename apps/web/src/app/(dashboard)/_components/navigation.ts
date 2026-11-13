@@ -69,7 +69,6 @@ export function navigationFor(
           items: [
             overview,
             { href: '/branch-admin/applicants', label: 'Applicants', icon: Contact },
-            { href: '/branch-admin/employers', label: 'Act for employer', icon: Building2 },
             { href: '/branch-admin/jobs', label: 'Jobs', icon: Briefcase },
             { href: '/branch-admin/staff', label: 'Staff', icon: Users },
             { href: '/branch-admin/settings', label: 'Branch settings', icon: SlidersHorizontal },

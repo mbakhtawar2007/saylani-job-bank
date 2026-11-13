@@ -26,7 +26,6 @@ const decisionBody = z
  */
 export const PATCH = apiHandler({
   roles: ['STAFF', 'BRANCH_ADMIN', 'EMPLOYER'],
-  onBehalfOfEmployer: true,
   params: z.object({ id: z.uuid(), applicantId: z.uuid() }),
   body: decisionBody,
   handler: async ({ ctx, actor, params, body }) =>

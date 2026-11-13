@@ -24,7 +24,6 @@ import {
 import { searchParamsToObject } from '../pagination';
 import { hasPermission, hasRole, type Actor } from '../scope';
 import { resolveActor } from './actor';
-import { actingForEmployer } from '@/domains/company';
 import { resolveOnBehalfActor } from './on-behalf';
 import type { HandlerResult } from './responses';
 
@@ -67,8 +66,6 @@ export interface ApiHandlerOptions<
   output?: AnySchema;
   /** Staff may call this job seeker route for a counter-registered candidate (see on-behalf.ts). */
   onBehalf?: boolean;
-  /** Staff may call this employer route for a company in their city (see act-for-employer.ts). */
-  onBehalfOfEmployer?: boolean;
   /** Require an Idempotency-Key header and replay duplicates (PRD §8). */
   idempotent?: boolean;
   maxBodyBytes?: number;
@@ -292,15 +289,6 @@ export function apiHandler<
       if (onBehalfOf && actor) {
         const staff = actor;
         actor = await resolveOnBehalfActor(staff, onBehalfOf);
-        ctx.actor = actor;
-        ctx.enteredBy = staff;
-      }
-      const forCompany = options.onBehalfOfEmployer
-        ? request.headers.get(HEADERS.onBehalfOfCompany)
-        : null;
-      if (forCompany && actor) {
-        const staff = actor;
-        actor = (await actingForEmployer(staff, forCompany)).actor;
         ctx.actor = actor;
         ctx.enteredBy = staff;
       }

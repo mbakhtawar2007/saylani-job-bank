@@ -1,5 +1,5 @@
 'server-only';
-// Employer-side interview scheduling, decisions, applicant refusal, and chat.
+// Employer-side interview scheduling, applicant refusal, and chat.
 
 import { schema } from '@jobbank/db';
 import { ROLE_LABELS, ROLES, type PaginationMeta, type Role } from '@jobbank/shared';
@@ -8,17 +8,11 @@ import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
 import { paginationMeta } from '@/domains/shared/pagination';
 import { enforceRateLimit } from '@/domains/shared/rate-limit';
-import {
-  ConflictError,
-  ForbiddenError,
-  NotFoundError,
-  ValidationError,
-} from '@/domains/shared/errors';
+import { ConflictError, ForbiddenError, NotFoundError } from '@/domains/shared/errors';
 import {
   assertCityAccess,
   assertPermission,
   hasPermission,
-  hasRole,
   type Actor,
 } from '@/domains/shared/scope';
 import {
@@ -121,26 +115,6 @@ export interface MessageView {
 }
 
 // ─── Schemas ──────────────────────────────────────────────────────────────
-
-export const EMPLOYER_DECISION_OPTIONS = ['HOLD', 'ACCEPTED', 'REJECTED'] as const;
-export type EmployerDecisionOption = (typeof EMPLOYER_DECISION_OPTIONS)[number];
-
-export const recordEmployerDecisionSchema = z
-  .object({
-    decision: z.enum(EMPLOYER_DECISION_OPTIONS),
-    note: z.string().trim().max(500).optional(),
-  })
-  .superRefine((v, ctx) => {
-    // M19 — a rejection without a reason note tells the applicant nothing.
-    if (v.decision === 'REJECTED' && (v.note?.trim().length ?? 0) < 5) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['note'],
-        message: 'Add a short note (at least 5 characters) when rejecting',
-      });
-    }
-  });
-export type RecordEmployerDecisionInput = z.infer<typeof recordEmployerDecisionSchema>;
 
 export const refuseJobOfferSchema = z.object({
   /**
@@ -404,32 +378,6 @@ export const EMPLOYER_VISIBLE_STATUSES: ApplicationStatus[] = [
   'HIRED',
 ];
 
-/**
- * H17 — employer decisions are only decidable from these states. Mirrors
- * the placement machine's DECIDABLE_STATES; the machine re-checks inside
- * the transaction, this is the early, readable rejection. HIRED,
- * EMPLOYER_REJECTED, APPLICANT_REFUSED and REJECTED are terminal, and
- * SHORTLISTED is pre-referral, so no decision can resurrect a closed
- * application or pre-empt staff referral. This also closes the C3
- * double-fill edge: a match-HIRED application is HIRED here too, so an
- * employer ACCEPTED after it cannot extend a second offer that an
- * applicant accept would fill a second vacancy with.
- */
-export const EMPLOYER_DECIDABLE_STATUSES: ApplicationStatus[] = [
-  'FORWARDED',
-  'EMPLOYER_INTERVIEW_SCHEDULED',
-  'EMPLOYER_INTERVIEW_POSTPONED',
-  'EMPLOYER_INTERVIEW_CANCELLED',
-  'ON_HOLD',
-];
-
-export function assertEmployerCanDecide(status: ApplicationStatus): void {
-  if (!EMPLOYER_DECIDABLE_STATUSES.includes(status))
-    throw new ForbiddenError(
-      `Cannot record an employer decision for an application in status ${status}`,
-    );
-}
-
 /** H18 — employers only ever see applications staff have forwarded. */
 export function assertEmployerCanView(status: ApplicationStatus, applicationId: string): void {
   if (!EMPLOYER_VISIBLE_STATUSES.includes(status))
@@ -492,202 +440,6 @@ export async function getApplicationForEmployer(
   return { ...view, applicant };
 }
 
-// ─── Commands ─────────────────────────────────────────────────────────────
-
-/** Employer: record a hiring decision (HOLD / ACCEPTED / REJECTED). REMOVED 2026-11-12: employers no longer act on referred candidates — this now always 403s for employers. Kept (not deleted) so the API fails closed with a clear message instead of a 404. */
-export async function recordEmployerDecision(
-  ctx: SignedIn,
-  applicationId: string,
-  input: RecordEmployerDecisionInput,
-): Promise<ApplicationView> {
-  // Act of employer removed (2026-11-12): no employer may record a
-  // decision on a referred candidate any more. Staff match-review is
-  // unaffected (separate path, matching service).
-  if (hasRole(ctx.actor, 'EMPLOYER')) {
-    throw new ForbiddenError('Employers can no longer record decisions on referred candidates');
-  }
-  assertPermission(ctx.actor, 'decision:employer');
-
-  // Audit 2026-11-11 (L-20): decisions fire notifications — 30 per
-  // employer user per hour.
-  await enforceRateLimit(
-    'employer-decision',
-    ctx.actor.userId,
-    { limit: 30, windowSeconds: 3600 },
-    'Too many decisions. Try again in an hour.',
-  );
-
-  const row = await assertEmployerOwnsApplication(ctx.actor, applicationId);
-
-  // H18 — an employer cannot decide on an application they cannot see
-  // (pre-referral). H17 — terminal / pre-referral states cannot be decided.
-  assertEmployerCanView(row.status, applicationId);
-  assertEmployerCanDecide(row.status);
-
-  // M19 — service-level backstop for the schema rule: a rejection needs a note.
-  if (input.decision === 'REJECTED' && (input.note?.trim().length ?? 0) < 5) {
-    throw new ValidationError([
-      { path: 'note', message: 'Add a short note (at least 5 characters) when rejecting' },
-    ]);
-  }
-
-  // Audit 2026-11-11 (H-11): decisions are in-flight pipeline steps — the
-  // job must still be live (OPEN or PAUSED) and the company still VERIFIED.
-  // An employer whose company was SUSPENDED after referral, or whose job
-  // closed, must not be able to extend an offer. Re-checked under row locks
-  // inside the transaction.
-  assertJobLive(await loadJob(db, row.jobId), 'decide on this application');
-  const [companyStatusRow] = await db
-    .select({ status: schema.companies.status })
-    .from(schema.companies)
-    .where(eq(schema.companies.id, row.companyId))
-    .limit(1);
-  if (companyStatusRow?.status !== 'VERIFIED')
-    throw new ForbiddenError('Only verified companies can make hiring decisions');
-
-  const event =
-    input.decision === 'HOLD'
-      ? 'EMPLOYER_DECIDE_HOLD'
-      : input.decision === 'ACCEPTED'
-        ? 'EMPLOYER_DECIDE_ACCEPT'
-        : 'EMPLOYER_DECIDE_REJECT';
-
-  const [jobRow] = await db
-    .select({ title: schema.jobs.title })
-    .from(schema.jobs)
-    .where(eq(schema.jobs.id, row.jobId))
-    .limit(1);
-
-  const [companyRow] = await db
-    .select({ name: schema.companies.tradeName, legal: schema.companies.legalName })
-    .from(schema.companies)
-    .where(eq(schema.companies.id, row.companyId))
-    .limit(1);
-
-  const companyName = companyRow?.name ?? companyRow?.legal ?? '';
-  const jobTitle = jobRow?.title ?? '';
-
-  const view = await runCommand(ctx, async ({ tx, audit }) => {
-    assertJobLive(await loadJobForUpdate(tx, row.jobId), 'decide on this application');
-    const [lockedCompany] = await tx
-      .select({ status: schema.companies.status })
-      .from(schema.companies)
-      .where(eq(schema.companies.id, row.companyId))
-      .for('update');
-    if (lockedCompany?.status !== 'VERIFIED')
-      throw new ForbiddenError('Only verified companies can make hiring decisions');
-    const { to: newStatus } = await lockAndTransitionApplication(tx, applicationId, event);
-    const [updated] = await tx
-      .update(ap)
-      .set({
-        status: newStatus,
-        employerDecision: input.decision,
-        employerDecisionAt: new Date(),
-        employerDecisionBy: ctx.actor.userId,
-        employerDecisionNote: input.note ?? null,
-        // Audit 2026-11-11 (M-10): reset so a repeat decision — a second
-        // HOLD, which leaves the status unchanged — re-appears in the call
-        // list instead of being hidden as already-called.
-        lastCallStatus: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(ap.id, applicationId))
-      .returning();
-
-    // Permanent record (migration 0045): the referral-workflow decision, with the
-    // note as evidence. reasonCode is null — this repo's decision input has no
-    // reason-code field; the M19 note rule (≥ 5 chars for REJECTED) is enforced
-    // above, so the table's evidence check cannot fail here.
-    await tx.insert(schema.employerDecisions).values({
-      jobId: row.jobId,
-      applicantId: row.applicantId,
-      applicationId,
-      decision: input.decision,
-      reasonCode: null,
-      evidence: input.note ?? null,
-      decidedBy: ctx.actor.userId,
-    });
-
-    audit({
-      action: 'application.employer_decision',
-      entityType: 'application',
-      entityId: applicationId,
-      branchId: row.branchId,
-      metadata: { decision: input.decision },
-    });
-    return updated!;
-  }).then(buildView);
-
-  // Notify applicant
-  const [applicantRow] = await db
-    .select({ userId: schema.applicants.userId, name: schema.users.name })
-    .from(schema.applicants)
-    .leftJoin(schema.users, eq(schema.users.id, schema.applicants.userId))
-    .where(eq(schema.applicants.id, row.applicantId))
-    .limit(1);
-
-  if (applicantRow) {
-    // Audit 2026-11-11 (M-16): the employer EXTENDING an offer is not the
-    // applicant ACCEPTING it — OFFER_EXTENDED for this direction, so an
-    // applicant's list never shows OFFER_ACCEPTED before they accepted.
-    // OFFER_ACCEPTED stays for the accept direction (acceptJobOffer,
-    // matching/service.ts).
-    type NotifType = 'OFFER_EXTENDED' | 'APPLICATION_ON_HOLD' | 'MATCH_REJECTED';
-    const notifType: NotifType =
-      input.decision === 'ACCEPTED'
-        ? 'OFFER_EXTENDED'
-        : input.decision === 'REJECTED'
-          ? 'MATCH_REJECTED'
-          : 'APPLICATION_ON_HOLD';
-
-    const copy: Record<NotifType, { title: string; body: string }> = {
-      OFFER_EXTENDED: {
-        title: `Job offer — ${jobTitle}`,
-        body: `You have received a job offer from ${companyName} for ${jobTitle}. Please respond via your dashboard.`,
-      },
-      APPLICATION_ON_HOLD: {
-        title: `Application on hold — ${jobTitle}`,
-        body: `${companyName} has placed your application on hold for ${jobTitle}. They may reach out again.`,
-      },
-      MATCH_REJECTED: {
-        title: `Application not selected — ${jobTitle}`,
-        body: `${companyName} has decided not to proceed with your application for ${jobTitle}.`,
-      },
-    };
-
-    void createNotification(db, {
-      userId: applicantRow.userId,
-      type: notifType,
-      title: copy[notifType].title,
-      body: copy[notifType].body,
-      data: { applicationId, jobTitle, companyName },
-    }).catch(() => null);
-  }
-
-  // Audit 2026-11-11 (L-12): the staff member who referred the candidate
-  // hears the outcome too — otherwise they only learn it by re-opening the
-  // referral. Skipped when the decider IS the referrer (staff acting for
-  // the employer deciding their own referral).
-  if (row.createdBy && row.createdBy !== ctx.actor.userId) {
-    const applicantName = applicantRow?.name ?? 'a candidate you referred';
-    const outcome =
-      input.decision === 'ACCEPTED'
-        ? `extended an offer to ${applicantName}`
-        : input.decision === 'REJECTED'
-          ? `decided not to proceed with ${applicantName}`
-          : `placed ${applicantName} on hold`;
-    void createNotification(db, {
-      userId: row.createdBy,
-      type: 'REFERRAL_DECISION',
-      title: `Employer decision — ${jobTitle}`,
-      body: `${companyName} has ${outcome} for ${jobTitle}.`,
-      data: { applicationId, jobTitle, companyName, decision: input.decision },
-    }).catch(() => null);
-  }
-
-  return view;
-}
-
 // ─── Employer interviews (audit 2026-11-11, H-09) ────────────────────────
 
 /**
@@ -699,11 +451,10 @@ export async function recordEmployerDecision(
  * called them, so employers could only Hold/Accept/Reject from FORWARDED.
  *
  * Edit rights: once the employer schedules, the employer owns the interview
- * — only the employer (or staff acting for the employer) may reschedule,
- * postpone or cancel it, through updateEmployerInterviewStatus below. Staff
- * JobBank interview functions never touch the employerInterview* columns,
- * and the machine cannot move an application back from FORWARDED to a
- * JobBank interview state.
+ * — only the employer may reschedule, postpone or cancel it, through
+ * updateEmployerInterviewStatus below. Staff JobBank interview functions
+ * never touch the employerInterview* columns, and the machine cannot move
+ * an application back from FORWARDED to a JobBank interview state.
  */
 export const scheduleEmployerInterviewSchema = z.object({
   interviewAt: futureInterviewAtSchema,

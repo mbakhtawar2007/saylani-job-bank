@@ -10,7 +10,6 @@ import { apiHandler, ok } from '@/domains/shared/http';
  */
 export const POST = apiHandler({
   roles: ['STAFF', 'BRANCH_ADMIN', 'EMPLOYER'],
-  onBehalfOfEmployer: true,
   params: z.object({ id: z.uuid() }),
   handler: async ({ ctx, actor, params }) =>
     ok(await requestJobMatchesRefresh({ ...ctx, actor: actor! }, params.id)),

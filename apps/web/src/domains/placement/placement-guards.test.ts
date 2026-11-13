@@ -1,18 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { ForbiddenError, NotFoundError, ValidationError } from '@/domains/shared/errors';
+import { NotFoundError, ValidationError } from '@/domains/shared/errors';
 import {
   assertFutureInterviewAt,
   scheduleInterviewSchema,
   updateInterviewStatusSchema,
 } from './index';
-import {
-  EMPLOYER_DECIDABLE_STATUSES,
-  EMPLOYER_VISIBLE_STATUSES,
-  assertEmployerCanDecide,
-  assertEmployerCanView,
-  recordEmployerDecisionSchema,
-  refuseJobOfferSchema,
-} from './employer';
+import { EMPLOYER_VISIBLE_STATUSES, assertEmployerCanView, refuseJobOfferSchema } from './employer';
 
 // H11 — interviews must be in the future (5-minute grace for clock skew).
 // Pure schema/helper checks; no DB needed.
@@ -56,34 +49,8 @@ describe('H11 future interview dates', () => {
   });
 });
 
-// H17 + H18 — employer decisions and visibility guards (pure helpers).
-describe('H17/H18 employer decision + visibility guards', () => {
-  it('decidable states are FORWARDED, employer interview states, and ON_HOLD', () => {
-    expect([...EMPLOYER_DECIDABLE_STATUSES].sort()).toEqual(
-      [
-        'EMPLOYER_INTERVIEW_CANCELLED',
-        'EMPLOYER_INTERVIEW_POSTPONED',
-        'EMPLOYER_INTERVIEW_SCHEDULED',
-        'FORWARDED',
-        'ON_HOLD',
-      ].sort(),
-    );
-  });
-
-  it('terminal states and SHORTLISTED cannot be decided', () => {
-    for (const status of [
-      'HIRED',
-      'EMPLOYER_REJECTED',
-      'APPLICANT_REFUSED',
-      'REJECTED',
-      'SHORTLISTED',
-    ] as const) {
-      expect(() => assertEmployerCanDecide(status)).toThrow(ForbiddenError);
-    }
-    expect(() => assertEmployerCanDecide('FORWARDED')).not.toThrow();
-    expect(() => assertEmployerCanDecide('ON_HOLD')).not.toThrow();
-  });
-
+// H18 — employer visibility guards (pure helpers).
+describe('H18 employer visibility guards', () => {
   it('pre-referral states are invisible to employers', () => {
     for (const status of [
       'SHORTLISTED',
@@ -100,21 +67,9 @@ describe('H17/H18 employer decision + visibility guards', () => {
   });
 });
 
-// M19 + H19 — decision notes, reschedule dates, refusal reason codes.
-describe('M19/H19 decision + reschedule + refusal guards', () => {
+// H19 — reschedule dates and refusal reason codes.
+describe('H19 reschedule + refusal guards', () => {
   const future = new Date(Date.now() + 60 * 60_000).toISOString();
-
-  it('REJECTED employer decisions need a note of at least 5 characters', () => {
-    expect(recordEmployerDecisionSchema.safeParse({ decision: 'REJECTED' }).success).toBe(false);
-    expect(
-      recordEmployerDecisionSchema.safeParse({ decision: 'REJECTED', note: 'no' }).success,
-    ).toBe(false);
-    expect(
-      recordEmployerDecisionSchema.safeParse({ decision: 'REJECTED', note: 'Not a fit' }).success,
-    ).toBe(true);
-    expect(recordEmployerDecisionSchema.safeParse({ decision: 'HOLD' }).success).toBe(true);
-    expect(recordEmployerDecisionSchema.safeParse({ decision: 'ACCEPTED' }).success).toBe(true);
-  });
 
   it('rescheduling back to SCHEDULED requires a new interviewAt (staff)', () => {
     expect(updateInterviewStatusSchema.safeParse({ status: 'INTERVIEW_SCHEDULED' }).success).toBe(
