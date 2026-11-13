@@ -22,7 +22,15 @@
  * below. Keep the run time in sync with `EXPIRY_RUN_HOUR_UTC` / `EXPIRY_RUN_MINUTE_UTC` in
  * `apps/web/src/domains/job/expiry.ts`.
  *
- * Safety: production only (dev / test servers never close jobs on a timer); timers are
+ * Edge runtime (2026-11-13 outage): because this app has `src/middleware.ts`, Next also
+ * bundles this file for the Edge runtime and calls `register()` there on every request.
+ * The Edge runtime's `setTimeout` returns a plain number — it has no `.unref()` — so the
+ * `setTimeout(...).unref()` calls below threw `TypeError: setTimeout(...).unref is not a
+ * function` while loading the instrumentation hook, and every request through middleware
+ * (/, /login, /api/v1/health) returned 500. The scheduler therefore runs ONLY when
+ * `process.env.NEXT_RUNTIME === 'nodejs'`; in Edge `register()` returns immediately.
+ *
+ * Safety: Node runtime + production only (dev / test servers never close jobs on a timer); timers are
  * unref'd so they cannot hold the process open at shutdown; a failed sweep is logged, never
  * throws, and retries at the next run; the sweep itself is idempotent under concurrency
  * (row lock + re-check), so a second server instance firing at the same minute is harmless.
@@ -110,6 +118,10 @@ function scheduleDailyExpiry(secret: string): void {
 }
 
 export async function register(): Promise<void> {
+  // Edge runtime: Next bundles this file for Edge too (middleware exists) and calls
+  // register() there. Edge timers have no .unref() — scheduling here 500s every
+  // request (2026-11-13). The scheduler is a Node-only concern.
+  if (process.env.NEXT_RUNTIME !== 'nodejs') return;
   if (process.env.NODE_ENV !== 'production') return;
   const secret = process.env.CRON_SECRET;
   if (!secret) {
