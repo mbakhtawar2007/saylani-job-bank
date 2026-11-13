@@ -134,8 +134,10 @@ async function onboardedCompany(overrides: Record<string, unknown> = {}) {
   const company = res.body.data as { id: string; status: string };
   // N15: marking the form verified & signed requires at least one required
   // document. Upload the authorised person's CNIC front first; the rule
-  // itself is unchanged.
-  await uploadCompanyDocument(company.id, verifierJar);
+  // itself is unchanged. M9: the onboarder cannot upload their own
+  // company's documents (409 SELF_ATTESTATION) — a colleague in the
+  // branch uploads them, same as markVerifiedSigned below.
+  await uploadCompanyDocument(company.id, colleagueJar);
   return company;
 }
 
