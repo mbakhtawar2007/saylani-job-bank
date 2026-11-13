@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button, Badge, Input, Select, StatusPill, Textarea } from '@/components/atoms';
 import { ErrorBanner, FormField, PhoneInput } from '@/components/molecules';
 import { apiFetch, ApiClientError } from '@/lib/api/client';
+import { putWithProgress } from '@/lib/upload/put-with-progress';
 import type { CompanyView } from '@/domains/company';
 import { normalizePkMobile } from '@/lib/format/phone';
 import { setActiveCompanyCookie } from '@/lib/active-company';
@@ -642,7 +643,6 @@ function LocationStep({
   const [cityCode, setCityCode] = useState(hq?.cityCode ?? '');
   const [area, setArea] = useState(hq?.areaCode ?? '');
   const [branchId, setBranchId] = useState(company.branch?.id ?? '');
-  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -665,7 +665,6 @@ function LocationStep({
       `/api/v1/companies/me/branch-options?lat=${pinLat}&lng=${pinLng}`,
     );
     const list = data ?? [];
-    setBranches(list);
     if (!branchId && list.length > 0) setBranchId(list[0]!.id);
     return list;
   }
@@ -713,16 +712,9 @@ function LocationStep({
     setLng(r.lng);
     setAddressLine(r.display || r.addressLine);
     setSearchQuery(r.display || r.addressLine);
-    // Server result carries the real master-data city code; the old code
-    // stored the raw label as city and never set an area code the backend
-    // accepts, so a picked suggestion could still fail on save.
-    if (r.cityCode) {
-      setCityCode(r.cityCode);
-      setCity(r.cityLabel ?? r.cityCode);
-    } else if (r.cityLabel) {
-      setCity(r.cityLabel);
-      setCityCode('');
-    }
+    // The City field is manual (2026-11-13): a picked suggestion must NOT
+    // overwrite it. Search results sometimes come back in Urdu, and the
+    // city the employer typed is the one that gets saved.
     setSearchNote(null);
     setSuggestions([]);
     setShowSuggestions(false);
@@ -739,7 +731,7 @@ function LocationStep({
       // typed address on save instead of leaving the user stuck.
       let useLat = lat;
       let useLng = lng;
-      let useCityCode = cityCode || toCityCode(city);
+      const useCityCode = cityCode || toCityCode(city);
       let useBranchId = branchId;
       if (useLat === 0 || useLng === 0) {
         const query = [addressLine.trim(), city.trim()].filter(Boolean).join(', ');
@@ -755,11 +747,9 @@ function LocationStep({
           useLng = first.lng;
           setLat(first.lat);
           setLng(first.lng);
-          if (first.cityCode) {
-            useCityCode = first.cityCode;
-            setCityCode(first.cityCode);
-            setCity(first.cityLabel ?? first.cityCode);
-          }
+          // Coordinates only — the city stays exactly what the employer
+          // typed (2026-11-13). A geocode result's city can come back in
+          // Urdu, which must never overwrite the manual City field.
         } else {
           // Geocode returned nothing or is unreachable — fall back to the
           // typed city's centre instead of leaving the user stuck again
@@ -838,9 +828,7 @@ function LocationStep({
 
   return (
     <form className="grid gap-4" noValidate ref={formRef} onSubmit={(e) => void save(e)}>
-      <p className="text-fg-muted text-sm">
-        Search for your head office address. Job Bank will suggest the nearest branch automatically.
-      </p>
+      <p className="text-fg-muted text-sm">Add your head office address.</p>
 
       {/* Address search */}
       <div className="relative">
@@ -896,7 +884,13 @@ function LocationStep({
       </FormField>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <FormField label="City" required id={fieldControlId('cityCode')} error={errors.cityCode}>
+        <FormField
+          label="City"
+          required
+          hint="Type the city yourself — it is not filled in from the address search."
+          id={fieldControlId('cityCode')}
+          error={errors.cityCode}
+        >
           <Input
             placeholder="e.g. Karachi"
             value={city}
@@ -917,20 +911,10 @@ function LocationStep({
         </FormField>
       </div>
 
-      {branches.length > 0 && (
-        <FormField
-          label="Nearest Job Bank branch"
-          required
-          id={fieldControlId('branchId')}
-          error={errors.branchId}
-        >
-          <Select
-            value={branchId}
-            onChange={(e) => setBranchId(e.target.value)}
-            options={branches.map((b) => ({ value: b.id, label: b.name }))}
-          />
-        </FormField>
-      )}
+      {/* The branch is assigned automatically from the address and never
+          shown here (2026-11-13): the employer must not see or pick a
+          "Nearest Job Bank branch". loadBranches() still runs so save()
+          has a branchId; the select below was removed, not the lookup. */}
       <ErrorBanner error={error ?? undefined} operation="Save company" />
       <FormErrorSummary errors={errors} labelFor={humanizeFieldKey} />
       {!hasCoords && isReady && (
@@ -1007,14 +991,25 @@ function DocumentsStep({
     try {
       const { data: presign } = await apiFetch<{
         documentId: string;
-        upload: { url: string; fields: Record<string, string> };
+        upload: { url: string; headers?: Record<string, string> };
       }>('/api/v1/companies/me/documents', {
         method: 'POST',
         body: { typeCode, fileName: file.name, contentType: file.type, sizeBytes: file.size },
       });
 
-      const r = await fetch(presign.upload.url, { method: 'PUT', body: file });
-      if (!r.ok) throw new Error('Upload to storage failed');
+      // 2026-11-13 ("Failed to fetch" in this step): the old code did a
+      // bare fetch() PUT with none of the signed headers, while the
+      // applicant and staff uploaders both use putWithProgress with
+      // presign.upload.headers — Content-Type is part of the signature,
+      // so the storage PUT could be rejected, and any network failure
+      // surfaced as the raw browser "Failed to fetch". Use the same
+      // helper as everywhere else: signed headers, and a readable
+      // "Network error during upload" / "Upload failed (HTTP …)" instead.
+      await putWithProgress({
+        url: presign.upload.url,
+        file,
+        headers: presign.upload.headers,
+      });
 
       const { data: saved } = await apiFetch<CompanyView>(
         `/api/v1/companies/me/documents/${presign.documentId}/confirm`,
@@ -1028,80 +1023,92 @@ function DocumentsStep({
     }
   }
 
+  // Optional documents (NTN certificate, SECP registration, address
+  // proof since 2026-11-13) render in the same list with an "Optional"
+  // badge instead of "Required" — uploadable, never blocking submit.
+  const optionalDocuments = company_.optionalDocuments ?? [];
+
+  function renderDocument(code: string, required: boolean) {
+    const uploaded = company_.documents.find(
+      (d) => d.typeCode === code && d.reviewStatus !== 'REJECTED',
+    );
+    const hint = DOCUMENT_HINTS[code];
+    return (
+      <div key={code} className="border-border grid gap-2 rounded-xl border p-4">
+        <div className="flex items-center justify-between">
+          <span className="text-fg text-sm font-medium">{code.replace(/_/g, ' ')}</span>
+          {uploaded ? (
+            <Badge tone="success">Uploaded</Badge>
+          ) : required ? (
+            <Badge tone="neutral">Required</Badge>
+          ) : (
+            <Badge tone="neutral">Optional</Badge>
+          )}
+        </div>
+        {hint && <p className="text-fg-muted text-xs">{hint}</p>}
+        {!required && !uploaded && (
+          <p className="text-fg-muted text-xs">Optional — you can submit without it.</p>
+        )}
+        {uploaded && (
+          <p className="text-fg-muted text-xs">
+            {uploaded.fileName}
+            {uploaded.reviewStatus === 'ACCEPTED' && ' · Accepted by verifier'}
+          </p>
+        )}
+        {previews[code] && (
+          // Audit 2026-11-11 (L-37): kept as <img> — this is a data: URL
+          // of bytes the user just uploaded (FileReader), with unknown
+          // dimensions; there is nothing for next/image to optimise and
+          // no width/height to give it.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={previews[code]}
+            alt={`Preview of ${code.replace(/_/g, ' ')}`}
+            className="mt-1 h-20 w-auto rounded-lg object-cover"
+          />
+        )}
+        <label className="cursor-pointer">
+          <input
+            type="file"
+            accept={
+              code.startsWith('AUTHORISED_PERSON_CNIC') ? '.jpg,.jpeg,.png' : '.pdf,.jpg,.jpeg,.png'
+            }
+            className="sr-only"
+            disabled={uploading === code}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const problem = validateDocument(code, file);
+              if (problem) {
+                setError(problem);
+                return;
+              }
+              setError(null);
+              previewFile(code, file);
+              void upload(code, file);
+            }}
+          />
+          <span className="text-accent text-sm underline underline-offset-4">
+            {uploading === code ? 'Uploading…' : uploaded ? 'Replace' : 'Upload'}
+          </span>
+        </label>
+      </div>
+    );
+  }
+
   return (
     <div className="grid gap-4">
       <p className="text-fg-muted text-sm">
-        Upload the required documents. Accepted formats: PDF, JPG or PNG, up to 5 MB each.
+        Upload the required documents. Accepted formats: PDF, JPG or PNG, up to 5 MB each. Documents
+        marked Optional can be skipped.
       </p>
-      {company_.requiredDocuments.length === 0 && (
+      {company_.requiredDocuments.length === 0 && optionalDocuments.length === 0 && (
         <p className="text-fg-muted text-sm">
           No documents required for your business type yet. Continue to submit.
         </p>
       )}
-      {company_.requiredDocuments.map((code) => {
-        const uploaded = company_.documents.find(
-          (d) => d.typeCode === code && d.reviewStatus !== 'REJECTED',
-        );
-        const hint = DOCUMENT_HINTS[code];
-        return (
-          <div key={code} className="border-border grid gap-2 rounded-xl border p-4">
-            <div className="flex items-center justify-between">
-              <span className="text-fg text-sm font-medium">{code.replace(/_/g, ' ')}</span>
-              {uploaded ? (
-                <Badge tone="success">Uploaded</Badge>
-              ) : (
-                <Badge tone="neutral">Required</Badge>
-              )}
-            </div>
-            {hint && <p className="text-fg-muted text-xs">{hint}</p>}
-            {uploaded && (
-              <p className="text-fg-muted text-xs">
-                {uploaded.fileName}
-                {uploaded.reviewStatus === 'ACCEPTED' && ' · Accepted by verifier'}
-              </p>
-            )}
-            {previews[code] && (
-              // Audit 2026-11-11 (L-37): kept as <img> — this is a data: URL
-              // of bytes the user just uploaded (FileReader), with unknown
-              // dimensions; there is nothing for next/image to optimise and
-              // no width/height to give it.
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={previews[code]}
-                alt={`Preview of ${code.replace(/_/g, ' ')}`}
-                className="mt-1 h-20 w-auto rounded-lg object-cover"
-              />
-            )}
-            <label className="cursor-pointer">
-              <input
-                type="file"
-                accept={
-                  code.startsWith('AUTHORISED_PERSON_CNIC')
-                    ? '.jpg,.jpeg,.png'
-                    : '.pdf,.jpg,.jpeg,.png'
-                }
-                className="sr-only"
-                disabled={uploading === code}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  const problem = validateDocument(code, file);
-                  if (problem) {
-                    setError(problem);
-                    return;
-                  }
-                  setError(null);
-                  previewFile(code, file);
-                  void upload(code, file);
-                }}
-              />
-              <span className="text-accent text-sm underline underline-offset-4">
-                {uploading === code ? 'Uploading…' : uploaded ? 'Replace' : 'Upload'}
-              </span>
-            </label>
-          </div>
-        );
-      })}
+      {company_.requiredDocuments.map((code) => renderDocument(code, true))}
+      {optionalDocuments.map((code) => renderDocument(code, false))}
       <ErrorBanner error={error ?? undefined} operation="Save company" />
       <Button
         onClick={() => onSaved(company_)}

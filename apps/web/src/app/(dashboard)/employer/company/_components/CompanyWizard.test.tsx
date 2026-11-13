@@ -15,9 +15,18 @@ vi.mock('@/lib/api/client', async (importOriginal) => {
   return { ...actual, apiFetch: apiFetchMock };
 });
 
+const { putWithProgressMock } = vi.hoisted(() => ({
+  putWithProgressMock: vi.fn(async () => {}),
+}));
+vi.mock('@/lib/upload/put-with-progress', () => ({
+  putWithProgress: putWithProgressMock,
+}));
+
 describe('CompanyWizard', () => {
   beforeEach(() => {
     apiFetchMock.mockReset();
+    putWithProgressMock.mockReset();
+    putWithProgressMock.mockImplementation(async () => {});
     apiFetchMock.mockImplementation(async (path: string) => {
       if (path === '/api/v1/master-data?type=INDUSTRY') {
         return { data: [{ code: 'IT', label: 'Information technology' }] };
@@ -215,6 +224,7 @@ describe('CompanyWizard', () => {
           sites: [],
           documents: [],
           requiredDocuments: [],
+          optionalDocuments: [],
           missing: [],
           verification: null,
           editable: {
@@ -437,6 +447,91 @@ describe('CompanyWizard', () => {
     );
   });
 
+  // City is manual (2026-11-13): picking a search suggestion must not
+  // overwrite the city the employer typed — search results can come back
+  // in Urdu. The mocked suggestion carries city Karachi; the employer
+  // typed Lahore, so the save must carry LAHORE.
+  it('does not overwrite the typed city when a suggestion is picked', async () => {
+    const user = userEvent.setup();
+    render(
+      <CompanyWizard
+        initialStep="location"
+        initialCompany={
+          {
+            ...infoRequestedCompany([]),
+            status: 'DRAFT',
+            verification: null,
+            headOffice: null,
+          } as never
+        }
+      />,
+    );
+
+    await user.type(screen.getByLabelText(/Search address/), 'Zaitoon Ashraf IT Park');
+    // Debounced search returns the mocked Karachi suggestion.
+    const suggestion = await screen.findByRole(
+      'button',
+      { name: 'Zaitoon Ashraf IT Park, Mehmoodabad, Karachi, Pakistan' },
+      { timeout: 3000 },
+    );
+    await user.type(screen.getByLabelText(/^City/), 'Lahore');
+    await user.click(suggestion);
+
+    await user.click(screen.getByRole('button', { name: 'Save and continue' }));
+
+    // The save chain is debounced search → pick → geocode → PUT, which
+    // can take over the 1000 ms default under a parallel full-suite run
+    // on this VM (flaked twice at the default timeout).
+    await waitFor(
+      () =>
+        expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/companies/me/head-office', {
+          method: 'PUT',
+          body: {
+            location: { lat: 24.8615, lng: 67.0099 },
+            addressLine: 'Zaitoon Ashraf IT Park, Mehmoodabad, Karachi, Pakistan',
+            cityCode: 'LAHORE',
+            areaCode: undefined,
+            branchId: 'b0000000-0000-4000-8000-000000000001',
+          },
+        }),
+      { timeout: 5000 },
+    );
+  });
+
+  // The branch is assigned silently (2026-11-13): no "Nearest Job Bank
+  // branch" field is shown on the location step, even once branches load.
+  it('does not show a nearest branch field on the location step', async () => {
+    render(
+      <CompanyWizard
+        initialStep="location"
+        initialCompany={
+          {
+            ...infoRequestedCompany([]),
+            status: 'DRAFT',
+            verification: null,
+            headOffice: {
+              id: 'loc-1',
+              kind: 'HQ',
+              label: 'Head office',
+              addressLine: 'Zaitoon Ashraf IT Park, Mehmoodabad',
+              cityCode: 'KARACHI',
+              areaCode: null,
+              location: { lat: 24.8615, lng: 67.0099 },
+            },
+          } as never
+        }
+      />,
+    );
+
+    await waitFor(() =>
+      expect(apiFetchMock).toHaveBeenCalledWith(
+        '/api/v1/companies/me/branch-options?lat=24.8615&lng=67.0099',
+      ),
+    );
+    expect(screen.queryByLabelText(/Nearest Job Bank branch/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/nearest branch/i)).not.toBeInTheDocument();
+  });
+
   // Area is free text but the backend wants a master-data AREA code:
   // sending "DHA Phase 5" as areaCode 422s the whole save.
   it('does not send free-text area as areaCode', async () => {
@@ -475,15 +570,23 @@ describe('CompanyWizard', () => {
   // separate uploads — front and back — not one "front or back" slot, and a
   // phone photo named IMG_1234.jpg must upload: the old filename check
   // ("cnic|id|nic|identity") rejected it and showed the orange warning.
+  // NTN / SECP / address proof are OPTIONAL (2026-11-13), not required.
   const documentsCompany = () => ({
     ...infoRequestedCompany([]),
     status: 'DRAFT',
     verification: null,
-    requiredDocuments: [
-      'AUTHORISED_PERSON_CNIC_FRONT',
-      'AUTHORISED_PERSON_CNIC_BACK',
-      'NTN_CERTIFICATE',
-    ],
+    requiredDocuments: ['AUTHORISED_PERSON_CNIC_FRONT', 'AUTHORISED_PERSON_CNIC_BACK'],
+    optionalDocuments: ['NTN_CERTIFICATE', 'SECP_REGISTRATION', 'ADDRESS_PROOF'],
+  });
+
+  it('shows NTN, SECP and address proof as optional, CNIC as required', () => {
+    render(<CompanyWizard initialStep="documents" initialCompany={documentsCompany() as never} />);
+
+    expect(screen.getByText('NTN CERTIFICATE')).toBeInTheDocument();
+    expect(screen.getByText('SECP REGISTRATION')).toBeInTheDocument();
+    expect(screen.getByText('ADDRESS PROOF')).toBeInTheDocument();
+    expect(screen.getAllByText('Optional')).toHaveLength(3);
+    expect(screen.getAllByText('Required')).toHaveLength(2);
   });
 
   it('shows separate CNIC front and back uploads with their own hints', () => {
@@ -504,7 +607,10 @@ describe('CompanyWizard', () => {
         return {
           data: {
             documentId: 'doc-1',
-            upload: { url: 'https://storage.example/upload', fields: {} },
+            upload: {
+              url: 'https://storage.example/upload',
+              headers: { 'Content-Type': 'image/jpeg' },
+            },
           },
         };
       }
@@ -529,10 +635,6 @@ describe('CompanyWizard', () => {
       }
       return { data: company };
     });
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({ ok: true })),
-    );
     try {
       const user = userEvent.setup();
       render(<CompanyWizard initialStep="documents" initialCompany={company as never} />);
@@ -549,6 +651,15 @@ describe('CompanyWizard', () => {
             contentType: 'image/jpeg',
             sizeBytes: 5,
           },
+        }),
+      );
+      // The storage PUT goes through the shared helper with the signed
+      // headers (2026-11-13 "Failed to fetch" fix), not a bare fetch.
+      await waitFor(() =>
+        expect(putWithProgressMock).toHaveBeenCalledWith({
+          url: 'https://storage.example/upload',
+          file: expect.any(File),
+          headers: { 'Content-Type': 'image/jpeg' },
         }),
       );
       await waitFor(() => expect(screen.getByText('Uploaded')).toBeInTheDocument());
@@ -578,74 +689,74 @@ describe('CompanyWizard', () => {
   });
 
   it('uses a distinct idempotency key for company creation and verification submission', async () => {
-      const company = {
-        id: 'company-1',
-        status: 'DRAFT',
-        branch: null,
-        details: {
-          legalName: 'Example Company',
-          tradeName: null,
-          legalStructure: 'PRIVATE_LIMITED',
-          ntn: '1234567-8',
-          registrationNo: null,
-          industryCode: 'IT',
-          sizeBand: '1_10',
-          website: null,
-          description: null,
-        },
-        contacts: [],
-        headOffice: null,
-        sites: [],
-        documents: [],
-        requiredDocuments: [],
-        missing: [],
-        verification: null,
-        editable: {
-          details: true,
-          legal: true,
-          contacts: true,
-          locations: true,
-          branch: true,
-          documents: true,
-        },
-        verifiedAt: null,
-        createdAt: '2026-10-01T00:00:00.000Z',
-      };
-      apiFetchMock.mockImplementation(async (path: string) => {
-        if (path === '/api/v1/master-data?type=INDUSTRY')
-          return { data: [{ code: 'IT', label: 'Information technology' }] };
-        if (path === '/api/v1/companies/me/submit')
-          return { data: { ...company, status: 'SUBMITTED' } };
-        return { data: company };
-      });
+    const company = {
+      id: 'company-1',
+      status: 'DRAFT',
+      branch: null,
+      details: {
+        legalName: 'Example Company',
+        tradeName: null,
+        legalStructure: 'PRIVATE_LIMITED',
+        ntn: '1234567-8',
+        registrationNo: null,
+        industryCode: 'IT',
+        sizeBand: '1_10',
+        website: null,
+        description: null,
+      },
+      contacts: [],
+      headOffice: null,
+      sites: [],
+      documents: [],
+      requiredDocuments: [],
+      missing: [],
+      verification: null,
+      editable: {
+        details: true,
+        legal: true,
+        contacts: true,
+        locations: true,
+        branch: true,
+        documents: true,
+      },
+      verifiedAt: null,
+      createdAt: '2026-10-01T00:00:00.000Z',
+    };
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/master-data?type=INDUSTRY')
+        return { data: [{ code: 'IT', label: 'Information technology' }] };
+      if (path === '/api/v1/companies/me/submit')
+        return { data: { ...company, status: 'SUBMITTED' } };
+      return { data: company };
+    });
 
-      const user = userEvent.setup();
-      render(<CompanyWizard initialStep="details" initialCompany={null} />);
-      await user.type(screen.getByLabelText(/Registered company name/), 'Example Company');
-      await user.selectOptions(screen.getByLabelText(/Business type/), 'PRIVATE_LIMITED');
-      await user.type(screen.getByLabelText(/NTN \(National Tax Number\)/), '1234567-8');
-      const industry = screen.getByLabelText(/Industry/);
-      await waitFor(() => expect(industry).toHaveTextContent('Information technology'));
-      await user.selectOptions(industry, 'IT');
-      await user.selectOptions(screen.getByLabelText(/Company size/), '1_10');
-      const saveButton = screen.getByRole('button', { name: 'Save and continue' });
-      await waitFor(() => expect(saveButton).toBeEnabled());
-      await user.click(saveButton);
+    const user = userEvent.setup();
+    render(<CompanyWizard initialStep="details" initialCompany={null} />);
+    await user.type(screen.getByLabelText(/Registered company name/), 'Example Company');
+    await user.selectOptions(screen.getByLabelText(/Business type/), 'PRIVATE_LIMITED');
+    await user.type(screen.getByLabelText(/NTN \(National Tax Number\)/), '1234567-8');
+    const industry = screen.getByLabelText(/Industry/);
+    await waitFor(() => expect(industry).toHaveTextContent('Information technology'));
+    await user.selectOptions(industry, 'IT');
+    await user.selectOptions(screen.getByLabelText(/Company size/), '1_10');
+    const saveButton = screen.getByRole('button', { name: 'Save and continue' });
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    await user.click(saveButton);
 
-      await user.click(await screen.findByRole('button', { name: 'Review' }));
-      await user.click(screen.getByRole('button', { name: 'Submit for verification' }));
+    await user.click(await screen.findByRole('button', { name: 'Review' }));
+    await user.click(screen.getByRole('button', { name: 'Submit for verification' }));
 
-      await waitFor(() => {
-        const registrationCall = apiFetchMock.mock.calls.find(
-          ([path]) => path === '/api/v1/companies/register',
-        );
-        const submissionCall = apiFetchMock.mock.calls.find(
-          ([path]) => path === '/api/v1/companies/me/submit',
-        );
-        expect(registrationCall).toBeDefined();
-        expect(submissionCall).toBeDefined();
-        expect(registrationCall![1].idempotencyKey).not.toBe(submissionCall![1].idempotencyKey);
-      });
+    await waitFor(() => {
+      const registrationCall = apiFetchMock.mock.calls.find(
+        ([path]) => path === '/api/v1/companies/register',
+      );
+      const submissionCall = apiFetchMock.mock.calls.find(
+        ([path]) => path === '/api/v1/companies/me/submit',
+      );
+      expect(registrationCall).toBeDefined();
+      expect(submissionCall).toBeDefined();
+      expect(registrationCall![1].idempotencyKey).not.toBe(submissionCall![1].idempotencyKey);
+    });
   });
 
   it('shows a duplicate NTN on the NTN field, not as a page error', async () => {

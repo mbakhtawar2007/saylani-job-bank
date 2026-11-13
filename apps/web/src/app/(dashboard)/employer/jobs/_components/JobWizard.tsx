@@ -35,8 +35,8 @@ import {
 } from '@jobbank/shared';
 import type { JobView } from '@/domains/job';
 import { apiFetch, ApiClientError } from '@/lib/api/client';
-import { Button, Input, Select, Spinner, Textarea } from '@/components/atoms';
-import { ErrorBanner, FormField, LatLngFields, type LatLng } from '@/components/molecules';
+import { Button, Input, Select, Textarea } from '@/components/atoms';
+import { ErrorBanner, FormField } from '@/components/molecules';
 import {
   FormErrorSummary,
   fieldControlId,
@@ -58,10 +58,10 @@ interface CityOption {
   label: string;
 }
 
-interface ReverseResult {
-  addressLine: string;
-  cityCode: string | null;
-  cityLabel: string | null;
+/** Forward-geocode result (only the pin is used here). */
+interface SearchResult {
+  lat: number;
+  lng: number;
 }
 
 const JOB_TYPE_OPTIONS = JOB_TYPES.map((v) => ({ value: v, label: JOB_TYPE_LABELS[v] }));
@@ -138,16 +138,17 @@ export function JobWizard({ initialJob = null, basePath = '/employer' }: Props) 
     initialJob?.salaryMax != null ? String(initialJob.salaryMax) : '',
   );
 
-  // ── Location: typed coordinates, address/city autofilled by reverse geocode ──
+  // ── Location: address + city typed by hand (2026-11-13 — no latitude /
+  // longitude fields). The pin the server needs for matching and
+  // publishing is located from the typed address on save (see
+  // handleSubmit); an edit keeps its saved pin when the address is
+  // unchanged and geocode fails.
   const saved = initialJob?.locations[0] ?? null;
-  const [pin, setPin] = useState<LatLng | null>(saved?.location ?? null);
+  const [pin, setPin] = useState<{ lat: number; lng: number } | null>(saved?.location ?? null);
   const [addressLine, setAddressLine] = useState(saved?.addressLine ?? '');
   const [cityCode, setCityCode] = useState(saved?.cityCode ?? '');
   const [cities, setCities] = useState<CityOption[]>([]);
   const [categories, setCategories] = useState<{ value: string; label: string }[]>([]);
-  const [geocoding, setGeocoding] = useState(false);
-  /** True while the address text is machine-filled (so a new pin may replace it). */
-  const autoFilled = useRef(!saved?.addressLine);
 
   // ── Experience & Requirements ────────────────────────────────────────
   const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>(
@@ -274,32 +275,6 @@ export function JobWizard({ initialJob = null, basePath = '/employer' }: Props) 
     };
   }, []);
 
-  // Pin change → reverse geocode → autofill address + city (debounced).
-  useEffect(() => {
-    if (!pin || cities.length === 0) return;
-    const controller = new AbortController();
-    const timer = setTimeout(async () => {
-      setGeocoding(true);
-      try {
-        const { data } = await apiFetch<ReverseResult>(
-          `/api/v1/geocode/reverse?lat=${pin.lat}&lng=${pin.lng}`,
-          { signal: controller.signal },
-        );
-        if (autoFilled.current || !addressLine) setAddressLine(data.addressLine || addressLine);
-        if (data.cityCode) setCityCode(data.cityCode);
-      } catch {
-        // Offline or Nominatim down: keep whatever the employer typed.
-      } finally {
-        setGeocoding(false);
-      }
-    }, 450);
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run on pin/cities only; addressLine read at fire time
-  }, [pin, cities]);
-
   function handleSubmit() {
     startTransition(async () => {
       setError(null);
@@ -372,16 +347,43 @@ export function JobWizard({ initialJob = null, basePath = '/employer' }: Props) 
           jobId = updated.id;
         }
 
-        // Location is sent on every save.
-        if (pin && addressLine.trim().length >= 3 && cityCode) {
-          await apiFetch<JobView>(`/api/v1/jobs/me/${jobId}/location`, {
-            method: 'PUT',
-            body: {
-              location: pin,
-              addressLine: addressLine.trim(),
-              cityCode,
-            },
-          });
+        // Location is sent on every save. No lat/lng fields any more
+        // (2026-11-13): locate the typed address via the server geocode
+        // endpoint instead. The publish guard still needs a saved pin,
+        // so when the address can't be located the location is left
+        // unsaved — same as before when the coordinates were blank —
+        // and publishing will ask for a location.
+        if (addressLine.trim().length >= 3 && cityCode) {
+          const addressChanged =
+            !saved || saved.addressLine !== addressLine.trim() || saved.cityCode !== cityCode;
+          let usePin = pin;
+          if (addressChanged || !usePin) {
+            const cityLabel = cities.find((c) => c.value === cityCode)?.label ?? cityCode;
+            try {
+              const { data } = await apiFetch<SearchResult[]>(
+                `/api/v1/geocode/search?q=${encodeURIComponent(
+                  `${addressLine.trim()}, ${cityLabel}`,
+                )}`,
+              );
+              const first = data?.[0] ?? null;
+              if (first) {
+                usePin = { lat: first.lat, lng: first.lng };
+                setPin(usePin);
+              }
+            } catch {
+              // Geocode down: fall back to the saved pin, if any.
+            }
+          }
+          if (usePin) {
+            await apiFetch<JobView>(`/api/v1/jobs/me/${jobId}/location`, {
+              method: 'PUT',
+              body: {
+                location: usePin,
+                addressLine: addressLine.trim(),
+                cityCode,
+              },
+            });
+          }
         }
 
         // Audit 2026-11-10 (C1): skills, minimum experience and
@@ -427,7 +429,7 @@ export function JobWizard({ initialJob = null, basePath = '/employer' }: Props) 
     });
   }
 
-  const locationReady = pin && addressLine.trim().length >= 3 && cityCode;
+  const locationReady = addressLine.trim().length >= 3 && cityCode;
 
   return (
     <form
@@ -903,43 +905,23 @@ export function JobWizard({ initialJob = null, basePath = '/employer' }: Props) 
           <div>
             <h2 className="text-fg text-lg font-semibold">Work location</h2>
             <p className="text-fg-muted text-sm">
-              Type the job site&apos;s latitude and longitude — we will fill in the address for you.
-              Matching uses this point to rank nearby applicants.
+              Type the job site&apos;s address and pick the city — we&apos;ll locate it for you when
+              you save. Matching uses this point to rank nearby applicants.
             </p>
           </div>
 
-          <LatLngFields value={pin} onChange={setPin} />
-
           <div className="grid gap-4 sm:grid-cols-2">
-            <FormField
-              label="Address"
-              hint={
-                geocoding ? (
-                  <span className="inline-flex items-center gap-1.5">
-                    <Spinner className="size-3" /> Looking up the address…
-                  </span>
-                ) : pin ? (
-                  'Autofilled from the coordinates — edit if needed.'
-                ) : (
-                  'Enter the coordinates first.'
-                )
-              }
-              className="sm:col-span-2"
-            >
+            <FormField label="Address" className="sm:col-span-2">
               <Input
                 value={addressLine}
                 onChange={(e) => {
                   setAddressLine(e.target.value);
-                  autoFilled.current = false;
                 }}
                 placeholder="House, street and block"
               />
             </FormField>
 
-            <FormField
-              label="City"
-              hint={pin && !cityCode ? 'Could not match a city — pick it manually.' : undefined}
-            >
+            <FormField label="City">
               <Select
                 placeholder={cities.length ? 'Choose the city' : 'Loading cities…'}
                 value={cityCode}
@@ -951,8 +933,8 @@ export function JobWizard({ initialJob = null, basePath = '/employer' }: Props) 
 
           {!locationReady && (
             <p className="text-fg-muted text-sm">
-              The location is saved once you enter the coordinates, fill the address (3+ characters)
-              and pick a city — required before publishing.
+              The location is saved once you fill the address (3+ characters) and pick a city — a
+              saved location is required before publishing.
             </p>
           )}
         </div>

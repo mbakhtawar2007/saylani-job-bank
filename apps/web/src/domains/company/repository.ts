@@ -116,6 +116,13 @@ export interface CompanyView {
   documents: CompanyDocumentView[];
   /** Document type codes this legal structure must upload. */
   requiredDocuments: string[];
+  /**
+   * Active company document types that are NOT required for this legal
+   * structure (2026-11-13: NTN certificate, SECP registration, address
+   * proof). The wizard shows them as "Optional" — uploadable, but never
+   * blocking submission or verification.
+   */
+  optionalDocuments: string[];
   /** What still blocks (re)submission, in plain words (empty = ready). */
   missing: string[];
   /** Latest verification round (open or decided). */
@@ -436,22 +443,24 @@ export async function buildCompanyView(
   executor: DbExecutor,
   row: CompanyRow,
 ): Promise<CompanyView> {
-  const [contactRows, locationRows, documents, required, latest, branch] = await Promise.all([
-    executor
-      .select()
-      .from(contacts)
-      .where(eq(contacts.companyId, row.id))
-      .orderBy(desc(contacts.isPrimary), asc(contacts.sortOrder)),
-    executor
-      .select()
-      .from(locs)
-      .where(and(eq(locs.companyId, row.id), isNull(locs.archivedAt)))
-      .orderBy(asc(locs.createdAt)),
-    currentDocuments(executor, row.id),
-    requiredDocumentTypes(executor, row.legalStructure),
-    latestVerification(executor, row.id),
-    row.branchId ? getBranchContact(row.branchId, executor) : Promise.resolve(null),
-  ]);
+  const [contactRows, locationRows, documents, required, allTypes, latest, branch] =
+    await Promise.all([
+      executor
+        .select()
+        .from(contacts)
+        .where(eq(contacts.companyId, row.id))
+        .orderBy(desc(contacts.isPrimary), asc(contacts.sortOrder)),
+      executor
+        .select()
+        .from(locs)
+        .where(and(eq(locs.companyId, row.id), isNull(locs.archivedAt)))
+        .orderBy(asc(locs.createdAt)),
+      currentDocuments(executor, row.id),
+      requiredDocumentTypes(executor, row.legalStructure),
+      companyDocumentTypes(executor),
+      latestVerification(executor, row.id),
+      row.branchId ? getBranchContact(row.branchId, executor) : Promise.resolve(null),
+    ]);
   const hq = locationRows.find((l) => l.kind === 'HQ');
   // submissionMissing reuses the rows already fetched above instead of
   // re-querying contacts, the HQ location, the required types and the
@@ -488,6 +497,11 @@ export async function buildCompanyView(
     sites: locationRows.filter((l) => l.kind === 'SITE').map(toLocationView),
     documents: documents.map(toDocumentView),
     requiredDocuments: required.map((t) => t.code),
+    // Optional = every active company document type that isn't required
+    // for this legal structure (NTN / SECP / address proof since 2026-11-13).
+    optionalDocuments: allTypes
+      .filter((t) => t.isActive && !required.some((r) => r.code === t.code))
+      .map((t) => t.code),
     missing,
     verification: latest ? toVerificationSummary(latest) : null,
     editable: companyEditability(row.status),

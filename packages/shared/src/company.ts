@@ -120,41 +120,28 @@ export const LEGAL_STRUCTURE_LABELS: Record<LegalStructure, string> = {
 };
 
 /**
- * Default required documents per legal structure (owner decision 3). Seeded into
- * `company_document_requirements`; Super Admin can change them later.
+ * Default required documents per legal structure (owner decision 3).
+ * NTN certificate, SECP registration and address proof are OPTIONAL
+ * (2026-11-13, handwritten notes): they are no longer in any list, so
+ * they never block submission or verification. They stay uploadable —
+ * see `optionalDocuments` on the company view — the employer just isn't
+ * forced to supply them. Seeded into `company_document_requirements`;
+ * Super Admin can change them later. Migration 0048 deletes the three
+ * rows from live databases; the seed is insert-only, so removing them
+ * here alone would not change an existing database.
  */
 export const DEFAULT_COMPANY_DOCUMENT_REQUIREMENTS: Record<LegalStructure, readonly string[]> = {
-  SOLE_PROPRIETOR: [
-    'AUTHORISED_PERSON_CNIC_FRONT',
-    'AUTHORISED_PERSON_CNIC_BACK',
-    'ADDRESS_PROOF',
-    'NTN_CERTIFICATE',
-  ],
+  SOLE_PROPRIETOR: ['AUTHORISED_PERSON_CNIC_FRONT', 'AUTHORISED_PERSON_CNIC_BACK'],
   PARTNERSHIP: [
     'AUTHORISED_PERSON_CNIC_FRONT',
     'AUTHORISED_PERSON_CNIC_BACK',
-    'ADDRESS_PROOF',
-    'NTN_CERTIFICATE',
     'BUSINESS_REGISTRATION',
   ],
-  PRIVATE_LIMITED: [
-    'AUTHORISED_PERSON_CNIC_FRONT',
-    'AUTHORISED_PERSON_CNIC_BACK',
-    'ADDRESS_PROOF',
-    'SECP_REGISTRATION',
-    'NTN_CERTIFICATE',
-  ],
-  PUBLIC_LIMITED: [
-    'AUTHORISED_PERSON_CNIC_FRONT',
-    'AUTHORISED_PERSON_CNIC_BACK',
-    'ADDRESS_PROOF',
-    'SECP_REGISTRATION',
-    'NTN_CERTIFICATE',
-  ],
+  PRIVATE_LIMITED: ['AUTHORISED_PERSON_CNIC_FRONT', 'AUTHORISED_PERSON_CNIC_BACK'],
+  PUBLIC_LIMITED: ['AUTHORISED_PERSON_CNIC_FRONT', 'AUTHORISED_PERSON_CNIC_BACK'],
   NGO_TRUST: [
     'AUTHORISED_PERSON_CNIC_FRONT',
     'AUTHORISED_PERSON_CNIC_BACK',
-    'ADDRESS_PROOF',
     'BUSINESS_REGISTRATION',
     'AUTHORISATION_LETTER',
   ],

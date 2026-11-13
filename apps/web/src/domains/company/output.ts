@@ -96,6 +96,7 @@ export const companyViewSchema = z.object({
   sites: z.array(companyLocationViewSchema),
   documents: z.array(companyDocumentViewSchema),
   requiredDocuments: z.array(z.string()),
+  optionalDocuments: z.array(z.string()),
   missing: z.array(z.string()),
   verification: verificationSummarySchema.nullable(),
   editable: z.object({
