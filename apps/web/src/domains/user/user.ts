@@ -7,9 +7,11 @@ import { z } from 'zod';
 import {
   clearTrustedDevices,
   INVITE_TTL_DAYS,
+  invitationUrl,
   issueAccountToken,
   pendingInvitation,
   sendInvitationEmail,
+  voidAccountTokens,
 } from '@/domains/auth';
 import { runCommand, type RequestContext } from '@/domains/shared/audit';
 import {
@@ -288,11 +290,13 @@ async function actorName(executor: DbExecutor, actor: Actor): Promise<string> {
 
 export type InviteStaffInput = z.infer<typeof inviteStaffSchema>;
 
-/** Creates an INVITED account with one role and emails a set-password link. */
+/** Creates an INVITED account with one role and emails a set-password link.
+ * The link is also returned so the admin can copy/forward it by hand when
+ * the email does not arrive; it is the identical link the email carries. */
 export async function inviteStaff(
   ctx: SignedIn,
   input: InviteStaffInput,
-): Promise<{ user: StaffDetail; emailSent: boolean }> {
+): Promise<{ user: StaffDetail; emailSent: boolean; inviteLink: string }> {
   assertAllowed(canGrantRole(ctx.actor, input.role, input.branchId));
   // Audit 2026-11-11 (L-29): a compromised user:manage account could
   // mail-bomb an invitee indefinitely — 5 invites per actor + target
@@ -369,13 +373,17 @@ export async function inviteStaff(
       err,
     });
   }
-  return { user: await getStaffMember(ctx.actor, invited.user.id), emailSent };
+  return {
+    user: await getStaffMember(ctx.actor, invited.user.id),
+    emailSent,
+    inviteLink: invitationUrl(invited.token),
+  };
 }
 
 export async function resendInvitation(
   ctx: SignedIn,
   userId: string,
-): Promise<{ emailSent: boolean }> {
+): Promise<{ emailSent: boolean; inviteLink: string }> {
   // Audit 2026-11-11 (L-29): 5 resends per actor + target per hour.
   await enforceRateLimit(
     'invite-resend',
@@ -416,10 +424,34 @@ export async function resendInvitation(
       role: result.first.role,
       branchName: result.first.branchName,
     });
-    return { emailSent: true };
+    return { emailSent: true, inviteLink: invitationUrl(result.token) };
   } catch {
-    return { emailSent: false };
+    return { emailSent: false, inviteLink: invitationUrl(result.token) };
   }
+}
+
+/** Voids a pending invitation without issuing a new one. The link stops
+ * working at once; a fresh one can be sent afterwards with resend. */
+export async function revokeInvitation(
+  ctx: SignedIn,
+  userId: string,
+): Promise<{ revoked: boolean }> {
+  const result = await runCommand(ctx, async ({ tx, audit }) => {
+    const { row, assignments } = await loadTarget(tx, ctx.actor, userId);
+    assertAllowed(canManageUser(ctx.actor, userId, assignments));
+    if (row.status !== 'INVITED')
+      throw new ConflictError('This person has already activated their account');
+    const voided = await voidAccountTokens(tx, userId, 'INVITE');
+    audit({
+      action: 'user.invite_revoke',
+      entityType: 'user',
+      entityId: userId,
+      branchId: assignments[0]?.branchId ?? null,
+      after: { voided },
+    });
+    return { voided };
+  });
+  return { revoked: result.voided > 0 };
 }
 
 export async function grantRole(

@@ -27,6 +27,21 @@ export class InvalidLinkError extends DomainError {
 
 export const hashAccountToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
+/** Marks all still-unused tokens of one purpose void; returns how many were voided. */
+export async function voidAccountTokens(
+  executor: DbExecutor,
+  userId: string,
+  purpose: schema.AccountTokenPurpose,
+): Promise<number> {
+  const t = schema.accountTokens;
+  const rows = await executor
+    .update(t)
+    .set({ usedAt: sql`now()` })
+    .where(and(eq(t.userId, userId), eq(t.purpose, purpose), isNull(t.usedAt)))
+    .returning({ id: t.id });
+  return rows.length;
+}
+
 /** Issues a fresh single-use token; older unused tokens of the same purpose stop working. */
 export async function issueAccountToken(
   executor: DbExecutor,
@@ -39,10 +54,7 @@ export async function issueAccountToken(
 ): Promise<string> {
   const token = randomBytes(32).toString('base64url');
   const t = schema.accountTokens;
-  await executor
-    .update(t)
-    .set({ usedAt: sql`now()` })
-    .where(and(eq(t.userId, input.userId), eq(t.purpose, input.purpose), isNull(t.usedAt)));
+  await voidAccountTokens(executor, input.userId, input.purpose);
   await executor.insert(t).values({
     userId: input.userId,
     purpose: input.purpose,
@@ -102,6 +114,11 @@ export async function setCredentialPassword(
 
 const appUrl = (path: string) => new URL(path, env.NEXT_PUBLIC_APP_URL).toString();
 
+/** The set-password link for an invite token. Same URL the email carries, so an
+ * admin who copies it from the dashboard hands out the identical link. */
+export const invitationUrl = (token: string) =>
+  appUrl(`/accept-invite?token=${token}`);
+
 // ─── Invitations ───────────────────────────────────────────────────────
 
 /** Emails an invitation link. Called after the user + role rows are committed. */
@@ -112,7 +129,7 @@ export async function sendInvitationEmail(input: {
   role: Role;
   branchName: string | null;
 }): Promise<void> {
-  const url = appUrl(`/accept-invite?token=${encodeURIComponent(input.token)}`);
+  const url = invitationUrl(input.token);
   await sendMail({
     to: input.user.email,
     ...invitationEmail({

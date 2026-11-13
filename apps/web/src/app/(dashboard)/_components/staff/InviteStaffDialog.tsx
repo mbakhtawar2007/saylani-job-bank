@@ -32,11 +32,17 @@ export function InviteStaffDialog({ grantableRoles, branches, basePath }: Props)
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
+  /** Set when the account was created but the email could not be sent: the
+   * admin copies this link to the person by hand instead. */
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const scoped = BRANCH_SCOPED_ROLES.includes(form.role as Role);
 
   const reset = () => {
     setKey(crypto.randomUUID());
     setErrors({});
+    setInviteLink(null);
+    setCopied(false);
     setForm({
       name: '',
       email: '',
@@ -51,29 +57,32 @@ export function InviteStaffDialog({ grantableRoles, branches, basePath }: Props)
     setPending(true);
     setErrors({});
     try {
-      const { data } = await apiFetch<{ user: { id: string; name: string }; emailSent: boolean }>(
-        '/api/v1/users',
-        {
-          method: 'POST',
-          idempotencyKey: key,
-          body: {
-            name: form.name,
-            email: form.email,
-            title: form.title || null,
-            role: form.role,
-            branchId: scoped ? form.branchId || null : null,
-          },
+      const { data } = await apiFetch<{
+        user: { id: string; name: string };
+        emailSent: boolean;
+        inviteLink: string;
+      }>('/api/v1/users', {
+        method: 'POST',
+        idempotencyKey: key,
+        body: {
+          name: form.name,
+          email: form.email,
+          title: form.title || null,
+          role: form.role,
+          branchId: scoped ? form.branchId || null : null,
         },
-      );
-      if (data.emailSent) toast.success(`Invitation sent to ${data.user.name}`);
-      else
-        toast.warning(
-          'Account created, but the email could not be sent. Resend it from their page.',
-        );
-      setOpen(false);
-      reset();
-      router.push(`${basePath}/${data.user.id}`);
-      router.refresh();
+      });
+      if (data.emailSent) {
+        toast.success(`Invitation sent to ${data.user.name}`);
+        setOpen(false);
+        reset();
+        router.push(`${basePath}/${data.user.id}`);
+        router.refresh();
+      } else {
+        // Account + link exist; only the email failed. Stay open so the
+        // admin can copy the link to the person by hand.
+        setInviteLink(data.inviteLink);
+      }
     } catch (err) {
       if (err instanceof ApiClientError) {
         setErrors(Object.fromEntries(err.issues.map((i) => [i.path, i.message])));
@@ -99,67 +108,99 @@ export function InviteStaffDialog({ grantableRoles, branches, basePath }: Props)
         </Button>
       }
     >
-      <form className="grid gap-4" onSubmit={submit} noValidate>
-        <FormField label="Full name" required error={errors.name}>
-          <Input
-            value={form.name}
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            autoFocus
-          />
-        </FormField>
-        <FormField label="Work email" required error={errors.email}>
-          <Input
-            type="email"
-            value={form.email}
-            onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-          />
-        </FormField>
-        <FormField label="Job title" hint="Optional, e.g. Placement Officer" error={errors.title}>
-          <Input
-            value={form.title}
-            onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-          />
-        </FormField>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Role" required error={errors.role}>
-            <Select
-              value={form.role}
-              onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as Role }))}
-              options={grantableRoles.map((role) => ({ value: role, label: ROLE_LABELS[role] }))}
+      {inviteLink ? (
+        <div className="grid gap-4">
+          <p className="bg-warning-soft text-warning-soft-fg rounded-lg px-3 py-2 text-sm">
+            Account created, but the email could not be sent. Copy this link and send it to{' '}
+            {form.name} yourself — it expires in 7 days and can be used once.
+          </p>
+          <FormField label="Invitation link">
+            <Input value={inviteLink} readOnly onFocus={(e) => e.target.select()} />
+          </FormField>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                await navigator.clipboard.writeText(inviteLink);
+                setCopied(true);
+              }}
+            >
+              {copied ? 'Copied' : 'Copy link'}
+            </Button>
+            <Button
+              onClick={() => {
+                setOpen(false);
+                reset();
+                router.refresh();
+              }}
+            >
+              Done
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <form className="grid gap-4" onSubmit={submit} noValidate>
+          <FormField label="Full name" required error={errors.name}>
+            <Input
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              autoFocus
             />
           </FormField>
-          {scoped && (
-            <FormField label="Branch" required error={errors.branchId}>
+          <FormField label="Work email" required error={errors.email}>
+            <Input
+              type="email"
+              value={form.email}
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+            />
+          </FormField>
+          <FormField label="Job title" hint="Optional, e.g. Placement Officer" error={errors.title}>
+            <Input
+              value={form.title}
+              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+            />
+          </FormField>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="Role" required error={errors.role}>
               <Select
-                value={form.branchId}
-                placeholder="Choose a branch"
-                onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}
-                options={branches.map((b) => ({ value: b.id, label: b.name }))}
+                value={form.role}
+                onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as Role }))}
+                options={grantableRoles.map((role) => ({ value: role, label: ROLE_LABELS[role] }))}
               />
             </FormField>
+            {scoped && (
+              <FormField label="Branch" required error={errors.branchId}>
+                <Select
+                  value={form.branchId}
+                  placeholder="Choose a branch"
+                  onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}
+                  options={branches.map((b) => ({ value: b.id, label: b.name }))}
+                />
+              </FormField>
+            )}
+          </div>
+          {errors.form && (
+            <p
+              role="alert"
+              className="bg-danger-soft text-danger-soft-fg rounded-lg px-3 py-2 text-sm"
+            >
+              {errors.form}
+            </p>
           )}
-        </div>
-        {errors.form && (
-          <p
-            role="alert"
-            className="bg-danger-soft text-danger-soft-fg rounded-lg px-3 py-2 text-sm"
-          >
-            {errors.form}
-          </p>
-        )}
-        <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={() => setOpen(false)} disabled={pending}>
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            loading={pending}
-            disabled={!form.name || !form.email || (scoped && !form.branchId)}
-          >
-            Send invitation
-          </Button>
-        </div>
-      </form>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setOpen(false)} disabled={pending}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              loading={pending}
+              disabled={!form.name || !form.email || (scoped && !form.branchId)}
+            >
+              Send invitation
+            </Button>
+          </div>
+        </form>
+      )}
     </Modal>
   );
 }

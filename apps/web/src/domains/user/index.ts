@@ -16,6 +16,7 @@ export {
   listStaff,
   resendInvitation,
   resetStaffTwoFactor,
+  revokeInvitation,
   revokeRole,
   roleAssignmentSchema,
   setStaffStatus,

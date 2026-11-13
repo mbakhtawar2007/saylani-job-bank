@@ -1,7 +1,7 @@
 'use client';
 
 import { BRANCH_SCOPED_ROLES, ROLE_LABELS, type Role } from '@jobbank/shared';
-import { MailPlus, ShieldOff, Trash2, UserCheck, UserMinus, UserX } from 'lucide-react';
+import { Link2Off, MailPlus, ShieldOff, Trash2, UserCheck, UserMinus, UserX } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import { Badge, Button, Input, Select } from '@/components/atoms';
@@ -39,6 +39,10 @@ export function StaffDetailView({
     branchId: '',
   });
   const [addingRole, setAddingRole] = useState(false);
+  /** Set when a resent invitation's email could not be sent: the admin
+   * copies this link to the person by hand instead. */
+  const [resentLink, setResentLink] = useState<string | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
   const manage = staff.can.manage;
   const roleNeedsBranch = newRole.role !== '' && BRANCH_SCOPED_ROLES.includes(newRole.role);
 
@@ -118,17 +122,24 @@ export function StaffDetailView({
                 leftIcon={<MailPlus />}
                 onClick={async () => {
                   try {
-                    const { data } = await apiFetch<{ emailSent: boolean }>(
-                      `/api/v1/users/${staff.id}/invitation`,
-                      {
-                        method: 'POST',
-                        // Audit 2026-11-11 (L-29): the route requires an
-                        // Idempotency-Key.
-                        idempotencyKey: crypto.randomUUID(),
-                      },
-                    );
-                    if (data.emailSent) toast.success('A new invitation was sent');
-                    else toast.warning('Could not send the email. Try again shortly.');
+                    const { data } = await apiFetch<{
+                      emailSent: boolean;
+                      inviteLink: string;
+                    }>(`/api/v1/users/${staff.id}/invitation`, {
+                      method: 'POST',
+                      // Audit 2026-11-11 (L-29): the route requires an
+                      // Idempotency-Key.
+                      idempotencyKey: crypto.randomUUID(),
+                    });
+                    if (data.emailSent) {
+                      toast.success('A new invitation was sent');
+                      setResentLink(null);
+                    } else {
+                      toast.warning(
+                        'Could not send the email. Copy the link below and send it by hand.',
+                      );
+                      setResentLink(data.inviteLink);
+                    }
                     refresh();
                   } catch (err) {
                     toast.error(message(err));
@@ -137,6 +148,29 @@ export function StaffDetailView({
               >
                 Resend invitation
               </Button>
+            )}
+            {staff.status === 'INVITED' && (
+              <ConfirmDialog
+                title={`Revoke ${staff.name}'s invitation?`}
+                description="The invitation link stops working immediately. You can send a fresh invitation afterwards."
+                tone="danger"
+                confirmLabel="Revoke invitation"
+                onConfirm={async () => {
+                  const { data } = await apiFetch<{ revoked: boolean }>(
+                    `/api/v1/users/${staff.id}/invitation/revoke`,
+                    { method: 'POST' },
+                  );
+                  if (data.revoked) toast.success('Invitation revoked');
+                  else toast.warning('No pending invitation found');
+                  setResentLink(null);
+                  refresh();
+                }}
+                trigger={
+                  <Button variant="secondary" leftIcon={<Link2Off />}>
+                    Revoke invitation
+                  </Button>
+                }
+              />
             )}
             {staff.status !== 'INVITED' && (
               <ConfirmDialog
@@ -222,6 +256,26 @@ export function StaffDetailView({
                 </Button>
               }
             />
+          </div>
+        )}
+        {resentLink && (
+          <div className="bg-warning-soft text-warning-soft-fg grid gap-2 rounded-lg px-3 py-2 text-sm">
+            <p>
+              Email could not be sent. Copy this link and send it by hand — it expires in 7 days and
+              can be used once.
+            </p>
+            <div className="flex gap-2">
+              <Input value={resentLink} readOnly onFocus={(e) => e.target.select()} />
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  await navigator.clipboard.writeText(resentLink);
+                  setCopiedLink(true);
+                }}
+              >
+                {copiedLink ? 'Copied' : 'Copy link'}
+              </Button>
+            </div>
           </div>
         )}
       </Card>

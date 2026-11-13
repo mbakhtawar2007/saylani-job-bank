@@ -17,6 +17,7 @@ import { POST as reset } from '@/app/api/v1/auth/password/reset/route';
 import { PATCH as patchBranch } from '@/app/api/v1/branches/[id]/route';
 import { GET as listBranchesRoute, POST as createBranchRoute } from '@/app/api/v1/branches/route';
 import { POST as resendInvite } from '@/app/api/v1/users/[id]/invitation/route';
+import { POST as revokeInvite } from '@/app/api/v1/users/[id]/invitation/revoke/route';
 import { DELETE as revokeRoleRoute } from '@/app/api/v1/users/[id]/roles/[assignmentId]/route';
 import { POST as grantRoleRoute } from '@/app/api/v1/users/[id]/roles/route';
 import { GET as getUser } from '@/app/api/v1/users/[id]/route';
@@ -370,6 +371,8 @@ describe('staff invitations', () => {
     expect(mail.subject).toMatch(/invited/i);
     const token = tokenFrom(mail.text);
     expect(token.length).toBeGreaterThan(30);
+    // The link returned to the admin is the identical link the email carries.
+    expect(tokenFrom(invited.body.data.inviteLink as string)).toBe(token);
     const [stored] = await db
       .select()
       .from(schema.accountTokens)
@@ -449,23 +452,65 @@ describe('staff invitations', () => {
     // Round 2: L-29 refuses a resend within 5 minutes of the invite — age
     // the pending invite past the cooldown, as a real resend would be.
     await owner`UPDATE account_tokens SET created_at = now() - interval '10 minutes' WHERE user_id = ${id} AND purpose = 'INVITE' AND used_at IS NULL`;
-    expect(
-      (
-        await call(resendInvite, `/api/v1/users/${id}/invitation`, {
-          method: 'POST',
-          jar: sa,
-          params: { id },
-          headers: { 'idempotency-key': crypto.randomUUID() },
-        })
-      ).status,
-    ).toBe(200);
+    const resent = await call(resendInvite, `/api/v1/users/${id}/invitation`, {
+      method: 'POST',
+      jar: sa,
+      params: { id },
+      headers: { 'idempotency-key': crypto.randomUUID() },
+    });
+    expect(resent.status).toBe(200);
     const secondToken = tokenFrom(lastMailTo(email).text);
     expect(secondToken).not.toBe(firstToken);
+    // The resend response carries the new link, identical to the emailed one.
+    expect(tokenFrom(resent.body.data.inviteLink as string)).toBe(secondToken);
     expect(
       (await call(lookupInvite, `/api/v1/auth/invitations/lookup?token=${firstToken}`)).status,
     ).toBe(400);
     expect(
       (await call(lookupInvite, `/api/v1/auth/invitations/lookup?token=${secondToken}`)).status,
+    ).toBe(200);
+  });
+
+  it('a revoked invitation stops working and a fresh one can be sent afterwards', async () => {
+    const sa = await signInAdmin('superadmin@jobbank.local');
+    const email = uniqueEmail('revoke');
+    const invited = await call(inviteRoute, '/api/v1/users', {
+      method: 'POST',
+      jar: sa,
+      headers: { 'idempotency-key': crypto.randomUUID() },
+      body: { name: 'Re Voke', email, role: 'STAFF', branchId: KHI },
+    });
+    const token = tokenFrom(lastMailTo(email).text);
+    const id = invited.body.data.user.id;
+    const revoked = await call(revokeInvite, `/api/v1/users/${id}/invitation/revoke`, {
+      method: 'POST',
+      jar: sa,
+      params: { id },
+    });
+    expect(revoked.status).toBe(200);
+    expect(revoked.body.data).toMatchObject({ revoked: true });
+    expect(
+      (await call(lookupInvite, `/api/v1/auth/invitations/lookup?token=${token}`)).status,
+    ).toBe(400);
+    expect(
+      (
+        await call(acceptInvite, '/api/v1/auth/invitations/accept', {
+          method: 'POST',
+          body: { token, password: 'Strong-pass-123' },
+        })
+      ).status,
+    ).toBe(400);
+    const resent = await call(resendInvite, `/api/v1/users/${id}/invitation`, {
+      method: 'POST',
+      jar: sa,
+      params: { id },
+      headers: { 'idempotency-key': crypto.randomUUID() },
+    });
+    expect(resent.status).toBe(200);
+    const freshToken = tokenFrom(lastMailTo(email).text);
+    expect(freshToken).not.toBe(token);
+    expect(
+      (await call(lookupInvite, `/api/v1/auth/invitations/lookup?token=${freshToken}`)).status,
     ).toBe(200);
   });
 
