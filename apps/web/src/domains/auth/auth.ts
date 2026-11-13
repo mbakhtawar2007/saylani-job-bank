@@ -74,6 +74,12 @@ function createAuth() {
         allowedAttempts: 5,
         storeOTP: 'hashed',
         disableSignUp: true,
+        // Fallback only: requestEmailCode no longer routes through here, because
+        // Better Auth's runInBackgroundOrAwait swallows a failed send (logs it
+        // and still returns success), so a mail failure left the user waiting
+        // for a code that never arrived. That flow now creates the OTP with
+        // createVerificationOTP and sends it with a direct, awaited sendMail
+        // (see domains/auth/service.ts), exactly like the signup code.
         sendVerificationOTP: async ({ email, otp, type }) => {
           if (type !== 'sign-in') return;
           await sendMail({ to: email, ...signInCodeEmail({ code: otp, expiresMinutes: 5 }) });

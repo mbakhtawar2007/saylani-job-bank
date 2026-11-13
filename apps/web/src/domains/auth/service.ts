@@ -17,7 +17,10 @@ import { maskEmail, maskPhone } from '@/domains/shared/masking';
 import { enforceRateLimit, enforceRateLimitByIp } from '@/domains/shared/rate-limit';
 import type { Actor } from '@/domains/shared/scope';
 import { db } from '@/lib/db';
+import { env } from '@/lib/env';
 import { normalizePkMobile } from '@/lib/format/phone';
+import { sendMail } from '@/lib/mail/mailer';
+import { employerCodeNoAccountEmail, signInCodeEmail } from '@/lib/mail/templates';
 import { ACTIVE_BRANCH_COOKIE, loadActor, requiresTwoFactor, type SessionUser } from './actor';
 import { getAuth, isPlaceholderEmail, SESSION_TTL_SECONDS } from './auth';
 import { issueOtp, OTP_TTL_SECONDS } from './otp';
@@ -524,7 +527,23 @@ async function emailCodeEligible(email: string): Promise<UserRow | null> {
   return role ? user : null;
 }
 
-/** Always answers the same way, so it cannot be used to discover registered emails. */
+/**
+ * Always answers the same way, so it cannot be used to discover registered emails.
+ *
+ * Two defects fixed here (2026-11-13) — compare with the employer-signup flow,
+ * which never had either:
+ * 1. The code used to go out through Better Auth's `sendVerificationOTP`, whose
+ *    `runInBackgroundOrAwait` catches a failed send and only logs it, so a mail
+ *    failure returned 202 and the user waited for a code that was never sent.
+ *    The OTP is now created with `createVerificationOTP` (same stored value
+ *    `signInEmailOTP` verifies) and mailed with a direct, awaited `sendMail`,
+ *    exactly like the signup code — a delivery failure now surfaces as an
+ *    error instead of a silent dead end.
+ * 2. When the email had no eligible employer account (staff address, typo, or
+ *    an employer signup that never completed), nothing was sent at all, yet the
+ *    client still showed the code screen. That address now gets an explanatory
+ *    email pointing at registration, mirroring `signupExistingAccountEmail`.
+ */
 export async function requestEmailCode(ctx: RequestContext, rawEmail: string) {
   const email = rawEmail.trim().toLowerCase();
   await enforceRateLimit(
@@ -538,7 +557,20 @@ export async function requestEmailCode(ctx: RequestContext, rawEmail: string) {
 
   const user = await emailCodeEligible(email);
   if (user) {
-    await getAuth().api.sendVerificationOTP({ body: { email: user.email, type: 'sign-in' } });
+    const otp = await getAuth().api.createVerificationOTP({
+      body: { email: user.email, type: 'sign-in' },
+    });
+    await sendMail({
+      to: user.email,
+      ...signInCodeEmail({ code: otp, expiresMinutes: 5 }),
+    });
+  } else {
+    await sendMail({
+      to: email,
+      ...employerCodeNoAccountEmail({
+        url: new URL('/register', env.NEXT_PUBLIC_APP_URL).toString(),
+      }),
+    });
   }
   await recordAudit(ctx, {
     action: 'auth.email_code_requested',

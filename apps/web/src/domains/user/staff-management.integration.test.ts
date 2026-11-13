@@ -769,7 +769,14 @@ describe('employer email sign-in codes', () => {
         })
       ).status,
     ).toBe(202);
-    expect(mailOutbox.length).toBe(before);
+    // No code for a non-employer — but the address still gets an email saying
+    // there is no employer account (mirrors the signup "already have an
+    // account" email), so nobody waits for a code that is never sent.
+    expect(mailOutbox.length).toBe(before + 1);
+    const noAccountMail = lastMailTo('staff.khi@jobbank.local');
+    expect(noAccountMail.subject).toBe('No employer account for this email address');
+    expect(noAccountMail.text).not.toMatch(/^\d{6} is your/);
+    expect(noAccountMail.text).toContain('/register');
 
     const [auditRow] = await db
       .select()

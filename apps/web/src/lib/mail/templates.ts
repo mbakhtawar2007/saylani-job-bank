@@ -107,6 +107,28 @@ export function signupExistingAccountEmail(input: { url: string }) {
   };
 }
 
+/**
+ * Sent instead of a sign-in code when the email has no employer account
+ * (no account discovery): the mirror of signupExistingAccountEmail. Without
+ * this, requesting a code for a staff address, a typo, or an employer signup
+ * that never completed answers 202 and shows the code screen, and the user
+ * waits for a code that is never sent.
+ */
+export function employerCodeNoAccountEmail(input: { url: string }) {
+  const lines = [
+    'Someone asked for a Saylani Job Bank employer sign-in code for this email address, but there is no employer account using it — so no code was sent.',
+    'If that was you, create an employer account first and then sign in. If not, you can ignore this email.',
+  ];
+  return {
+    subject: 'No employer account for this email address',
+    text: `${lines.join('\n\n')}\n\n${input.url}\n`,
+    html: layout('No employer account yet', lines, {
+      label: 'Register as an employer',
+      url: input.url,
+    }),
+  };
+}
+
 export function companySubmittedEmail(input: {
   name: string;
   companyName: string;
