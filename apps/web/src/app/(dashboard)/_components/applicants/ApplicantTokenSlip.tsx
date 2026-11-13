@@ -10,7 +10,9 @@ import { formatPkMobileDisplay } from '@/lib/format/phone';
  * logo as a centre watermark, and the dashed footer. The same markup
  * renders on screen in the issue dialog and as the print-only portal —
  * the matching styles live in design-system/global.css, with @media print
- * rules that print only this slip, on one page.
+ * rules that print only this slip, on one page. On paper it is laid out
+ * for the counter's BlackCopper 80mm thermal roll (72mm printable width,
+ * named 80mm page) — not A4.
  *
  * Values are the live token: the big number is the day's token number,
  * zero-padded to two digits; the Applicant ID row shows the token code,
