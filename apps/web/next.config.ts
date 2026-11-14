@@ -21,7 +21,15 @@ const securityHeaders = [
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   // Geolocation stays on: the map pin picker offers "use my location".
-  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), payment=(), geolocation=(self)' },
+  // Camera is (self) since 2026-11-13: live photo capture at registration
+  // needs getUserMedia on our own pages. camera=() blocked it entirely —
+  // Chrome reports "Permissions policy violation: camera is not allowed in
+  // this document" and no browser site setting can override the header.
+  // Third-party frames stay blocked; microphone stays off (audio: false).
+  {
+    key: 'Permissions-Policy',
+    value: 'camera=(self), microphone=(), payment=(), geolocation=(self)',
+  },
   // Prod-only, no preload: HTTPS is not yet guaranteed on every deployment target.
   ...(isProd
     ? [{ key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' }]
