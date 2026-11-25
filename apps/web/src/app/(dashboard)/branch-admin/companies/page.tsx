@@ -43,22 +43,25 @@ export default async function BranchAdminCompaniesPage({
 }) {
   const { actor } = await requireRole('BRANCH_ADMIN');
   const params = branchListParams(await searchParams);
-  if (!params.has('status')) params.set('status', 'VERIFIED');
   const query = parseListQuery(params, {
     sortable: COMPANY_SORTABLE,
     defaultSort: { field: 'legalName', direction: 'asc' },
     filters: {
       ...companyFilters,
-      status: z.enum([
-        'VERIFIED',
-        'DRAFT',
-        'SUBMITTED',
-        'SUSPENDED',
-        'UNDER_VERIFICATION',
-        'INFO_REQUESTED',
-        'RESUBMITTED',
-        'REJECTED',
-      ]),
+      // 2026-11-25: status is optional — with no ?status= the list shows
+      // all companies (All statuses), not just VERIFIED.
+      status: z
+        .enum([
+          'VERIFIED',
+          'DRAFT',
+          'SUBMITTED',
+          'SUSPENDED',
+          'UNDER_VERIFICATION',
+          'INFO_REQUESTED',
+          'RESUBMITTED',
+          'REJECTED',
+        ])
+        .optional(),
     },
   });
   const [{ items, pagination }, allCompanies] = await Promise.all([
@@ -101,7 +104,8 @@ export default async function BranchAdminCompaniesPage({
           query={params.toString()}
           label="companies"
           statuses={FILTER_STATUSES}
-          defaultStatus="VERIFIED"
+          allowAllStatuses
+          themeAware
         />
         <BranchListPagination
           action="/branch-admin/companies"
