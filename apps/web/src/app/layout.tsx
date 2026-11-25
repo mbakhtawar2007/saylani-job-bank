@@ -4,6 +4,7 @@ import { headers } from 'next/headers';
 import type { ReactNode } from 'react';
 import { Toaster } from '@/components/molecules/Toast';
 import '@/design-system/global.css';
+import '@/design-system/serotiva.css';
 import { ThemeProvider } from '@/design-system/theme-provider';
 import { themeScript } from '@/design-system/theme-script';
 
