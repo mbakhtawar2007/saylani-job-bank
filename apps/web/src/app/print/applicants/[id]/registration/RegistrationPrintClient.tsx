@@ -13,7 +13,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/atoms';
 import { APPLICANT_STATUS_PILL } from '@/app/(dashboard)/_components/applicants/labels';
 import type { DocumentLink, RegistrationFormData } from '@/domains/applicant';
-import { ApiClientError, apiFetch } from '@/lib/api/client';
+import { apiFetch, friendlyApiError } from '@/lib/api/client';
 import { formatCnic } from '@/lib/format/cnic';
 import { formatDate } from '@/lib/format/date';
 import { formatPkMobileDisplay } from '@/lib/format/phone';
@@ -75,7 +75,8 @@ export function RegistrationPrintClient({ applicantId }: { applicantId: string }
   // fresh signed URL. `photoSettled` starts true (no photo) and only goes
   // false while a photo URL/image is still loading.
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
-  const [photoSettled, setPhotoSettled] = useState(true);
+  // Only the setter is still used (header photo removed).
+  const [, setPhotoSettled] = useState(true);
   const photoRef = useRef<HTMLImageElement>(null);
   const photoDocIdRef = useRef<string | null>(null);
 
@@ -95,11 +96,7 @@ export function RegistrationPrintClient({ applicantId }: { applicantId: string }
       );
       setForm(data);
     } catch (cause) {
-      setError(
-        cause instanceof ApiClientError
-          ? cause.message
-          : 'Unable to load the latest applicant registration details.',
-      );
+      setError(friendlyApiError(cause));
     } finally {
       setLoading(false);
     }
@@ -116,11 +113,7 @@ export function RegistrationPrintClient({ applicantId }: { applicantId: string }
         if (active) setForm(data);
       } catch (cause) {
         if (active) {
-          setError(
-            cause instanceof ApiClientError
-              ? cause.message
-              : 'Unable to load the latest applicant registration details.',
-          );
+          setError(friendlyApiError(cause));
         }
       } finally {
         if (active) setLoading(false);
@@ -194,15 +187,17 @@ export function RegistrationPrintClient({ applicantId }: { applicantId: string }
       });
       await loadForm();
     } catch (cause) {
-      setError(cause instanceof ApiClientError ? cause.message : 'Unable to replace the QR code.');
+      setError(friendlyApiError(cause));
     } finally {
       setWorking(false);
     }
   };
 
-  const readyToPrint = Boolean(
-    form && logoLoaded && qrLoaded && photoSettled && !imageError && !loading,
-  );
+  // The photo is shown once, in the Personal information section, so the
+  // header photo was removed and printing no longer waits for it to load.
+  // The photo is shown once, in the Personal information section, so the
+  // header photo was removed and printing no longer waits for it to load.
+  const readyToPrint = Boolean(form && logoLoaded && qrLoaded && !imageError && !loading);
 
   /**
    * Refresh the photo link before printing: the 120-second URL fetched at
@@ -284,13 +279,7 @@ export function RegistrationPrintClient({ applicantId }: { applicantId: string }
 
       {form && (
         <article className="registration-print-document">
-          <header
-            className={
-              photoUrl && !photoFailed
-                ? 'registration-print-header registration-print-header--with-photo'
-                : 'registration-print-header'
-            }
-          >
+          <header className="registration-print-header">
             <Image
               ref={logoRef}
               src="/logo.png"
@@ -311,22 +300,6 @@ export function RegistrationPrintClient({ applicantId }: { applicantId: string }
               <strong>{form.registrationReference}</strong>
               <span>{formatDate(form.registeredAt)}</span>
             </div>
-            {photoUrl && !photoFailed && (
-              <Image
-                ref={photoRef}
-                src={photoUrl}
-                width={132}
-                height={170}
-                alt="Applicant passport photo"
-                unoptimized
-                onLoad={() => setPhotoSettled(true)}
-                onError={() => {
-                  setPhotoFailed(true);
-                  setPhotoSettled(true);
-                }}
-                className="registration-print-photo"
-              />
-            )}
           </header>
 
           <dl className="registration-print-summary">

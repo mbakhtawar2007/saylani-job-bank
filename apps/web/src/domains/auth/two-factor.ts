@@ -11,6 +11,7 @@ import { db } from '@/lib/db';
 import { loadActor, requiresTwoFactor } from './actor';
 import { getAuth } from './auth';
 import { verifyTwoFactorSetupToken } from './setup-token';
+import { betterAuthUserMessage } from './auth-messages';
 import { clearTrustedDevices, revokeAllSessions } from './service';
 
 type SignedIn = RequestContext & { actor: Actor };
@@ -22,6 +23,11 @@ export interface EnrollmentStart {
   manualKey: string;
   /** One-time recovery codes — shown once, the user must store them. */
   backupCodes: string[];
+}
+
+function authApiCode(error: unknown): string | undefined {
+  const body = (error as { body?: { code?: string } }).body;
+  return typeof body?.code === 'string' ? body.code : undefined;
 }
 
 function authApiMessage(error: unknown): string | undefined {
@@ -79,18 +85,14 @@ export async function startTwoFactorEnrollmentWithSetupToken(
   );
   const userId = await verifyTwoFactorSetupToken(setupToken);
   if (!userId) {
-    throw new UnauthenticatedError(
-      'This setup link is invalid or has expired. Sign in again.',
-    );
+    throw new UnauthenticatedError('This setup link is invalid or has expired. Sign in again.');
   }
   const [row] = await db
     .select({ email: schema.users.email })
     .from(schema.users)
     .where(eq(schema.users.id, userId));
   if (!row) {
-    throw new UnauthenticatedError(
-      'This setup link is invalid or has expired. Sign in again.',
-    );
+    throw new UnauthenticatedError('This setup link is invalid or has expired. Sign in again.');
   }
   let signIn;
   try {
@@ -173,14 +175,17 @@ export async function confirmTwoFactorEnrollment(
         metadata: { method: 'totp_enroll', reason: 'INVALID' },
       });
       throw new UnauthenticatedError(
-        'That code is not correct. Check the time on your phone and try again.',
+        betterAuthUserMessage(
+          authApiCode(error),
+          'That code is not correct. Check the time on your phone and try again.',
+        ),
       );
     }
     throw error;
   }
 }
 
-/** Optional for Verifier / Interviewer-Scheduler; 2FA-required roles must keep it on. */
+/** Every password role must keep 2FA on once enrolled — applicants sit outside this only because they sign in with a phone SMS code, never a password. */
 export async function disableTwoFactor(
   ctx: SignedIn,
   password: string,

@@ -83,6 +83,8 @@ const applicant: ApplicantStaffView = {
     shortlist: false,
     scheduleInterview: false,
     referToEmployer: false,
+    recordInterviewOutcome: false,
+    referPassedOnly: false,
   },
 };
 
@@ -191,6 +193,7 @@ const issuedToken = {
   expired: false,
   status: 'ISSUED' as const,
   applicantId: null,
+  registrationReference: 'K7M2X9QP',
 };
 
 const tokenOptions = {

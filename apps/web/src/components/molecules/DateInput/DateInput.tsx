@@ -60,6 +60,9 @@ export function DateInput({
       maxLength={10}
       placeholder={placeholder}
       value={text}
+      // Calendar picker (PR #3 version, replacing the earlier showPicker() button): a transparent
+      // native date input sits over the icon, so a click opens the browser calendar everywhere.
+      // Typing still goes through the DD/MM/YYYY text field, so the format never follows the locale.
       endAdornment={
         <span className="text-fg-muted relative inline-flex items-center">
           <CalendarDays aria-hidden="true" />
@@ -73,6 +76,9 @@ export function DateInput({
             className="absolute inset-0 size-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
             onChange={(event) => {
               const iso = event.target.value;
+              // A cleared native picker (e.g. the mobile Clear button) sends "". Ignore it so
+              // the parent only ever gets a real ISO date, the same as from typing.
+              if (!iso) return;
               if (!inRange(iso)) return;
               setText(isoToDdMmYyyy(iso));
               onChange?.(iso);

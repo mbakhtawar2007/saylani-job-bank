@@ -34,6 +34,20 @@ describe('Branch Admin company status filter', () => {
     );
   });
 
+  it('defaults to All statuses and lists companies of every status', async () => {
+    listCompanies.mockResolvedValue({
+      items: [],
+      pagination: { page: 1, pageSize: 20, pageCount: 0, total: 0 },
+    });
+    const page = await BranchAdminCompaniesPage({
+      searchParams: Promise.resolve({}),
+    });
+    render(page);
+    expect(screen.getByLabelText('Status')).toHaveValue('');
+    expect(screen.getByRole('option', { name: 'All statuses' })).toHaveValue('');
+    expect(listCompanies.mock.calls[0]![1].filters.status).toBeUndefined();
+  });
+
   it('lets the Branch Admin filter for companies returned by a verifier', async () => {
     listCompanies.mockResolvedValue({
       items: [],

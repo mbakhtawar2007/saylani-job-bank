@@ -8,7 +8,7 @@ import { POST as regenerateVerificationToken } from '@/app/api/v1/applicants/[id
 import { resolveApplicantVerification } from '@/domains/applicant';
 import { resetMemoryRateLimits } from '@/domains/shared/rate-limit';
 import { db } from '@/lib/db';
-import { call, randomPhone, signIn, signInAdmin } from '@/test/api-client';
+import { call, randomPhone, signInAdmin } from '@/test/api-client';
 
 const HOME = { lat: 24.9256, lng: 67.0899 };
 let branchId: string;
@@ -75,7 +75,7 @@ describe('applicant registration form and QR verification', () => {
       params: { id },
     });
     expect(first.status, JSON.stringify(first.body)).toBe(200);
-    expect(first.body.data.registrationReference).toMatch(/^SJB-\d{4}-[A-F0-9]{16}$/);
+    expect(first.body.data.registrationReference).toMatch(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/);
     expect(first.body.data.personal.fullName).toBe('Verification Test Applicant');
     expect(first.body.data.personal.email).toBeNull();
     expect(first.body.data.hasNoExperience).toBe(true);
@@ -116,7 +116,7 @@ describe('applicant registration form and QR verification', () => {
     // Round 2: regenerating needs applicant:manage, which a Branch Admin
     // holds (permissions.test.ts: "Branch Admin is NOT read-only") — the
     // denied caller is a Verifier, who holds no applicant permission.
-    const verifier = await signIn('verifier.khi@jobbank.local');
+    const verifier = await signInAdmin('verifier.khi@jobbank.local');
     const denied = await call(
       regenerateVerificationToken,
       `/api/v1/applicants/${id}/verification-token/regenerate`,

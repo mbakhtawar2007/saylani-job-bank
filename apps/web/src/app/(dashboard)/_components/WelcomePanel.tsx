@@ -18,6 +18,7 @@ import {
   Users,
 } from 'lucide-react';
 import { InteractiveBarChart, CardActionMenu } from './InteractiveBarChart';
+import { DashboardAutoRefresh } from './DashboardAutoRefresh';
 import type { LucideIcon } from 'lucide-react';
 import NextLink from 'next/link';
 import { ROLE_LABELS, type Role } from '@jobbank/shared';
@@ -27,7 +28,13 @@ import { listApplicants, getMyProfile, monthlyApplicantCounts } from '@/domains/
 import { countCompaniesOnboardedByMonth, listCompanies } from '@/domains/company';
 import { countEmployerCandidates, countHiresByMonth, listJobsForEmployer } from '@/domains/job';
 import { listMyNotifications } from '@/domains/notifications';
-import { listMyApplications } from '@/domains/placement';
+import {
+  countInterviewerReferrals,
+  interviewPipelineCounts,
+  listInterviews,
+  listMyApplications,
+  monthlyInterviewCounts,
+} from '@/domains/placement';
 import { listStaff } from '@/domains/user';
 import { bucketByMonth, pktYearMonth } from './monthlySeries';
 import { formatDate } from '@/lib/format/date';
@@ -66,10 +73,9 @@ const ROLE_ACTIONS: Record<
     action1: { label: 'View Applicants', href: '/staff/applicants' },
     action2: { label: 'Open Jobs', href: '/staff/jobs' },
   },
-  // Never rendered: the role's home page redirects to /interviewer-scheduler/interviews.
   INTERVIEWER_SCHEDULER: {
     action1: { label: 'View Interviews', href: '/interviewer-scheduler/interviews' },
-    action2: { label: 'View Interviews', href: '/interviewer-scheduler/interviews' },
+    action2: { label: 'View Applicants', href: '/interviewer-scheduler/applicants' },
   },
   EMPLOYER: {
     action1: { label: 'Post a Job', href: '/employer/jobs/new' },
@@ -208,6 +214,8 @@ const TERMINAL_APPLICATION_STATUSES: readonly string[] = [
   'APPLICANT_REFUSED',
   'HIRED',
   'REJECTED',
+  // 0052 — a failed interview is an outcome, not a live application.
+  'INTERVIEW_FAILED',
 ];
 
 /* ─── Component ─────────────────────────────────────────────────── */
@@ -562,6 +570,145 @@ export async function WelcomePanel({ role }: { role: Role }) {
     activity = recentApplicants.data.map((a) => toApplicantActivity(a));
     chartValues = await monthlyApplicantCounts(actor, year);
     chartLabel = 'Applicants Registered';
+  } else if (role === 'INTERVIEWER_SCHEDULER') {
+    // Interviewer dashboard: real counts from listInterviews, the same
+    // branch-scoped list the Interviews page renders, plus the referrals
+    // that already left that list (FORWARDED + PASSED). Nothing here is
+    // invented: an empty pipeline renders zeros, not sample data.
+    const [interviews, referred, interviewMonths, pipelineCounts] = await Promise.all([
+      // Activity needs only the 5 most recent rows. The pipeline numbers
+      // come from the grouped count query (MEDIUM-2): deriving them from
+      // listInterviews rows meant every refresh loaded the whole
+      // unbounded pipeline. Every scheduled/postponed interview counts,
+      // not just future ones: a row whose time has passed but whose
+      // outcome is not recorded yet is still work.
+      listInterviews(actor, 5),
+      countInterviewerReferrals(actor),
+      monthlyInterviewCounts(actor, year),
+      interviewPipelineCounts(actor),
+    ]);
+    const toSchedule = pipelineCounts.toSchedule;
+    const scheduled = pipelineCounts.scheduled;
+    const upcomingToday = pipelineCounts.upcomingToday;
+    const passed = pipelineCounts.passed;
+    const failed = pipelineCounts.failed;
+    const total = pipelineCounts.total;
+    // Funnel denominator: pipeline rows in hand + referrals already made.
+    // Referred candidates are not in listInterviews, so without this the
+    // pipeline bars would share a denominator that excludes the funnel's
+    // own end state.
+    const funnelTotal = total + referred;
+    main = {
+      icon: Calendar,
+      label: 'Interviews to schedule',
+      value: fmt(toSchedule),
+      trend: {
+        dir: 'up',
+        text: `${fmt(upcomingToday)} today · ${fmt(passed)} passed awaiting referral`,
+      },
+      subTitle: 'Interview Pipeline',
+      subItems: [
+        { icon: Calendar, label: 'To schedule', value: fmt(toSchedule), status: 'active' },
+        {
+          icon: Clock,
+          label: 'Upcoming today',
+          value: fmt(upcomingToday),
+          status: 'active',
+        },
+        {
+          icon: CheckCircle2,
+          label: 'Passed awaiting referral',
+          value: fmt(passed),
+          status: 'active',
+        },
+        {
+          icon: Users,
+          label: 'Failed / No-show',
+          value: fmt(failed),
+          status: 'inactive',
+        },
+      ],
+    };
+    smallStats = [
+      {
+        icon: Calendar,
+        label: 'To schedule',
+        value: fmt(toSchedule),
+        sub: 'shortlisted candidates',
+        color: '#1a5fac',
+      },
+      {
+        icon: CheckCircle2,
+        label: 'Passed awaiting referral',
+        value: fmt(passed),
+        sub: 'refer them to the employer',
+        color: '#0f766e',
+      },
+    ];
+    pipeline = {
+      title: 'Interview Pipeline',
+      items: [
+        {
+          icon: Calendar,
+          label: 'To schedule',
+          current: toSchedule,
+          total: Math.max(funnelTotal, 1),
+          color: '#1a5fac',
+        },
+        {
+          icon: Clock,
+          label: 'Interviews scheduled',
+          current: scheduled,
+          total: Math.max(funnelTotal, 1),
+          color: '#0d7a3e',
+        },
+        {
+          icon: CheckCircle2,
+          label: 'Passed awaiting referral',
+          current: passed,
+          total: Math.max(funnelTotal, 1),
+          color: '#b45309',
+        },
+        {
+          icon: Users,
+          label: 'Failed / No-show',
+          current: failed,
+          total: Math.max(funnelTotal, 1),
+          color: '#be123c',
+        },
+        {
+          icon: Briefcase,
+          label: 'Referred to employer',
+          current: referred,
+          total: Math.max(funnelTotal, 1),
+          color: '#0f766e',
+        },
+      ],
+    };
+    const INTERVIEW_ACTIVITY: Record<string, { action: string; status: ActivityItem['status'] }> = {
+      SHORTLISTED: { action: 'Candidate shortlisted', status: 'info' },
+      INTERVIEW_SCHEDULED: { action: 'Interview scheduled', status: 'pending' },
+      INTERVIEW_POSTPONED: { action: 'Interview postponed', status: 'warning' },
+      INTERVIEW_CANCELLED: { action: 'Interview cancelled', status: 'info' },
+      INTERVIEW_PASSED: { action: 'Interview passed', status: 'success' },
+      INTERVIEW_FAILED: { action: 'Interview failed', status: 'warning' },
+    };
+    activity = interviews.slice(0, 5).map((i) => {
+      const a = INTERVIEW_ACTIVITY[i.status] ?? { action: 'Interview', status: 'info' as const };
+      return {
+        icon: Calendar,
+        action: a.action,
+        detail: i.applicantName,
+        when: relativeDate(i.updatedAt),
+        price: i.jobTitle,
+        status: a.status,
+      };
+    });
+    // Monthly chart: every interview-dated application in the branch,
+    // including ones that already left the pipeline (referred, hired).
+    // Bucketing listInterviews rows lost those months on referral.
+    chartValues = interviewMonths;
+    chartLabel = 'Interviews Scheduled';
   } else if (role === 'EMPLOYER') {
     // Employer dashboard: real counts over the employer's OWN postings
     // only (see countEmployerCandidates / countHiresByMonth).
@@ -801,6 +948,10 @@ export async function WelcomePanel({ role }: { role: Role }) {
 
   return (
     <div className="grid w-full gap-6">
+      {/* Live values: re-run the server data every 30s while this tab is
+          visible, and on focus — the numbers below are a snapshot at
+          load time without this. */}
+      <DashboardAutoRefresh />
       {/* ── Header ──────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>

@@ -1,0 +1,1 @@
+export { HeroSearch } from './HeroSearch';

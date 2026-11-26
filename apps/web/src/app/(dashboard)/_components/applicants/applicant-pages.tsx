@@ -66,14 +66,11 @@ export async function ApplicantListPage({
     listMasterData(actor, { type: 'AREA' }),
   ]);
 
-  // Counter 2 entry point (2026-11-13): Staff and Super Admin can register
-  // applicants here. Branch Admin and non-registering staff roles get no button.
-  const registerBasePath =
-    role === 'STAFF'
-      ? '/staff/applicants'
-      : role === 'SUPER_ADMIN'
-        ? '/super-admin/applicants'
-        : null;
+  // Counter 2 entry point (2026-11-13): only Staff register applicants from a token here.
+  // Branch Admin and Super Admin do not register applicants (decided 2026-11-18/19), and other
+  // roles cannot register, so they get no Register-from-token button. Kept over PR #3, which
+  // still gave Super Admin the button.
+  const registerBasePath = role === 'STAFF' ? '/staff/applicants' : null;
 
   return (
     <div className="grid w-full gap-6">

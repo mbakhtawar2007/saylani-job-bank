@@ -1,7 +1,7 @@
 'server-only';
 import { schema } from '@jobbank/db';
 import type { PaginationMeta } from '@jobbank/shared';
-import { and, count, desc, eq, inArray, or } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, lt, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { runCommand } from '@/domains/shared/audit';
 import { formatDateTime } from '@/lib/format/date';
@@ -15,6 +15,7 @@ import {
   ValidationError,
 } from '@/domains/shared/errors';
 import {
+  assertBranchAccess,
   assertCityAccess,
   assertPermission,
   assertRole,
@@ -44,6 +45,8 @@ export type ApplicationStatus =
   | 'INTERVIEW_SCHEDULED'
   | 'INTERVIEW_POSTPONED'
   | 'INTERVIEW_CANCELLED'
+  | 'INTERVIEW_PASSED'
+  | 'INTERVIEW_FAILED'
   | 'FORWARDED'
   | 'EMPLOYER_INTERVIEW_SCHEDULED'
   | 'EMPLOYER_INTERVIEW_POSTPONED'
@@ -85,6 +88,12 @@ export interface ApplicationView {
   interviewAt: string | null;
   interviewLocation: string | null;
   interviewNote: string | null;
+  // 0052 — Job Bank interview outcome (null until an outcome is recorded).
+  interviewAttendance: 'ATTENDED' | 'NO_SHOW' | null;
+  interviewResult: 'PASSED' | 'FAILED' | null;
+  interviewFeedback: string | null;
+  interviewOutcomeAt: string | null;
+  interviewOutcomeBy: string | null;
   // Employer interview stage
   employerInterviewAt: string | null;
   employerInterviewLocation: string | null;
@@ -142,6 +151,68 @@ export const updateInterviewStatusSchema = z
   });
 export type UpdateInterviewStatusInput = z.infer<typeof updateInterviewStatusSchema>;
 
+// ─── 0052 — interview outcome ──────────────────────────────────────────
+
+export const INTERVIEW_ATTENDANCES = ['ATTENDED', 'NO_SHOW'] as const;
+export type InterviewAttendance = (typeof INTERVIEW_ATTENDANCES)[number];
+export const INTERVIEW_RESULTS = ['PASSED', 'FAILED'] as const;
+export type InterviewResult = (typeof INTERVIEW_RESULTS)[number];
+
+/**
+ * Outcome of a scheduled Job Bank interview. A no-show is always a fail
+ * (attendance NO_SHOW forces result FAILED); feedback is required when the
+ * candidate fails (≥5 chars, M19-style evidence rule) and optional on a
+ * pass. No new seed reason codes: NO_SHOW is captured by `attendance`,
+ * and a failed performance is described in `feedback`.
+ */
+export const recordInterviewOutcomeSchema = z
+  .object({
+    attendance: z.enum(INTERVIEW_ATTENDANCES),
+    result: z.enum(INTERVIEW_RESULTS),
+    feedback: z.string().trim().max(500).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.attendance === 'NO_SHOW' && v.result !== 'FAILED') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['result'],
+        message: 'A no-show is always recorded as failed',
+      });
+    }
+    if (v.result === 'FAILED' && (v.feedback?.trim().length ?? 0) < 5) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['feedback'],
+        message: 'Feedback is required when the candidate fails (at least 5 characters)',
+      });
+    }
+  });
+export type RecordInterviewOutcomeInput = z.infer<typeof recordInterviewOutcomeSchema>;
+
+/**
+ * True when the actor's only interview/referral power comes from the
+ * INTERVIEWER_SCHEDULER role — i.e. they hold no STAFF / BRANCH_ADMIN role.
+ * A dual-role user (e.g. Branch Admin + Interviewer) is treated as Staff/BA,
+ * not as interviewer-only. Pure helper, unit-tested without a DB.
+ */
+export function isInterviewerOnlyReferrer(actor: Actor): boolean {
+  return (
+    actor.roles.includes('INTERVIEWER_SCHEDULER') &&
+    !actor.roles.some((r) => r === 'STAFF' || r === 'BRANCH_ADMIN')
+  );
+}
+
+/**
+ * Statuses an actor may refer to the employer from. Interviewer-only
+ * actors may refer ONLY from INTERVIEW_PASSED; Staff/BA keep their
+ * existing range, plus PASSED (they may also forward a passed candidate).
+ * Pure helper, unit-tested without a DB; referApplicantToEmployer enforces it.
+ */
+export function referableStatusesFor(actor: Actor): ApplicationStatus[] {
+  if (isInterviewerOnlyReferrer(actor)) return ['INTERVIEW_PASSED'];
+  return ['SHORTLISTED', 'INTERVIEW_SCHEDULED', 'INTERVIEW_POSTPONED', 'INTERVIEW_PASSED'];
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 async function buildView(row: typeof ap.$inferSelect): Promise<ApplicationView> {
@@ -153,29 +224,80 @@ async function buildView(row: typeof ap.$inferSelect): Promise<ApplicationView> 
     .from(schema.jobs)
     .where(eq(schema.jobs.id, row.jobId));
 
-  let companyName = '';
-  const companyId = jobRow?.companyId ?? '';
+  let company: Pick<typeof schema.companies.$inferSelect, 'tradeName' | 'legalName'> | undefined;
   if (jobRow) {
     const [c] = await db
-      .select({ name: schema.companies.tradeName, legal: schema.companies.legalName })
+      .select({ tradeName: schema.companies.tradeName, legalName: schema.companies.legalName })
       .from(schema.companies)
       .where(eq(schema.companies.id, jobRow.companyId));
-    companyName = c?.name ?? c?.legal ?? '';
+    company = c;
   }
 
+  return toView(row, jobRow, company);
+}
+
+/**
+ * Batched views for the list endpoints: ONE jobs query + ONE companies
+ * query for the whole page, instead of two queries per row. listInterviews
+ * runs on every dashboard refresh (every 30s via DashboardAutoRefresh),
+ * so the per-row lookups Copilot flagged grew with historical data —
+ * this keeps the refresh at a constant number of queries.
+ */
+async function buildViews(rows: (typeof ap.$inferSelect)[]): Promise<ApplicationView[]> {
+  if (rows.length === 0) return [];
+  const jobs = await db
+    .select({
+      id: schema.jobs.id,
+      title: schema.jobs.title,
+      companyId: schema.jobs.companyId,
+    })
+    .from(schema.jobs)
+    .where(inArray(schema.jobs.id, [...new Set(rows.map((r) => r.jobId))]));
+  const jobById = new Map(jobs.map((j) => [j.id, j]));
+  const companyIds = [...new Set(jobs.map((j) => j.companyId))];
+  const companies =
+    companyIds.length === 0
+      ? []
+      : await db
+          .select({
+            id: schema.companies.id,
+            tradeName: schema.companies.tradeName,
+            legalName: schema.companies.legalName,
+          })
+          .from(schema.companies)
+          .where(inArray(schema.companies.id, companyIds));
+  const companyById = new Map(companies.map((c) => [c.id, c]));
+  return rows.map((row) => {
+    const jobRow = jobById.get(row.jobId);
+    return toView(row, jobRow, jobRow ? companyById.get(jobRow.companyId) : undefined);
+  });
+}
+
+/** Pure row → view mapping, shared by the single-row and batched loaders. */
+function toView(
+  row: typeof ap.$inferSelect,
+  jobRow: Pick<typeof schema.jobs.$inferSelect, 'title' | 'companyId'> | undefined,
+  company: Pick<typeof schema.companies.$inferSelect, 'tradeName' | 'legalName'> | undefined,
+): ApplicationView {
   return {
     id: row.id,
     applicantId: row.applicantId,
     jobId: row.jobId,
     jobTitle: jobRow?.title ?? '',
-    companyName,
-    companyId,
+    companyName: company?.tradeName ?? company?.legalName ?? '',
+    companyId: jobRow?.companyId ?? '',
     branchId: row.branchId,
     status: row.status,
     note: row.note,
     interviewAt: row.interviewAt?.toISOString() ?? null,
     interviewLocation: row.interviewLocation,
     interviewNote: row.interviewNote,
+    interviewAttendance:
+      (row.interviewAttendance as ApplicationView['interviewAttendance']) ?? null,
+    interviewResult: (row.interviewResult as ApplicationView['interviewResult']) ?? null,
+    interviewFeedback: row.interviewFeedback,
+    interviewOutcomeAt: row.interviewOutcomeAt?.toISOString() ?? null,
+    interviewOutcomeBy: row.interviewOutcomeBy ?? null,
     employerInterviewAt: row.employerInterviewAt?.toISOString() ?? null,
     employerInterviewLocation: row.employerInterviewLocation,
     employerInterviewNote: row.employerInterviewNote,
@@ -313,6 +435,16 @@ export async function scheduleInterview(
   input: ScheduleInterviewInput,
 ): Promise<ApplicationView> {
   assertPermission(ctx.actor, 'interview:schedule_jobbank');
+  // Audit 2026-11-23 (MEDIUM-1): scheduling writes audit rows and fires
+  // an applicant notification, so it gets the same 30/hr budget as the
+  // shortlist/refer commands — without it one account could spam an
+  // applicant with "interview scheduled" notifications.
+  await enforceRateLimit(
+    'interview-schedule',
+    ctx.actor.userId,
+    { limit: 30, windowSeconds: 3600 },
+    'Too many interview updates. Try again in an hour.',
+  );
 
   const [row] = await db.select().from(ap).where(eq(ap.id, applicationId));
   if (!row) throw new NotFoundError('Application', applicationId);
@@ -329,10 +461,22 @@ export async function scheduleInterview(
   // direct callers bypass it.
   assertFutureInterviewAt(input.interviewAt);
 
-  await assertCityAccess(ctx.actor, row.branchId, {
-    entityType: 'application',
-    entityId: row.id,
-  });
+  // Audit 2026-11-23 (HIGH-1): the interviewer's own lists are
+  // branch-exact, so his commands must be too. A city check here would
+  // let one branch's interviewer act on another same-city branch's
+  // applications via a direct API call. Staff/BA keep the established
+  // city-wide rule; only the interviewer-only actor is branch-pinned.
+  if (isInterviewerOnlyReferrer(ctx.actor)) {
+    assertBranchAccess(ctx.actor, row.branchId, {
+      entityType: 'application',
+      entityId: row.id,
+    });
+  } else {
+    await assertCityAccess(ctx.actor, row.branchId, {
+      entityType: 'application',
+      entityId: row.id,
+    });
+  }
 
   const view = await runCommand(ctx, async ({ tx, audit }) => {
     assertJobLive(
@@ -381,14 +525,34 @@ export async function updateInterviewStatus(
   input: UpdateInterviewStatusInput,
 ): Promise<ApplicationView> {
   assertPermission(ctx.actor, 'interview:schedule_jobbank');
+  // Audit 2026-11-23 (MEDIUM-1): same budget as scheduleInterview —
+  // reschedules and postponements notify the applicant too.
+  await enforceRateLimit(
+    'interview-schedule',
+    ctx.actor.userId,
+    { limit: 30, windowSeconds: 3600 },
+    'Too many interview updates. Try again in an hour.',
+  );
 
   const [row] = await db.select().from(ap).where(eq(ap.id, applicationId));
   if (!row) throw new NotFoundError('Application', applicationId);
 
-  await assertCityAccess(ctx.actor, row.branchId, {
-    entityType: 'application',
-    entityId: row.id,
-  });
+  // Audit 2026-11-23 (HIGH-1): the interviewer's own lists are
+  // branch-exact, so his commands must be too. A city check here would
+  // let one branch's interviewer act on another same-city branch's
+  // applications via a direct API call. Staff/BA keep the established
+  // city-wide rule; only the interviewer-only actor is branch-pinned.
+  if (isInterviewerOnlyReferrer(ctx.actor)) {
+    assertBranchAccess(ctx.actor, row.branchId, {
+      entityType: 'application',
+      entityId: row.id,
+    });
+  } else {
+    await assertCityAccess(ctx.actor, row.branchId, {
+      entityType: 'application',
+      entityId: row.id,
+    });
+  }
 
   const interviewStatuses: ApplicationStatus[] = [
     'INTERVIEW_SCHEDULED',
@@ -466,6 +630,98 @@ export async function updateInterviewStatus(
   return view;
 }
 
+/**
+ * 0052 — Interviewer / Staff / Branch Admin: record the outcome of a
+ * scheduled Job Bank interview. Only from INTERVIEW_SCHEDULED or
+ * INTERVIEW_POSTPONED (the machine rejects SHORTLISTED, CANCELLED, PASSED
+ * and FAILED alike); a FAILED outcome is terminal for the interview stage,
+ * a PASSED outcome is the interviewer-only actor's only route to referral.
+ */
+export async function recordInterviewOutcome(
+  ctx: SignedIn,
+  applicationId: string,
+  input: RecordInterviewOutcomeInput,
+): Promise<ApplicationView> {
+  assertPermission(ctx.actor, 'interview:record_outcome');
+  // Audit 2026-11-23 (MEDIUM-1): outcomes write audit rows and notify
+  // the applicant, so they get the same 30/hr budget as the other
+  // interview commands.
+  await enforceRateLimit(
+    'interview-outcome',
+    ctx.actor.userId,
+    { limit: 30, windowSeconds: 3600 },
+    'Too many interview outcomes. Try again in an hour.',
+  );
+
+  const [row] = await db.select().from(ap).where(eq(ap.id, applicationId));
+  if (!row) throw new NotFoundError('Application', applicationId);
+
+  if (row.status !== 'INTERVIEW_SCHEDULED' && row.status !== 'INTERVIEW_POSTPONED')
+    throw new ForbiddenError('Record an outcome only for a scheduled interview');
+
+  // Same live-job rule as scheduleInterview: an outcome on a closed job
+  // is moot. Re-checked under the job lock inside the transaction.
+  assertJobLive(await loadJob(db, row.jobId), 'record an interview outcome for this application');
+
+  // Audit 2026-11-23 (HIGH-1): the interviewer's own lists are
+  // branch-exact, so his commands must be too. A city check here would
+  // let one branch's interviewer act on another same-city branch's
+  // applications via a direct API call. Staff/BA keep the established
+  // city-wide rule; only the interviewer-only actor is branch-pinned.
+  if (isInterviewerOnlyReferrer(ctx.actor)) {
+    assertBranchAccess(ctx.actor, row.branchId, {
+      entityType: 'application',
+      entityId: row.id,
+    });
+  } else {
+    await assertCityAccess(ctx.actor, row.branchId, {
+      entityType: 'application',
+      entityId: row.id,
+    });
+  }
+
+  const event = input.result === 'PASSED' ? 'RECORD_INTERVIEW_PASS' : 'RECORD_INTERVIEW_FAIL';
+  const view = await runCommand(ctx, async ({ tx, audit }) => {
+    assertJobLive(
+      await loadJobForUpdate(tx, row.jobId),
+      'record an interview outcome for this application',
+    );
+    const { to } = await lockAndTransitionApplication(tx, applicationId, event);
+    const [updated] = await tx
+      .update(ap)
+      .set({
+        status: to,
+        interviewAttendance: input.attendance,
+        interviewResult: input.result,
+        interviewFeedback: input.feedback?.trim() ? input.feedback.trim() : null,
+        interviewOutcomeAt: new Date(),
+        interviewOutcomeBy: ctx.actor.userId,
+        updatedAt: new Date(),
+      })
+      .where(eq(ap.id, applicationId))
+      .returning();
+
+    audit({
+      action: 'application.interview_outcome_recorded',
+      entityType: 'application',
+      entityId: applicationId,
+      branchId: row.branchId,
+      metadata: { attendance: input.attendance, result: input.result },
+    });
+    return updated!;
+  }).then(buildView);
+
+  // The applicant hears the outcome (best-effort, post-commit).
+  void notifyApplicantOfInterviewUpdate(
+    ctx,
+    row.applicantId,
+    view,
+    input.result === 'PASSED' ? 'INTERVIEW_PASSED' : 'INTERVIEW_FAILED',
+  ).catch((err) => ctx.log.error('interview outcome notification failed', { applicationId, err }));
+
+  return view;
+}
+
 async function notifyApplicantOfInterviewUpdate(
   ctx: SignedIn,
   applicantId: string,
@@ -480,7 +736,12 @@ async function notifyApplicantOfInterviewUpdate(
   if (!applicantRow) return;
 
   type NotifType =
-    'INTERVIEW_SCHEDULED' | 'INTERVIEW_POSTPONED' | 'INTERVIEW_CANCELLED' | 'INTERVIEW_RESCHEDULED';
+    | 'INTERVIEW_SCHEDULED'
+    | 'INTERVIEW_POSTPONED'
+    | 'INTERVIEW_CANCELLED'
+    | 'INTERVIEW_RESCHEDULED'
+    | 'INTERVIEW_PASSED'
+    | 'INTERVIEW_FAILED';
   const copy: Record<NotifType, { title: string; body: string }> = {
     INTERVIEW_SCHEDULED: {
       title: `Interview scheduled — ${view.jobTitle}`,
@@ -502,6 +763,14 @@ async function notifyApplicantOfInterviewUpdate(
         ? `Your interview is now on ${formatDateTime(view.interviewAt)}${view.interviewLocation ? ` at ${view.interviewLocation}` : ''}.`
         : 'Your interview has been rescheduled.',
     },
+    INTERVIEW_PASSED: {
+      title: `Interview passed — ${view.jobTitle}`,
+      body: `You passed your Job Bank interview for ${view.jobTitle}. Staff will contact you about the next step.`,
+    },
+    INTERVIEW_FAILED: {
+      title: `Interview outcome — ${view.jobTitle}`,
+      body: `Your Job Bank interview for ${view.jobTitle} did not go ahead as hoped. Contact your Job Bank branch for details.`,
+    },
   };
 
   const notifType = (
@@ -511,7 +780,11 @@ async function notifyApplicantOfInterviewUpdate(
         ? 'INTERVIEW_POSTPONED'
         : newStatus === 'INTERVIEW_CANCELLED'
           ? 'INTERVIEW_CANCELLED'
-          : 'INTERVIEW_RESCHEDULED'
+          : newStatus === 'INTERVIEW_PASSED'
+            ? 'INTERVIEW_PASSED'
+            : newStatus === 'INTERVIEW_FAILED'
+              ? 'INTERVIEW_FAILED'
+              : 'INTERVIEW_RESCHEDULED'
   ) satisfies NotifType;
 
   await createNotification(db, {
@@ -531,8 +804,14 @@ export const referApplicantSchema = z.object({
 export type ReferApplicantInput = z.infer<typeof referApplicantSchema>;
 
 /**
- * Staff / Branch Admin: refer a shortlisted / interviewed applicant to the employer
- * by setting status to FORWARDED and notifying both the applicant and the company.
+ * Refer a shortlisted / interviewed applicant to the employer by setting
+ * status to FORWARDED and notifying both the applicant and the company.
+ * Staff / Branch Admin keep their existing range (SHORTLISTED, scheduled
+ * or postponed interviews, plus PASSED). An interviewer-only actor may
+ * refer ONLY from INTERVIEW_PASSED — the pass-only guard for Option B.
+ * The permission alone does not authorise it: a dual-role Staff/BA user
+ * is treated as Staff/BA, an interviewer-only user hitting any other
+ * status gets a clear ForbiddenError, not a silent machine rejection.
  */
 export async function referApplicantToEmployer(
   ctx: SignedIn,
@@ -552,18 +831,29 @@ export async function referApplicantToEmployer(
   const [row] = await db.select().from(ap).where(eq(ap.id, applicationId));
   if (!row) throw new NotFoundError('Application', applicationId);
 
-  await assertCityAccess(ctx.actor, row.branchId, {
-    entityType: 'application',
-    entityId: row.id,
-  });
+  // Audit 2026-11-23 (HIGH-1): the interviewer's own lists are
+  // branch-exact, so his commands must be too. A city check here would
+  // let one branch's interviewer act on another same-city branch's
+  // applications via a direct API call. Staff/BA keep the established
+  // city-wide rule; only the interviewer-only actor is branch-pinned.
+  if (isInterviewerOnlyReferrer(ctx.actor)) {
+    assertBranchAccess(ctx.actor, row.branchId, {
+      entityType: 'application',
+      entityId: row.id,
+    });
+  } else {
+    await assertCityAccess(ctx.actor, row.branchId, {
+      entityType: 'application',
+      entityId: row.id,
+    });
+  }
 
-  const referable: ApplicationStatus[] = [
-    'SHORTLISTED',
-    'INTERVIEW_SCHEDULED',
-    'INTERVIEW_POSTPONED',
-  ];
-  if (!referable.includes(row.status))
+  const referable = referableStatusesFor(ctx.actor);
+  if (!referable.includes(row.status)) {
+    if (isInterviewerOnlyReferrer(ctx.actor))
+      throw new ForbiddenError('Record a passed interview outcome before referring');
     throw new ForbiddenError('Application must be shortlisted or interviewed to refer');
+  }
 
   // The job's company must still be verified: a referral to a suspended
   // or rejected company must not go out.
@@ -756,7 +1046,8 @@ export async function referApplicantToEmployerForJob(
     if (
       existing.status === 'SHORTLISTED' ||
       existing.status === 'INTERVIEW_SCHEDULED' ||
-      existing.status === 'INTERVIEW_POSTPONED'
+      existing.status === 'INTERVIEW_POSTPONED' ||
+      existing.status === 'INTERVIEW_PASSED'
     ) {
       return referApplicantToEmployer(ctx, existing.id, { note: input.note });
     }
@@ -812,7 +1103,8 @@ export async function referApplicantToEmployerForJob(
     if (
       raced.status === 'SHORTLISTED' ||
       raced.status === 'INTERVIEW_SCHEDULED' ||
-      raced.status === 'INTERVIEW_POSTPONED'
+      raced.status === 'INTERVIEW_POSTPONED' ||
+      raced.status === 'INTERVIEW_PASSED'
     ) {
       return referApplicantToEmployer(ctx, raced.id, { note: input.note });
     }
@@ -917,7 +1209,7 @@ export async function listApplicationsForApplicant(
     : [{ total: 0 }];
   const base = db.select().from(ap).where(where).orderBy(desc(ap.createdAt));
   const rows = query ? await base.limit(query.limit).offset(query.offset) : await base;
-  const items = await Promise.all(rows.map(buildView));
+  const items = await buildViews(rows);
   if (!query) return items;
   return { items, pagination: paginationMeta(query, totalRow?.total ?? 0) };
 }
@@ -925,8 +1217,9 @@ export async function listApplicationsForApplicant(
 /**
  * Interviews (and candidates awaiting scheduling) in the actor's branch(es)
  * — the Interviewer and Scheduler role's list. SHORTLISTED rows are the
- * "to schedule" queue; INTERVIEW_* rows are the scheduled, postponed and
- * cancelled interviews. Branch-scoped like Staff; Super Admin holds no
+ * "to schedule" queue; INTERVIEW_* rows are the scheduled, postponed,
+ * cancelled and outcome-recorded interviews (PASSED stays until referred,
+ * FAILED stays in Past). Branch-scoped like Staff; Super Admin holds no
  * interview permission, so they never reach this list.
  */
 export interface InterviewListItem {
@@ -941,6 +1234,10 @@ export interface InterviewListItem {
   interviewAt: string | null;
   interviewLocation: string | null;
   interviewNote: string | null;
+  // 0052 — outcome, null until recorded.
+  interviewAttendance: 'ATTENDED' | 'NO_SHOW' | null;
+  interviewResult: 'PASSED' | 'FAILED' | null;
+  interviewFeedback: string | null;
   updatedAt: string;
 }
 
@@ -949,12 +1246,96 @@ const INTERVIEW_PIPELINE_STATUSES: ApplicationStatus[] = [
   'INTERVIEW_SCHEDULED',
   'INTERVIEW_POSTPONED',
   'INTERVIEW_CANCELLED',
+  // 0052 — PASSED stays in the list (awaiting referral); FAILED stays
+  // visible in Past so the outcome is not lost once recorded.
+  'INTERVIEW_PASSED',
+  'INTERVIEW_FAILED',
 ];
 
-export async function listInterviews(actor: Actor): Promise<InterviewListItem[]> {
+/**
+ * Dashboard funnel: passed candidates this branch referred to the
+ * employer. interviewResult PASSED + a status only reachable after a
+ * referral (REFERRED_STATUSES) is the precise shape — Staff can also
+ * refer straight from SHORTLISTED, and those rows carry no interview
+ * result, so they are not counted here. Note the count is about the
+ * candidates, not who clicked refer: Staff/BA may also refer from
+ * INTERVIEW_PASSED, and the row records no referrer, so a staff-referred
+ * passed candidate counts here too (audit 2026-11-23, LOW-2). If the bar
+ * must mean "referred by the interviewer", record referredBy on referral
+ * and filter on it. Counting FORWARDED alone lost referrals the moment
+ * the employer moved the application onward (employer interview, hold,
+ * offer, hire): the referral already happened, so the count must not
+ * depend on the current status. Same branch-scoped guard as
+ * listInterviews; a referred candidate leaves listInterviews (FORWARDED
+ * is not a pipeline status), so the dashboard needs this count to show
+ * the end of the funnel at all.
+ */
+export async function countInterviewerReferrals(actor: Actor): Promise<number> {
+  assertPermission(actor, 'interview:schedule_jobbank');
+  assertRole(actor, 'STAFF', 'BRANCH_ADMIN', 'INTERVIEWER_SCHEDULER');
+  const [row] = await db
+    .select({ value: count() })
+    .from(ap)
+    .where(
+      and(
+        eq(ap.interviewResult, 'PASSED'),
+        inArray(ap.status, REFERRED_STATUSES),
+        branchScope(actor, ap.branchId),
+      ),
+    );
+  return row?.value ?? 0;
+}
+
+/**
+ * Monthly Job Bank interviews, Jan..Dec of `year`, in ONE grouped query —
+ * the interviewer chart's values. Buckets by the interview date
+ * (interviewAt in PKT), not by applicant registration, and counts EVERY
+ * interview-dated application in the branch — including ones that already
+ * left the pipeline (referred, hired, on hold). The old chart bucketed
+ * listInterviews rows, so a referred candidate's interview month vanished
+ * from the chart the moment they were referred. Same branch-scoped guard
+ * as listInterviews, same PKT year window as monthlyApplicantCounts.
+ */
+export async function monthlyInterviewCounts(actor: Actor, year: number): Promise<number[]> {
+  assertPermission(actor, 'interview:schedule_jobbank');
+  assertRole(actor, 'STAFF', 'BRANCH_ADMIN', 'INTERVIEWER_SCHEDULER');
+  // PKT year window as UTC instants: 1 Jan 00:00 PKT = 31 Dec 19:00 UTC.
+  const start = new Date(Date.UTC(year, 0, 1) - 5 * 60 * 60 * 1000);
+  const end = new Date(Date.UTC(year + 1, 0, 1) - 5 * 60 * 60 * 1000);
+
+  const monthExpr = sql<number>`extract(month from ${ap.interviewAt} at time zone 'Asia/Karachi')`;
+  const rows = await db
+    .select({ month: monthExpr, value: count() })
+    .from(ap)
+    .where(
+      and(
+        branchScope(actor, ap.branchId),
+        gte(ap.interviewAt, start),
+        lt(ap.interviewAt, end),
+        // Audit 2026-11-23 (LOW-1): a cancelled interview is not a
+        // scheduled one — the chart label is "Interviews Scheduled".
+        ne(ap.status, 'INTERVIEW_CANCELLED'),
+      ),
+    )
+    .groupBy(monthExpr);
+
+  const values = Array.from({ length: 12 }, () => 0);
+  for (const row of rows) {
+    if (row.month >= 1 && row.month <= 12) values[row.month - 1] = row.value;
+  }
+  return values;
+}
+
+export async function listInterviews(actor: Actor, limit = 500): Promise<InterviewListItem[]> {
   assertPermission(actor, 'interview:schedule_jobbank');
   // Same staff-only, branch-scoped guard as listApplicationsForApplicant.
   assertRole(actor, 'STAFF', 'BRANCH_ADMIN', 'INTERVIEWER_SCHEDULER');
+  // Audit 2026-11-23 (MEDIUM-2): bounded — the old query had no limit
+  // and terminal rows (FAILED, CANCELLED) never leave the list, so the
+  // row set grew forever while the dashboard reloaded it every 30s.
+  // The dashboard now takes its numbers from interviewPipelineCounts
+  // and only needs 5 rows for Recent Activity; the Interviews page uses
+  // the 500 most recently updated rows.
   const rows = await db
     .select()
     .from(ap)
@@ -964,10 +1345,11 @@ export async function listInterviews(actor: Actor): Promise<InterviewListItem[]>
         branchScope(actor, ap.branchId),
       ),
     )
-    .orderBy(desc(ap.updatedAt));
+    .orderBy(desc(ap.updatedAt))
+    .limit(limit);
   if (rows.length === 0) return [];
   const [views, applicants] = await Promise.all([
-    Promise.all(rows.map(buildView)),
+    buildViews(rows),
     db
       .select({ id: schema.applicants.id, fullName: schema.applicants.fullName })
       .from(schema.applicants)
@@ -993,9 +1375,61 @@ export async function listInterviews(actor: Actor): Promise<InterviewListItem[]>
       interviewAt: row.interviewAt?.toISOString() ?? null,
       interviewLocation: row.interviewLocation,
       interviewNote: row.interviewNote,
+      interviewAttendance:
+        (row.interviewAttendance as InterviewListItem['interviewAttendance']) ?? null,
+      interviewResult: (row.interviewResult as InterviewListItem['interviewResult']) ?? null,
+      interviewFeedback: row.interviewFeedback,
       updatedAt: row.updatedAt.toISOString(),
     };
   });
+}
+
+/**
+ * Dashboard pipeline numbers in two aggregate queries — no row loading.
+ * The dashboard used to derive these from listInterviews rows, which
+ * meant every 30s refresh loaded the whole (unbounded) pipeline. Same
+ * branch-scoped guard as listInterviews.
+ */
+export interface InterviewPipelineCounts {
+  toSchedule: number;
+  scheduled: number;
+  upcomingToday: number;
+  passed: number;
+  failed: number;
+  total: number;
+}
+
+export async function interviewPipelineCounts(actor: Actor): Promise<InterviewPipelineCounts> {
+  assertPermission(actor, 'interview:schedule_jobbank');
+  assertRole(actor, 'STAFF', 'BRANCH_ADMIN', 'INTERVIEWER_SCHEDULER');
+  const where = and(
+    or(...INTERVIEW_PIPELINE_STATUSES.map((s) => eq(ap.status, s))),
+    branchScope(actor, ap.branchId),
+  );
+  const [byStatus, [today]] = await Promise.all([
+    db.select({ status: ap.status, value: count() }).from(ap).where(where).groupBy(ap.status),
+    db
+      .select({ value: count() })
+      .from(ap)
+      .where(
+        and(
+          inArray(ap.status, ['INTERVIEW_SCHEDULED', 'INTERVIEW_POSTPONED'] as ApplicationStatus[]),
+          branchScope(actor, ap.branchId),
+          sql`${ap.interviewAt} > now()`,
+          sql`(${ap.interviewAt} at time zone 'Asia/Karachi')::date = (now() at time zone 'Asia/Karachi')::date`,
+        ),
+      ),
+  ]);
+  const byStatusMap = new Map<ApplicationStatus, number>(byStatus.map((r) => [r.status, r.value]));
+  const pick = (s: ApplicationStatus) => byStatusMap.get(s) ?? 0;
+  return {
+    toSchedule: pick('SHORTLISTED'),
+    scheduled: pick('INTERVIEW_SCHEDULED') + pick('INTERVIEW_POSTPONED'),
+    upcomingToday: today?.value ?? 0,
+    passed: pick('INTERVIEW_PASSED'),
+    failed: pick('INTERVIEW_FAILED'),
+    total: byStatus.reduce((sum, r) => sum + r.value, 0),
+  };
 }
 
 /**
@@ -1064,7 +1498,7 @@ export async function listMyApplications(
     : [{ total: 0 }];
   const base = db.select().from(ap).where(where).orderBy(desc(ap.updatedAt));
   const rows = query ? await base.limit(query.limit).offset(query.offset) : await base;
-  const items = await Promise.all(rows.map(buildView));
+  const items = await buildViews(rows);
   if (!query) return items;
   return { items, pagination: paginationMeta(query, totalRow?.total ?? 0) };
 }
