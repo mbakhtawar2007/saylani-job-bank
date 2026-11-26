@@ -1,6 +1,11 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+overrides:
+  esbuild: 0.25.12
+  glob: 14.0.2
+  minimatch: 11.0.1
+  postcss: 8.5.33
 # Dependencies allowed to run install scripts (pnpm blocks all others).
 allowBuilds:
   esbuild: true

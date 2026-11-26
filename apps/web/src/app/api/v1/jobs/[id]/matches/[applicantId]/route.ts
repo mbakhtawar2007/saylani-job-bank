@@ -16,6 +16,10 @@ const decisionBody = z
   .refine((v) => v.reviewStatus !== 'REJECTED' || v.reasonCode, {
     message: 'Choose a rejection reason',
     path: ['reasonCode'],
+  })
+  .refine((v) => v.reviewStatus !== 'REJECTED' || (v.note && v.note.length >= 5), {
+    message: 'Add evidence for this rejection (at least 5 characters)',
+    path: ['note'],
   });
 
 /**

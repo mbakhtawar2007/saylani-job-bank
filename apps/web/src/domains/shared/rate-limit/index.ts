@@ -1,6 +1,6 @@
 import { getRedis } from '@/lib/redis/client';
 import { logger } from '@/lib/logger';
-import { RateLimitedError } from '../errors';
+import { RateLimitedError, RateLimitUnavailableError } from '../errors';
 
 export interface RateLimitRule {
   /** Max requests per window. */
@@ -16,7 +16,7 @@ export interface RateLimitResult {
 
 const PREFIX = process.env.RATE_LIMIT_PREFIX ?? 'rl';
 
-// Fallback when Redis is not configured or unreachable: per-process fixed windows.
+// Local fallback is for development and tests only; production requires shared state.
 const memory = new Map<string, { count: number; resetAt: number }>();
 
 function consumeMemory(key: string, rule: RateLimitRule): RateLimitResult {
@@ -38,8 +38,8 @@ function consumeMemory(key: string, rule: RateLimitRule): RateLimitResult {
 }
 
 /**
- * Fixed-window counter. Redis (shared across instances) when available; otherwise an
- * in-process map — degraded but never "no limit at all".
+ * Fixed-window counter. Redis is required in production so authentication limits cannot
+ * be bypassed by spreading requests across instances.
  */
 export async function consumeRateLimit(
   name: string,
@@ -48,26 +48,33 @@ export async function consumeRateLimit(
 ): Promise<RateLimitResult> {
   const key = `${PREFIX}:${name}:${subject}`;
   const redis = getRedis();
-  if (redis) {
-    try {
-      const results = await redis
-        .multi()
-        .incr(key)
-        .expire(key, rule.windowSeconds, 'NX')
-        .ttl(key)
-        .exec();
-      const count = Number(results?.[0]?.[1] ?? 0);
-      const ttl = Number(results?.[2]?.[1] ?? rule.windowSeconds);
-      return {
-        allowed: count <= rule.limit,
-        remaining: Math.max(0, rule.limit - count),
-        retryAfterSeconds: Math.max(1, ttl),
-      };
-    } catch (err) {
-      logger.warn('rate limiter falling back to memory', { name, err });
-    }
+  if (!redis) {
+    if (process.env.NODE_ENV === 'production') throw new RateLimitUnavailableError();
+    return consumeMemory(key, rule);
   }
-  return consumeMemory(key, rule);
+
+  try {
+    const results = await redis
+      .multi()
+      .incr(key)
+      .expire(key, rule.windowSeconds, 'NX')
+      .ttl(key)
+      .exec();
+    const count = Number(results?.[0]?.[1] ?? 0);
+    const ttl = Number(results?.[2]?.[1] ?? rule.windowSeconds);
+    return {
+      allowed: count <= rule.limit,
+      remaining: Math.max(0, rule.limit - count),
+      retryAfterSeconds: Math.max(1, ttl),
+    };
+  } catch (err) {
+    if (process.env.NODE_ENV === 'production') {
+      logger.error('distributed rate limiter unavailable', { name, err });
+      throw new RateLimitUnavailableError();
+    }
+    logger.warn('rate limiter falling back to memory', { name, err });
+    return consumeMemory(key, rule);
+  }
 }
 
 /** Throws RateLimitedError (429 + Retry-After) when the limit is exceeded. */
@@ -91,16 +98,6 @@ export async function enforceRateLimit(
  * of getting a free pass. In production the app always sits behind its proxies, so
  * the shared bucket is only reached by requests that bypassed them.
  *
- * N17 (2026-11-08): this used to be a NOTE saying domains/auth/service.ts
- * still had its own local rateLimitByIp that skipped when ctx.ip was null.
- * That is stale — auth/service.ts now routes its IP limits through this
- * helper (rateLimitByIp → enforceRateLimitByIp), so a null IP lands in the
- * shared 'untrusted' bucket on those endpoints. Remaining `if (ctx.ip)`
- * skips live elsewhere, not here: employer-signup.ts (signup-code-ip,
- * signup-ip), two-factor.ts (2fa-confirm-ip) and account-tokens.ts
- * (invite-accept-ip, password-reset-ip, password-reset-confirm-ip) still
- * skip limiting when no IP is known — switch those to this helper too
- * before calling the null-IP hole closed app-wide.
  */
 export async function enforceRateLimitByIp(
   ip: string | null,
@@ -108,11 +105,8 @@ export async function enforceRateLimitByIp(
   rule: RateLimitRule,
   message?: string,
 ): Promise<void> {
-  // Audit 2026-11-11 (M-18): a null IP in production means the proxy chain
-  // is misconfigured (TRUSTED_PROXY_HOPS wrong) or the request bypassed the
-  // proxies — every such user shares one bucket, so say so loudly. Outright
-  // rejection is a deployment decision (see fix log): once the proxies are
-  // confirmed, reject instead of sharing the bucket.
+  // A null production IP indicates proxy misconfiguration or a bypass; log it
+  // and keep requests in the shared bucket rather than skipping the limit.
   if (ip === null && process.env.NODE_ENV === 'production') {
     logger.error(
       'rate limit: no trustworthy IP in production — requests share the untrusted bucket; check TRUSTED_PROXY_HOPS',

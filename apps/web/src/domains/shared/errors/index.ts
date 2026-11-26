@@ -8,6 +8,7 @@ export {
   isUniqueViolation,
   NotFoundError,
   RateLimitedError,
+  RateLimitUnavailableError,
   ScopeViolationError,
   UnauthenticatedError,
   ValidationError,

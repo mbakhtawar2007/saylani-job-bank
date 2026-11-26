@@ -79,11 +79,7 @@ export const systemSettings = pgTable(
   (t) => [unique('system_settings_key_branch_uq').on(t.key, t.branchId).nullsNotDistinct()],
 );
 
-/**
- * PRD rule 4: matching radius. The most specific policy wins (job → category → branch →
- * global) and is capped by the global max. The 10 km ceiling is a CHECK with no override.
- * JOB scope gets its `job_id` column in M8, when the jobs table exists.
- */
+/** Retained for compatibility; the matching worker no longer consumes these policies. */
 export const matchRadiusPolicies = pgTable(
   'match_radius_policies',
   {

@@ -1,8 +1,8 @@
 """Database access: candidate pools, criteria resolution, persistence.
 
 Uses psycopg 3 (async). Location plays no part here any more — the radius
-feature was removed 2026-11-17, so the pool is every referrable applicant
-and scoring stays in Python (pure, testable).
+feature was removed 2026-11-17, so the pool is city-wide and scoring stays in
+Python (pure, testable).
 """
 
 from __future__ import annotations
@@ -117,18 +117,16 @@ async def load_job_criteria(conn: AsyncConnection, job_id: str) -> JobCriteria:
     )
 
 
-async def load_candidate_pool(conn: AsyncConnection) -> list[dict[str, Any]]:
-    """Every ACTIVE or INACTIVE applicant, with profile version — no location
-    filter at all since the radius feature was removed (2026-11-17).
+async def load_candidate_pool(conn: AsyncConnection, job_id: str) -> list[dict[str, Any]]:
+    """City-wide applicants, with profile version — no location filter.
 
     INACTIVE applicants are included (audit 2026-11-11, M-13): the interim
     referral rule explicitly allows referring INACTIVE applicants, so the
     engine must surface the same candidates staff are allowed to refer.
     REJECTED-identity applicants are excluded here too (audit 2026-11-11,
     M-12): they can never be referred, so the engine must not surface them
-    as shortlist candidates. Only identity/version here: everything else
-    lives in the Redis profile cache (keyed by updated_at) or is fetched on
-    a cache miss.
+    as shortlist candidates. The applicant's branch city must match the job's
+    branch city, consistent with the web app's city-level scope.
     """
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
@@ -136,9 +134,14 @@ async def load_candidate_pool(conn: AsyncConnection) -> list[dict[str, Any]]:
             SELECT a.id AS applicant_id,
                    a.updated_at AS profile_version
             FROM applicants a
+            JOIN branches applicant_branch ON applicant_branch.id = a.branch_id
+            JOIN jobs j ON j.id = %s
+            JOIN branches job_branch ON job_branch.id = j.branch_id
             WHERE a.status IN ('ACTIVE', 'INACTIVE')
               AND a.identity_status <> 'REJECTED'
-            """
+              AND upper(applicant_branch.city) = upper(job_branch.city)
+            """,
+            (job_id,),
         )
         return list(await cur.fetchall())
 

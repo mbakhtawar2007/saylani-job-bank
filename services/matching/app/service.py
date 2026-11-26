@@ -36,7 +36,7 @@ async def run_job_match(pool: AsyncConnectionPool, job_id: str, trigger: str) ->
         try:
             async with conn.transaction():
                 job = await load_job_criteria(conn, job_id)
-                pool_rows = await load_candidate_pool(conn)
+                pool_rows = await load_candidate_pool(conn, job_id)
 
             # Version-keyed Redis cache: unchanged profiles skip all detail
             # queries; misses fall back to Postgres and repopulate the cache.

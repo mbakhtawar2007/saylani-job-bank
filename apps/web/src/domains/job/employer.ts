@@ -1,7 +1,7 @@
 import 'server-only';
 import { schema } from '@jobbank/db';
 import type { PaginationMeta } from '@jobbank/shared';
-import { and, count, eq, inArray, isNull, ne, or } from 'drizzle-orm';
+import { and, count, eq, inArray } from 'drizzle-orm';
 import { assertPermission, type Actor } from '@/domains/shared/scope';
 import { paginationMeta, type ListQuery } from '@/domains/shared/pagination';
 import { NotFoundError } from '@/domains/shared/errors';
@@ -173,10 +173,8 @@ export function pktYearMonth(date: Date): { year: number; month: number } {
  * C3 — every hire for these jobs, from BOTH hire writers, deduplicated by
  * (job, applicant):
  *
- * - match hires: job_matches reviewStatus HIRED, excluding offers the
- *   applicant declined (applicantResponse DECLINED). Hires the audit's way —
- *   bucketed by reviewedAt, which the codebase already treats as hire time
- *   (getMyPendingOffers).
+ * - match hires: job_matches reviewStatus HIRED and applicantResponse
+ *   ACCEPTED. Bucketed by respondedAt, when the applicant accepts the offer.
  * - placement hires: applications status HIRED, written by acceptJobOffer
  *   (7ee4e4d) for offers that never went through a match row. Bucketed by
  *   updatedAt — there is no hired-at column on applications, and HIRED is
@@ -192,14 +190,14 @@ async function listHireEvents(jobIds: string[]): Promise<HireEvent[]> {
   if (jobIds.length === 0) return [];
   const [matches, applications] = await Promise.all([
     db
-      .select({ jobId: jm.jobId, applicantId: jm.applicantId, hiredAt: jm.reviewedAt })
+      .select({ jobId: jm.jobId, applicantId: jm.applicantId, hiredAt: jm.respondedAt })
       .from(jm)
       .innerJoin(mr, eq(mr.id, jm.runId))
       .where(
         and(
           inArray(jm.jobId, jobIds),
           eq(jm.reviewStatus, 'HIRED'),
-          or(isNull(jm.applicantResponse), ne(jm.applicantResponse, 'DECLINED')),
+          eq(jm.applicantResponse, 'ACCEPTED'),
           eq(mr.status, 'COMPLETED'),
         ),
       ),

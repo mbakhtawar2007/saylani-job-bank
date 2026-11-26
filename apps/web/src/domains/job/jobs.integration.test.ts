@@ -148,6 +148,42 @@ describe('job search and filtering', () => {
     );
   });
 
+  it('rejects direct job inserts for unverified companies', async () => {
+    const employerUserId = (
+      await db.select({ id: us.id }).from(us).where(eq(us.email, 'employer@jobbank.local'))
+    )[0]!.id;
+    const [company] = await db
+      .insert(co)
+      .values({
+        branchId: KHI,
+        legalName: `Unverified Job Insert ${tag}`,
+        legalStructure: 'PRIVATE_LIMITED',
+        industryCode: 'RETAIL',
+        sizeBand: '1_10',
+        status: 'DRAFT',
+        createdBy: employerUserId,
+      })
+      .returning({ id: co.id });
+
+    try {
+      await expect(
+        db.insert(j).values({
+          companyId: company!.id,
+          branchId: KHI,
+          title: `Blocked Job ${tag}`,
+          categoryCode: 'DRIVING_DELIVERY',
+          description: 'This posting must be rejected.',
+          jobType: 'FULL_TIME',
+          shift: 'DAY',
+          vacancies: 1,
+          createdBy: employerUserId,
+        }),
+      ).rejects.toMatchObject({ cause: { constraint_name: 'jobs_company_verified' } });
+    } finally {
+      await db.delete(co).where(eq(co.id, company!.id));
+    }
+  });
+
   it('filters by status, type, category, shift and location city', async () => {
     expect(ids(await find('status=PAUSED'))).toContain(jobB);
     expect(ids(await find('status=PAUSED'))).not.toContain(jobA);

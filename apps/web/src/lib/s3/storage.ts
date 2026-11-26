@@ -32,6 +32,16 @@ export class UploadRejectedError extends Error {
   }
 }
 
+function isMissingObject(error: unknown): boolean {
+  if (error instanceof NotFound) return true;
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error.name === 'NotFound' || error.name === 'NoSuchKey')
+  );
+}
+
 export function assertUploadAllowed(
   contentType: string,
   sizeBytes: number,
@@ -130,7 +140,7 @@ export async function getObjectStream(key: string): Promise<StoredObject | null>
       sizeBytes: res.ContentLength ?? 0,
     };
   } catch (error) {
-    if (error instanceof NotFound || (error as { name?: string }).name === 'NotFound') return null;
+    if (isMissingObject(error)) return null;
     throw error;
   }
 }
@@ -146,7 +156,7 @@ export async function headObject(
       contentType: head.ContentType ?? 'application/octet-stream',
     };
   } catch (error) {
-    if (error instanceof NotFound || (error as { name?: string }).name === 'NotFound') return null;
+    if (isMissingObject(error)) return null;
     throw error;
   }
 }
@@ -164,7 +174,7 @@ export async function getObjectPrefix(key: string, length = 16): Promise<Uint8Ar
     if (!res.Body) return null;
     return await res.Body.transformToByteArray();
   } catch (error) {
-    if (error instanceof NotFound || (error as { name?: string }).name === 'NotFound') return null;
+    if (isMissingObject(error)) return null;
     throw error;
   }
 }

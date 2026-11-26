@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RateLimitedError } from '../errors';
+import { RateLimitedError, RateLimitUnavailableError } from '../errors';
 import { consumeRateLimit, enforceRateLimit, resetMemoryRateLimits } from './index';
 
 vi.mock('@/lib/redis/client', () => ({ getRedis: () => null }));
@@ -7,6 +7,7 @@ vi.mock('@/lib/redis/client', () => ({ getRedis: () => null }));
 afterEach(() => {
   resetMemoryRateLimits();
   vi.useRealTimers();
+  vi.unstubAllEnvs();
 });
 
 describe('rate limiting (memory fallback)', () => {
@@ -34,5 +35,12 @@ describe('rate limiting (memory fallback)', () => {
     const rule = { limit: 1, windowSeconds: 60 };
     await enforceRateLimit('x', 'y', rule);
     await expect(enforceRateLimit('x', 'y', rule)).rejects.toBeInstanceOf(RateLimitedError);
+  });
+
+  it('fails closed in production when shared rate limiting is unavailable', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    await expect(
+      consumeRateLimit('otp', '+923001234567', { limit: 3, windowSeconds: 60 }),
+    ).rejects.toBeInstanceOf(RateLimitUnavailableError);
   });
 });

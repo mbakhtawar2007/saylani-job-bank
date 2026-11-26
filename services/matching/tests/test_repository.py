@@ -14,6 +14,7 @@ from app.repository import load_candidate_pool
 class _FakeCursor:
     def __init__(self) -> None:
         self.sql = ""
+        self.params = None
 
     async def __aenter__(self):
         return self
@@ -23,6 +24,7 @@ class _FakeCursor:
 
     async def execute(self, sql, params=None):
         self.sql = sql
+        self.params = params
 
     async def fetchall(self):
         return []
@@ -39,7 +41,7 @@ class _FakeConn:
 @pytest.mark.asyncio
 async def test_pool_includes_inactive_and_excludes_rejected_identity():
     conn = _FakeConn()
-    await load_candidate_pool(conn)
+    await load_candidate_pool(conn, "job-id")
     sql = conn.cursor_obj.sql
     assert "a.status IN ('ACTIVE', 'INACTIVE')" in sql
     assert "a.identity_status <> 'REJECTED'" in sql
@@ -47,12 +49,15 @@ async def test_pool_includes_inactive_and_excludes_rejected_identity():
 
 
 @pytest.mark.asyncio
-async def test_pool_has_no_location_filter():
-    # Radius feature removed 2026-11-17: no distance filter, no address join.
+async def test_pool_is_city_scoped_without_branch_or_radius_restrictions():
     conn = _FakeConn()
-    await load_candidate_pool(conn)
+    await load_candidate_pool(conn, "job-id")
     sql = conn.cursor_obj.sql
+    assert "JOIN branches applicant_branch ON applicant_branch.id = a.branch_id" in sql
+    assert "JOIN jobs j ON j.id = %s" in sql
+    assert "JOIN branches job_branch ON job_branch.id = j.branch_id" in sql
+    assert "upper(applicant_branch.city) = upper(job_branch.city)" in sql
     assert "ST_DWithin" not in sql
     assert "ST_Distance" not in sql
-    assert "applicant_addresses" not in sql
-    assert "job_locations" not in sql
+    assert "a.branch_id = j.branch_id" not in sql
+    assert conn.cursor_obj.params == ("job-id",)

@@ -24,6 +24,7 @@ const nt = schema.notifications;
 
 let KHI: string;
 let employerJar: Jar;
+let staffJar: Jar;
 let employerUserId: string;
 let companyId: string;
 
@@ -55,6 +56,7 @@ beforeAll(async () => {
   companyId = membership.companyId;
 
   employerJar = await signInWith2fa('employer@jobbank.local');
+  staffJar = await signInWith2fa('staff.khi@jobbank.local');
 });
 
 beforeEach(() => resetMemoryRateLimits());
@@ -138,6 +140,26 @@ async function seedFixture() {
   };
 }
 
+async function seedApplication(
+  jobId: string,
+  applicantId: string,
+  status:
+    | 'SHORTLISTED'
+    | 'INTERVIEW_FAILED'
+    | 'INTERVIEW_CANCELLED'
+    | 'REJECTED'
+    | 'EMPLOYER_REJECTED'
+    | 'APPLICANT_REFUSED' = 'SHORTLISTED',
+) {
+  await db.insert(apn).values({
+    applicantId,
+    jobId,
+    branchId: KHI,
+    createdBy: employerUserId,
+    status,
+  });
+}
+
 const decision = (jobId: string, applicantId: string, jar: Jar, body: unknown) =>
   call(decideMatch, `/api/v1/jobs/${jobId}/matches/${applicantId}`, {
     method: 'PATCH',
@@ -180,6 +202,20 @@ function currentPktYearMonth(): { year: number; month: number } {
 }
 
 describe('employer match decisions (hire / reject)', () => {
+  it('rejects database writes that omit rejection evidence', async () => {
+    const f = await seedFixture();
+    await expect(
+      db
+        .update(jm)
+        .set({
+          reviewStatus: 'REJECTED',
+          reviewReasonCode: 'SKILLS_MISMATCH',
+          reviewNote: 'bad',
+        })
+        .where(and(eq(jm.jobId, f.jobId), eq(jm.applicantId, f.applicantId))),
+    ).rejects.toMatchObject({ cause: { constraint_name: 'job_matches_reject_evidence' } });
+  });
+
   it('rejecting without a reason code is refused', async () => {
     const f = await seedFixture();
     const res = await decision(f.jobId, f.applicantId, employerJar, { reviewStatus: 'REJECTED' });
@@ -232,8 +268,24 @@ describe('employer match decisions (hire / reject)', () => {
     expect(withNote.status).toBe(200);
   });
 
+  it('staff cannot hire or reject on an employer’s behalf', async () => {
+    const f = await seedFixture();
+    const rejected = await decision(f.jobId, f.applicantId, staffJar, {
+      reviewStatus: 'REJECTED',
+      reasonCode: 'SKILLS_MISMATCH',
+      note: 'Does not meet the role requirements',
+    });
+    expect(rejected.status).toBe(403);
+
+    const hired = await decision(f.jobId, f.applicantId, staffJar, {
+      reviewStatus: 'HIRED',
+    });
+    expect(hired.status).toBe(403);
+  });
+
   it('hiring notifies the applicant, who can then accept', async () => {
     const f = await seedFixture();
+    await seedApplication(f.jobId, f.applicantId);
     const shortlisted = await decision(f.jobId, f.applicantId, employerJar, {
       reviewStatus: 'SHORTLISTED',
     });
@@ -255,6 +307,27 @@ describe('employer match decisions (hire / reject)', () => {
     const [row] = await db.select().from(jm).where(eq(jm.jobId, f.jobId));
     expect(row!.applicantResponse).toBe('ACCEPTED');
     expect(row!.respondedAt).not.toBeNull();
+    const [application] = await db
+      .select()
+      .from(apn)
+      .where(and(eq(apn.jobId, f.jobId), eq(apn.applicantId, f.applicantId)));
+    expect(application!.status).toBe('HIRED');
+    const [applicationAudit] = await db
+      .select()
+      .from(schema.auditLogs)
+      .where(
+        and(
+          eq(schema.auditLogs.action, 'application.applicant_accepted'),
+          eq(schema.auditLogs.entityId, application!.id),
+        ),
+      )
+      .limit(1);
+    expect(applicationAudit).toMatchObject({
+      actorUserId: f.applicantUserId,
+      before: { status: 'OFFER_EXTENDED' },
+      after: { status: 'HIRED' },
+      reason: 'Applicant accepted the match offer',
+    });
 
     // The employer side is notified of the acceptance.
     const [employerNotice] = await db
@@ -266,6 +339,7 @@ describe('employer match decisions (hire / reject)', () => {
 
   it('declining requires a refusal reason and closes the offer', async () => {
     const f = await seedFixture();
+    await seedApplication(f.jobId, f.applicantId);
     const shortlisted = await decision(f.jobId, f.applicantId, employerJar, {
       reviewStatus: 'SHORTLISTED',
     });
@@ -319,6 +393,7 @@ describe('employer match decisions (hire / reject)', () => {
 
   it('unread notifications list for the applicant includes the decision', async () => {
     const f = await seedFixture();
+    await seedApplication(f.jobId, f.applicantId);
     const shortlisted = await decision(f.jobId, f.applicantId, employerJar, {
       reviewStatus: 'SHORTLISTED',
     });
@@ -370,6 +445,7 @@ describe('employer match decisions (hire / reject)', () => {
       reviewStatus: 'SHORTLISTED',
     });
     expect(shortlisted.status, JSON.stringify(shortlisted.body)).toBe(200);
+    await seedApplication(f.jobId, f.applicantId);
 
     const hired = await decision(f.jobId, f.applicantId, employerJar, {
       reviewStatus: 'HIRED',
@@ -394,15 +470,9 @@ describe('employer match decisions (hire / reject)', () => {
     expect(res.status).toBe(409);
   });
 
-  it('a HIRED match fills the vacancy, syncs the application and shows in the hires chart (C3)', async () => {
+  it('an accepted match offer hires the application and shows in the hires chart (H-1)', async () => {
     const f = await seedFixture();
-    await db.insert(apn).values({
-      applicantId: f.applicantId,
-      jobId: f.jobId,
-      branchId: KHI,
-      createdBy: employerUserId,
-      status: 'SHORTLISTED',
-    });
+    await seedApplication(f.jobId, f.applicantId);
 
     // Other tests in this file hire for the same company, so the chart
     // assertion is a before/after delta, not an absolute bucket.
@@ -418,7 +488,18 @@ describe('employer match decisions (hire / reject)', () => {
     });
     expect(hired.status, JSON.stringify(hired.body)).toBe(200);
 
-    // The application was synced to HIRED …
+    const [offeredApplication] = await db
+      .select()
+      .from(apn)
+      .where(and(eq(apn.jobId, f.jobId), eq(apn.applicantId, f.applicantId)));
+    expect(offeredApplication!.status).toBe('OFFER_EXTENDED');
+    const beforeAcceptance = await countHiresByMonth(employerActor(), year);
+    expect(beforeAcceptance[month - 1]! - before[month - 1]!).toBe(0);
+
+    const accepted = await respond(f.jobId, f.applicantJar, { applicantResponse: 'ACCEPTED' });
+    expect(accepted.status, JSON.stringify(accepted.body)).toBe(200);
+
+    // The application reaches HIRED only after applicant acceptance.
     const [application] = await db
       .select()
       .from(apn)
@@ -440,15 +521,7 @@ describe('employer match decisions (hire / reject)', () => {
 
   it('a declined match offer drops out of the hires chart (C3)', async () => {
     const f = await seedFixture();
-    // An application row exists, so the decline can mirror onto it (H19):
-    // the match HIRED syncs it to HIRED, the decline mirrors it back.
-    await db.insert(apn).values({
-      applicantId: f.applicantId,
-      jobId: f.jobId,
-      branchId: KHI,
-      createdBy: employerUserId,
-      status: 'SHORTLISTED',
-    });
+    await seedApplication(f.jobId, f.applicantId);
     const { year, month } = currentPktYearMonth();
     const before = await countHiresByMonth(employerActor(), year);
 
@@ -481,6 +554,54 @@ describe('employer match decisions (hire / reject)', () => {
 
     const after = await countHiresByMonth(employerActor(), year);
     expect(after[month - 1]! - before[month - 1]!).toBe(0);
+  });
+
+  it('rejects a match hire without an application and does not fill the vacancy (H-1)', async () => {
+    const f = await seedFixture();
+    const shortlisted = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'SHORTLISTED',
+    });
+    expect(shortlisted.status, JSON.stringify(shortlisted.body)).toBe(200);
+
+    const hired = await decision(f.jobId, f.applicantId, employerJar, { reviewStatus: 'HIRED' });
+    expect(hired.status).toBe(409);
+
+    const [job] = await db
+      .select({ status: j.status, vacanciesFilled: j.vacanciesFilled })
+      .from(j)
+      .where(eq(j.id, f.jobId));
+    expect(job!.vacanciesFilled).toBe(0);
+    expect(job!.status).toBe('OPEN');
+  });
+
+  it.each([
+    'INTERVIEW_FAILED',
+    'INTERVIEW_CANCELLED',
+    'REJECTED',
+    'EMPLOYER_REJECTED',
+    'APPLICANT_REFUSED',
+  ] as const)('rejects a match hire for a %s application (H-1)', async (status) => {
+    const f = await seedFixture();
+    await seedApplication(f.jobId, f.applicantId, status);
+    const shortlisted = await decision(f.jobId, f.applicantId, employerJar, {
+      reviewStatus: 'SHORTLISTED',
+    });
+    expect(shortlisted.status, JSON.stringify(shortlisted.body)).toBe(200);
+
+    const hired = await decision(f.jobId, f.applicantId, employerJar, { reviewStatus: 'HIRED' });
+    expect(hired.status).toBe(409);
+
+    const [application] = await db
+      .select()
+      .from(apn)
+      .where(and(eq(apn.jobId, f.jobId), eq(apn.applicantId, f.applicantId)));
+    expect(application!.status).toBe(status);
+    const [job] = await db
+      .select({ status: j.status, vacanciesFilled: j.vacanciesFilled })
+      .from(j)
+      .where(eq(j.id, f.jobId));
+    expect(job!.vacanciesFilled).toBe(0);
+    expect(job!.status).toBe('OPEN');
   });
 
   it('reports the unread count across all pages', async () => {

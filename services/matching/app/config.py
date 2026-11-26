@@ -1,14 +1,16 @@
 """Environment-driven configuration for the matching engine."""
 
 from functools import lru_cache
+from urllib.parse import urlsplit
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MATCHING_", env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql://jobbank:jobbank@localhost:5433/jobbank"
+    database_url: str
     # Shared secret for /internal routes (MATCHING_API_TOKEN). Empty/short
     # (< 32 chars) keeps the routes switched off (503); the worker needs no API.
     api_token: str = ""
@@ -36,6 +38,16 @@ class Settings(BaseSettings):
 
     # Phase 3 (unused in MVP): local embedding model name.
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+
+    @field_validator("database_url")
+    @classmethod
+    def require_runtime_database_role(cls, value: str) -> str:
+        username = urlsplit(value).username
+        if username is None:
+            raise ValueError("MATCHING_DATABASE_URL must include a runtime database user")
+        if username.lower() in {"jobbank", "postgres"}:
+            raise ValueError("MATCHING_DATABASE_URL must not use a database owner role")
+        return value
 
 
 @lru_cache

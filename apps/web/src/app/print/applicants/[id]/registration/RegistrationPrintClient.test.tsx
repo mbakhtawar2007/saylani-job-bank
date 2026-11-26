@@ -145,7 +145,7 @@ describe('RegistrationPrintClient', () => {
 
     render(<RegistrationPrintClient applicantId="applicant-id" />);
 
-    const photo = await screen.findByAltText('Applicant passport photo');
+    const photo = await screen.findByAltText('Applicant photo');
     expect(photo).toHaveAttribute('src', 'https://example.invalid/photo.jpg');
     expect(photo).toHaveClass('registration-print-photo');
 

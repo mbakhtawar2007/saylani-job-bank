@@ -28,10 +28,11 @@
   "devDependencies": {
     "@jobbank/config": "workspace:*",
     "@types/node": "^24.0.0",
-    "better-auth": "1.7.6",
+    "better-auth": "1.7.7",
     "dotenv": "^17.0.0",
     "drizzle-kit": "^0.31.11",
     "eslint": "^9.39.5",
+    "next": "15.5.29",
     "tsx": "^4.23.15",
     "typescript": "5.9.3",
     "vitest": "^5.0.3"

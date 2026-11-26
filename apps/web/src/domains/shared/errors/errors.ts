@@ -112,6 +112,12 @@ export class RateLimitedError extends DomainError {
   }
 }
 
+export class RateLimitUnavailableError extends DomainError {
+  constructor() {
+    super('INTERNAL', 503, 'Rate limiting is temporarily unavailable');
+  }
+}
+
 /**
  * True when `error` (or a wrapped cause, e.g. drizzle's query error) is a Postgres
  * unique-constraint violation — optionally on one named constraint. Use it to turn the race
